@@ -53,7 +53,7 @@ export default function App() {
   const onLogin = (t, p) => { localStorage.setItem('aptiva_token', t); setToken(t); setProfile(p); };
   const onLogout = () => { localStorage.removeItem('aptiva_token'); setToken(null); setProfile(null); };
 
-  if (booting) return <div className="min-h-screen flex items-center justify-center bg-slate-100"><img src={LOGO} alt="Aptiva" className="h-10 animate-pulse" /></div>;
+  if (booting) return <div className="min-h-screen flex items-center justify-center bg-slate-100"><img src="/favicon-aptiva.png" alt="Aptiva" className="h-12 w-12 animate-spin" style={{ animationDuration: '1.1s' }} /></div>;
   if (!token || !profile) return <Login onLogin={onLogin} />;
   return <Shell token={token} profile={profile} onLogout={onLogout} />;
 }
@@ -73,7 +73,8 @@ function Login({ onLogin }) {
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   };
   return (
-    <div className="min-h-screen grid lg:grid-cols-5 bg-white">
+    <div className="min-h-screen flex flex-col bg-white">
+      <div className="flex-1 grid lg:grid-cols-5">
       <div className="lg:col-span-3 relative hidden lg:flex flex-col justify-between p-12 text-white overflow-hidden">
         <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url(/login-bg.jpg)' }} />
         <div className="absolute inset-0 bg-slate-950/75" />
@@ -101,8 +102,9 @@ function Login({ onLogin }) {
             <p>revisor@aptivarl.com · Revisor · mandante@aptivarl.com · Mandante</p>
           </div>
         </div>
-        <div className="mt-8 text-center text-xs text-slate-400">© DoSoft {YEAR}</div>
       </div>
+      </div>
+      <div className="py-3 text-center text-xs text-slate-400 border-t bg-white">© DoSoft {YEAR}</div>
     </div>
   );
 }
