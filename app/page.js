@@ -73,8 +73,7 @@ function Login({ onLogin }) {
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   };
   return (
-    <div className="min-h-screen flex flex-col bg-white">
-      <div className="flex-1 grid lg:grid-cols-5">
+    <div className="min-h-screen grid lg:grid-cols-5 bg-white">
       <div className="lg:col-span-3 relative hidden lg:flex flex-col justify-between p-12 text-white overflow-hidden">
         <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url(/login-bg.jpg)' }} />
         <div className="absolute inset-0 bg-slate-950/75" />
@@ -85,26 +84,27 @@ function Login({ onLogin }) {
         </div>
         <div className="relative" />
       </div>
-      <div className="lg:col-span-2 flex flex-col items-center justify-center p-6 sm:p-10">
-        <div className="w-full max-w-sm">
-          <img src={LOGO} alt="Aptiva" className="h-10 mb-8 lg:hidden" />
-          <h2 className="text-2xl font-bold text-slate-900">Iniciar sesión</h2>
-          <p className="text-slate-500 mb-6 text-sm">Accede con tu cuenta corporativa</p>
-          <div className="space-y-4">
-            <div className="space-y-1.5"><Label>Correo</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@aptivarl.com" /></div>
-            <div className="space-y-1.5"><Label>Contraseña</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={(e) => e.key === 'Enter' && submit()} /></div>
-            <Button className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading} onClick={submit}>{loading ? 'Ingresando…' : 'Ingresar'}</Button>
-          </div>
-          <div className="mt-6 rounded-lg bg-slate-50 border p-3 text-xs text-slate-600 space-y-1">
-            <p className="font-semibold text-slate-700">Cuentas demo (contraseña: Aptiva2025!)</p>
-            <p>admin@aptivarl.com · Super Admin</p>
-            <p>empresa@aptivarl.com · Admin Empresa</p>
-            <p>revisor@aptivarl.com · Revisor · mandante@aptivarl.com · Mandante</p>
+      <div className="lg:col-span-2 flex flex-col p-6 sm:p-10">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-full max-w-sm">
+            <img src={LOGO} alt="Aptiva" className="h-10 mb-8 lg:hidden" />
+            <h2 className="text-2xl font-bold text-slate-900">Iniciar sesión</h2>
+            <p className="text-slate-500 mb-6 text-sm">Accede con tu cuenta corporativa</p>
+            <div className="space-y-4">
+              <div className="space-y-1.5"><Label>Correo</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@aptivarl.com" /></div>
+              <div className="space-y-1.5"><Label>Contraseña</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={(e) => e.key === 'Enter' && submit()} /></div>
+              <Button className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading} onClick={submit}>{loading ? 'Ingresando…' : 'Ingresar'}</Button>
+            </div>
+            <div className="mt-6 rounded-lg bg-slate-50 border p-3 text-xs text-slate-600 space-y-1">
+              <p className="font-semibold text-slate-700">Cuentas demo (contraseña: Aptiva2025!)</p>
+              <p>admin@aptivarl.com · Super Admin</p>
+              <p>empresa@aptivarl.com · Admin Empresa</p>
+              <p>revisor@aptivarl.com · Revisor · mandante@aptivarl.com · Mandante</p>
+            </div>
           </div>
         </div>
+        <div className="text-center text-xs text-slate-400">© DoSoft {YEAR}</div>
       </div>
-      </div>
-      <div className="py-3 text-center text-xs text-slate-400 border-t bg-white">© DoSoft {YEAR}</div>
     </div>
   );
 }
