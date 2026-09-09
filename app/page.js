@@ -241,6 +241,7 @@ function Table({ columns, rows, onRow, empty = 'Sin registros' }) {
 /* ------------ Dashboard ------------ */
 function Dashboard({ api }) {
   const [data] = useData(api, '/dashboard');
+  if (!data) return <div><PageHead title="Dashboard ejecutivo" sub="Estado en tiempo real del Holding Río Loa" /><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{Array.from({ length: 8 }).map((_, i) => <Card key={i}><CardContent className="p-4 h-[76px] animate-pulse bg-slate-50" /></Card>)}</div></div>;
   const s = data?.stats || {};
   const totalAcr = (s.trabajadores_acreditados || 0) + (s.trabajadores_bloqueados || 0) + (s.trabajadores_revision || 0) || 1;
   return (
@@ -309,25 +310,53 @@ function Mandantes({ api, openDetail, canManage }) {
   );
 }
 
-function MandanteDetail({ api, id, onBack, openDetail }) {
+function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
   const [data, reload] = useData(api, `/mandantes/${id}`, [id]);
+  const [allEmp] = useData(api, '/empresas');
+  const [edit, setEdit] = useState(false);
+  const [ef, setEf] = useState({});
+  const [addEmp, setAddEmp] = useState('');
+  const [newGer, setNewGer] = useState('');
+  const [reqOpen, setReqOpen] = useState(false);
+  const [rf, setRf] = useState({ nombre: '', categoria_id: '', obligatorio: true, tiene_vencimiento: false, dias_alerta: 30, descripcion: '' });
+  const [newCat, setNewCat] = useState('');
   if (!data) return <p className="text-slate-400">Cargando…</p>;
-  const { mandante, empresas, gerencias, contratos, requisitos, trabajadores } = data;
+  const { mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores } = data;
   const reqByCat = {};
   (requisitos || []).forEach((r) => { const k = r.categoria || 'Sin categoría'; (reqByCat[k] = reqByCat[k] || []).push(r); });
+  const noAsoc = (allEmp?.empresas || []).filter((e) => !empresas.some((x) => x.empresa_id === e.empresa_id));
+
+  const openEdit = () => { setEf({ razon_social: mandante.razon_social, rut: mandante.rut, region: mandante.region, comuna: mandante.comuna, direccion: mandante.direccion }); setEdit(true); };
+  const saveEdit = async () => { try { await api(`/mandantes/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); toast.success('Mandante actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
+  const toggleActivo = async () => { try { await api(`/mandantes/${id}`, { method: 'PUT', body: JSON.stringify({ activo: !mandante.activo }) }); toast.success(mandante.activo ? 'Mandante desactivado' : 'Mandante activado'); reload(); } catch (e) { toast.error(e.message); } };
+  const linkEmp = async () => { if (!addEmp) return; try { await api('/mandantes/empresas', { method: 'POST', body: JSON.stringify({ mandante_id: id, empresa_id: addEmp }) }); toast.success('Empresa habilitada'); setAddEmp(''); reload(); } catch (e) { toast.error(e.message); } };
+  const unlinkEmp = async (eid) => { try { await api(`/mandantes/${id}/empresas/${eid}`, { method: 'DELETE' }); toast.success('Empresa deshabilitada'); reload(); } catch (e) { toast.error(e.message); } };
+  const addGer = async () => { if (!newGer) return; try { await api('/mandantes/gerencias', { method: 'POST', body: JSON.stringify({ mandante_id: id, nombre: newGer }) }); setNewGer(''); reload(); } catch (e) { toast.error(e.message); } };
+  const addCat = async () => { if (!newCat) return; try { await api('/categorias', { method: 'POST', body: JSON.stringify({ mandante_id: id, tipo_recurso: 'trabajador', nombre: newCat }) }); setNewCat(''); reload(); } catch (e) { toast.error(e.message); } };
+  const saveReq = async () => { try { await api('/requisitos', { method: 'POST', body: JSON.stringify({ ...rf, mandante_id: id, tipo_recurso: 'trabajador', dias_alerta: Number(rf.dias_alerta) }) }); toast.success('Requisito creado'); setReqOpen(false); setRf({ nombre: '', categoria_id: '', obligatorio: true, tiene_vencimiento: false, dias_alerta: 30, descripcion: '' }); reload(); } catch (e) { toast.error(e.message); } };
+  const delReq = async (rid) => { try { await api(`/requisitos/${rid}`, { method: 'DELETE' }); toast.success('Requisito eliminado'); reload(); } catch (e) { toast.error(e.message); } };
+
   return (
     <div>
       <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver a Mandantes</button>
-      <PageHead title={mandante.razon_social} sub={`RUT ${mandante.rut} · ${mandante.comuna || ''}, ${mandante.region || ''}`} />
+      <PageHead title={mandante.razon_social} sub={`RUT ${mandante.rut} · ${mandante.comuna || ''}, ${mandante.region || ''}`}
+        action={canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button></div>} />
       <Tabs defaultValue="resumen">
-        <TabsList className="flex-wrap h-auto"><TabsTrigger value="resumen">Resumen</TabsTrigger><TabsTrigger value="empresas">Empresas</TabsTrigger><TabsTrigger value="contratos">Contratos</TabsTrigger><TabsTrigger value="trabajadores">Trabajadores</TabsTrigger><TabsTrigger value="estandar">Estándar Documental</TabsTrigger></TabsList>
+        <TabsList className="flex-wrap h-auto"><TabsTrigger value="resumen">Resumen</TabsTrigger><TabsTrigger value="empresas">Empresas</TabsTrigger><TabsTrigger value="gerencias">Gerencias</TabsTrigger><TabsTrigger value="contratos">Contratos</TabsTrigger><TabsTrigger value="trabajadores">Trabajadores</TabsTrigger><TabsTrigger value="estandar">Estándar Documental</TabsTrigger></TabsList>
         <TabsContent value="resumen"><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Kpi label="Empresas Holding" value={empresas.length} icon={Building} color="bg-blue-50 text-blue-600" />
           <Kpi label="Contratos" value={contratos.length} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
           <Kpi label="Trabajadores" value={trabajadores.length} icon={Users} color="bg-slate-100 text-slate-600" />
           <Kpi label="Requisitos doc." value={requisitos.length} icon={ShieldCheck} color="bg-emerald-50 text-emerald-600" />
         </div></TabsContent>
-        <TabsContent value="empresas"><Table columns={[{ key: 'razon_social', label: 'Empresa del Holding' }, { key: 'rut', label: 'RUT' }, { key: 'comuna', label: 'Comuna' }]} rows={empresas} empty="Sin empresas habilitadas" /></TabsContent>
+        <TabsContent value="empresas">
+          {canManage && <div className="flex gap-2 mb-3 max-w-md"><Select value={addEmp} onValueChange={setAddEmp}><SelectTrigger><SelectValue placeholder="Habilitar empresa del Holding…" /></SelectTrigger><SelectContent>{noAsoc.map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={linkEmp}>Agregar</Button></div>}
+          <Table columns={[{ key: 'razon_social', label: 'Empresa del Holding' }, { key: 'rut', label: 'RUT' }, { key: 'comuna', label: 'Comuna' }, { key: 'x', label: '', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => unlinkEmp(r.empresa_id)}>Quitar</Button> : null }]} rows={empresas} empty="Sin empresas habilitadas" />
+        </TabsContent>
+        <TabsContent value="gerencias">
+          {canManage && <div className="flex gap-2 mb-3 max-w-md"><Input placeholder="Nueva gerencia…" value={newGer} onChange={(e) => setNewGer(e.target.value)} /><Button className="bg-blue-600 hover:bg-blue-700" onClick={addGer}>Agregar</Button></div>}
+          <Table columns={[{ key: 'nombre', label: 'Gerencia' }, { key: 'activo', label: 'Estado', render: (r) => <Badge className="bg-emerald-100 text-emerald-700">{r.activo ? 'Activa' : 'Inactiva'}</Badge> }]} rows={gerencias} empty="Sin gerencias" />
+        </TabsContent>
         <TabsContent value="contratos"><Table onRow={(r) => openDetail('contrato', r.contrato_id)} columns={[
           { key: 'numero_oc', label: 'N° OC', render: (r) => <span className="font-medium">{r.numero_oc}</span> }, { key: 'empresa', label: 'Empresa' },
           { key: 'dotacion', label: 'Dotación', render: (r) => `${r.dotacion} / ${r.limite_contingente}` },
@@ -335,19 +364,47 @@ function MandanteDetail({ api, id, onBack, openDetail }) {
         ]} rows={contratos} /></TabsContent>
         <TabsContent value="trabajadores"><Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={trabajadores} /></TabsContent>
         <TabsContent value="estandar">
-          <p className="text-sm text-slate-500 mb-3">Requisitos documentales para <strong>Trabajadores</strong> de este mandante.</p>
+          <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+            <p className="text-sm text-slate-500">Requisitos documentales para <strong>Trabajadores</strong> de este mandante.</p>
+            {canManage && <div className="flex gap-2"><Input className="h-9 w-44" placeholder="Nueva categoría…" value={newCat} onChange={(e) => setNewCat(e.target.value)} /><Button variant="outline" onClick={addCat}>+ Categoría</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setReqOpen(true)}><Plus className="h-4 w-4 mr-1" />Requisito</Button></div>}
+          </div>
           {Object.entries(reqByCat).map(([cat, reqs]) => (
             <div key={cat} className="mb-4"><h3 className="font-semibold text-slate-700 mb-2">{cat}</h3>
               <Table columns={[
                 { key: 'nombre', label: 'Documento' },
                 { key: 'obligatorio', label: 'Obligatorio', render: (r) => r.obligatorio ? <Badge className="bg-blue-100 text-blue-700">Sí</Badge> : <Badge variant="secondary">No</Badge> },
                 { key: 'tiene_vencimiento', label: 'Vence', render: (r) => r.tiene_vencimiento ? `Sí · alerta ${r.dias_alerta}d` : 'No' },
+                { key: 'x', label: '', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delReq(r.requisito_id)}>Eliminar</Button> : null },
               ]} rows={reqs} />
             </div>
           ))}
           {!requisitos.length && <p className="text-slate-400">Sin requisitos configurados.</p>}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
+        <DialogHeader><DialogTitle>Editar mandante</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5"><Label>Razón social</Label><Input value={ef.razon_social || ''} onChange={(e) => setEf({ ...ef, razon_social: e.target.value })} /></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={ef.rut || ''} onChange={(e) => setEf({ ...ef, rut: e.target.value })} /></div><div className="space-y-1.5"><Label>Región</Label><Input value={ef.region || ''} onChange={(e) => setEf({ ...ef, region: e.target.value })} /></div></div>
+          <div className="space-y-1.5"><Label>Comuna</Label><Input value={ef.comuna || ''} onChange={(e) => setEf({ ...ef, comuna: e.target.value })} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
+      </DialogContent></Dialog>
+
+      <Dialog open={reqOpen} onOpenChange={setReqOpen}><DialogContent>
+        <DialogHeader><DialogTitle>Nuevo requisito documental</DialogTitle><DialogDescription>Para trabajadores de {mandante.razon_social}</DialogDescription></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5"><Label>Nombre del documento</Label><Input value={rf.nombre} onChange={(e) => setRf({ ...rf, nombre: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Categoría</Label><Select value={rf.categoria_id} onValueChange={(v) => setRf({ ...rf, categoria_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger><SelectContent>{(categorias || []).map((c) => <SelectItem key={c.categoria_id} value={c.categoria_id}>{c.nombre}</SelectItem>)}</SelectContent></Select></div>
+          <div className="flex gap-6">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rf.obligatorio} onChange={(e) => setRf({ ...rf, obligatorio: e.target.checked })} />Obligatorio</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rf.tiene_vencimiento} onChange={(e) => setRf({ ...rf, tiene_vencimiento: e.target.checked })} />Tiene vencimiento</label>
+          </div>
+          {rf.tiene_vencimiento && <div className="space-y-1.5"><Label>Días de alerta antes de vencer</Label><Input type="number" value={rf.dias_alerta} onChange={(e) => setRf({ ...rf, dias_alerta: e.target.value })} /></div>}
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setReqOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveReq}>Crear</Button></DialogFooter>
+      </DialogContent></Dialog>
     </div>
   );
 }
@@ -367,15 +424,19 @@ function Contratos({ api, openDetail, canManage }) {
     </div>
   );
 }
-function ContratoDetail({ api, id, onBack }) {
-  const [data] = useData(api, `/contratos/${id}`, [id]);
+function ContratoDetail({ api, id, onBack, canManage }) {
+  const [data, reload] = useData(api, `/contratos/${id}`, [id]);
+  const [edit, setEdit] = useState(false);
+  const [ef, setEf] = useState({});
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const c = data.contrato; const pct = c.limite_contingente ? Math.min(100, (c.dotacion / c.limite_contingente) * 100) : 0;
   const dias = c.fecha_termino ? Math.round((new Date(c.fecha_termino) - new Date()) / 86400000) : null;
+  const openEdit = () => { setEf({ numero_oc: c.numero_oc, limite_contingente: c.limite_contingente, estado: c.estado, observaciones: c.observaciones || '', fecha_inicio: c.fecha_inicio?.slice(0, 10) || '', fecha_termino: c.fecha_termino?.slice(0, 10) || '' }); setEdit(true); };
+  const save = async () => { try { await api(`/contratos/${id}`, { method: 'PUT', body: JSON.stringify({ ...ef, limite_contingente: Number(ef.limite_contingente) }) }); toast.success('Contrato actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
       <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
-      <PageHead title={`Contrato ${c.numero_oc}`} sub={`${c.mandante} · ${c.empresa}`} />
+      <PageHead title={`Contrato ${c.numero_oc}`} sub={`${c.mandante} · ${c.empresa}`} action={canManage && <Button variant="outline" onClick={openEdit}>Editar</Button>} />
       <div className="grid lg:grid-cols-3 gap-4 mb-4">
         <Card className="lg:col-span-2"><CardContent className="p-5">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
@@ -394,6 +455,16 @@ function ContratoDetail({ api, id, onBack }) {
       </div>
       <h3 className="font-semibold text-slate-700 mb-2">Trabajadores asignados</h3>
       <Table columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={data.trabajadores} />
+      <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
+        <DialogHeader><DialogTitle>Editar contrato</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>N° OC</Label><Input value={ef.numero_oc || ''} onChange={(e) => setEf({ ...ef, numero_oc: e.target.value })} /></div><div className="space-y-1.5"><Label>Límite contingente</Label><Input type="number" value={ef.limite_contingente || 0} onChange={(e) => setEf({ ...ef, limite_contingente: e.target.value })} /></div></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Inicio</Label><Input type="date" value={ef.fecha_inicio || ''} onChange={(e) => setEf({ ...ef, fecha_inicio: e.target.value })} /></div><div className="space-y-1.5"><Label>Término</Label><Input type="date" value={ef.fecha_termino || ''} onChange={(e) => setEf({ ...ef, fecha_termino: e.target.value })} /></div></div>
+          <div className="space-y-1.5"><Label>Estado</Label><Select value={ef.estado} onValueChange={(v) => setEf({ ...ef, estado: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pendiente">Pendiente</SelectItem><SelectItem value="vigente">Vigente</SelectItem><SelectItem value="finalizado">Finalizado</SelectItem><SelectItem value="suspendido">Suspendido</SelectItem></SelectContent></Select></div>
+          <div className="space-y-1.5"><Label>Observaciones</Label><Textarea value={ef.observaciones || ''} onChange={(e) => setEf({ ...ef, observaciones: e.target.value })} rows={2} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Guardar</Button></DialogFooter>
+      </DialogContent></Dialog>
     </div>
   );
 }
@@ -436,12 +507,24 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
 
 function TrabajadorDetail({ api, id, onBack, canManage }) {
   const [data, reload] = useData(api, `/trabajadores/${id}`, [id]);
-  const [upload, setUpload] = useState(null); // {requisito, mandante_id}
+  const [contratos] = useData(api, '/contratos');
+  const [upload, setUpload] = useState(null);
+  const [edit, setEdit] = useState(false);
+  const [ef, setEf] = useState({});
+  const [asig, setAsig] = useState('');
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const { trabajador: t, asignaciones, acreditacion, historial } = data;
+  const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === t.empresa_id);
+  const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email }); setEdit(true); };
+  const saveEdit = async () => { try { await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); toast.success('Trabajador actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
+  const desactivar = async () => { if (!confirm('¿Desactivar trabajador?')) return; try { await api(`/trabajadores/${id}`, { method: 'DELETE' }); toast.success('Trabajador desactivado'); onBack(); } catch (e) { toast.error(e.message); } };
+  const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={onBack} className="text-sm text-blue-600">← Volver</button>
+        {canManage && <div className="flex gap-2"><Button variant="outline" size="sm" onClick={openEdit}>Editar</Button><Button variant="outline" size="sm" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button></div>}
+      </div>
       <Card className="mb-4"><CardContent className="p-5 flex items-center gap-4 flex-wrap">
         <div className="h-16 w-16 rounded-full bg-blue-600 text-white flex items-center justify-center text-2xl font-bold">{t.nombre?.charAt(0)}</div>
         <div className="flex-1"><h1 className="text-xl font-bold text-slate-900">{t.nombre} {t.apellido}</h1><p className="text-slate-500 text-sm">RUT {t.rut} · {t.cargo || '—'}</p><p className="text-slate-400 text-sm">{t.empresa}</p></div>
@@ -468,12 +551,25 @@ function TrabajadorDetail({ api, id, onBack, canManage }) {
             </Card>
           ))}
         </TabsContent>
-        <TabsContent value="asignaciones"><Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{r.estado}</Badge> }]} rows={asignaciones} /></TabsContent>
+        <TabsContent value="asignaciones">
+          {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={doAsignar}>Asignar</Button></div>}
+          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{r.estado}</Badge> }]} rows={asignaciones} />
+        </TabsContent>
         <TabsContent value="info"><Card><CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           {[['RUT', t.rut], ['Nombre', `${t.nombre} ${t.apellido}`], ['Cargo', t.cargo], ['Género', t.genero], ['Región', t.region], ['Comuna', t.comuna], ['Teléfono', t.telefono], ['Empresa', t.empresa]].map(([k, v]) => <div key={k}><p className="text-slate-400">{k}</p><p className="font-medium">{v || '—'}</p></div>)}
         </CardContent></Card></TabsContent>
         <TabsContent value="historial"><Table columns={[{ key: 'created_at', label: 'Fecha', render: (r) => new Date(r.created_at).toLocaleString('es-CL') }, { key: 'accion', label: 'Acción' }, { key: 'usuario', label: 'Usuario' }]} rows={historial} empty="Sin eventos" /></TabsContent>
       </Tabs>
+      <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
+        <DialogHeader><DialogTitle>Editar trabajador</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={ef.nombre || ''} onChange={(e) => setEf({ ...ef, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={ef.apellido || ''} onChange={(e) => setEf({ ...ef, apellido: e.target.value })} /></div></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Cargo</Label><Input value={ef.cargo || ''} onChange={(e) => setEf({ ...ef, cargo: e.target.value })} /></div><div className="space-y-1.5"><Label>Teléfono</Label><Input value={ef.telefono || ''} onChange={(e) => setEf({ ...ef, telefono: e.target.value })} /></div></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Región</Label><Input value={ef.region || ''} onChange={(e) => setEf({ ...ef, region: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={ef.comuna || ''} onChange={(e) => setEf({ ...ef, comuna: e.target.value })} /></div></div>
+          <div className="space-y-1.5"><Label>Email</Label><Input value={ef.email || ''} onChange={(e) => setEf({ ...ef, email: e.target.value })} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
+      </DialogContent></Dialog>
       {upload && <UploadDialog api={api} recurso_tipo="trabajador" recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
     </div>
   );

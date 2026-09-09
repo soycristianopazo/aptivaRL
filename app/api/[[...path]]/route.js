@@ -95,8 +95,9 @@ export async function GET(request, { params }) {
       const gerencias = (await query('select * from mandante_gerencias where mandante_id=$1 order by nombre', [mid])).rows;
       const contratos = (await query('select c.*, e.razon_social as empresa, (select count(*)::int from trabajador_asignaciones a where a.contrato_id=c.contrato_id and a.estado=\'activo\') as dotacion from contratos c join empresas_grupo e on e.empresa_id=c.empresa_id where c.mandante_id=$1 and c.deleted_at is null order by c.numero_oc', [mid])).rows;
       const requisitos = (await query('select r.*, cat.nombre as categoria from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 order by r.tipo_recurso, r.orden', [mid])).rows;
+      const categorias = (await query('select * from categorias_documentales where mandante_id=$1 and activo=true order by orden', [mid])).rows;
       const trabajadores = (await query("select distinct t.trabajador_id, t.nombre, t.apellido, t.rut, t.cargo from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.mandante_id=$1 and a.estado='activo'", [mid])).rows;
-      return json({ mandante, empresas, gerencias, contratos, requisitos, trabajadores });
+      return json({ mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores });
     }
 
     if (p[0] === 'contratos' && !p[1]) {
@@ -176,19 +177,37 @@ export async function GET(request, { params }) {
         docs_por_vencer: await q1("select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento is not null and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null"),
         docs_vencidos: await q1("select count(*)::int c from documentos where deleted_at is null and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))"),
       };
-      // acreditación agregada de trabajadores activos
-      const trabIds = (await query("select distinct trabajador_id from trabajador_asignaciones where estado='activo'")).rows.map((r) => r.trabajador_id);
-      let acreditados = 0, bloqueados = 0, revision = 0;
+      // Bulk acreditación (evita N+1)
+      const asigRows = (await query("select a.trabajador_id, a.mandante_id, m.razon_social as mandante from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.estado='activo'")).rows;
+      const reqRows = (await query("select mandante_id, requisito_id, obligatorio from requisitos_documentales where tipo_recurso='trabajador' and activo=true")).rows;
+      const docRows = (await query("select recurso_id, mandante_id, requisito_id, estado, fecha_vencimiento from documentos where recurso_tipo='trabajador' and deleted_at is null")).rows;
+      const reqByMand = {};
+      reqRows.forEach((r) => { (reqByMand[r.mandante_id] = reqByMand[r.mandante_id] || []).push(r); });
+      const dkey = (rid, mid, reqid) => `${rid}|${mid}|${reqid}`;
+      const docMap = {};
+      docRows.forEach((d) => { const k = dkey(d.recurso_id, d.mandante_id, d.requisito_id); if (!docMap[k]) docMap[k] = d; });
+      const now = new Date();
+      const rank = { ACREDITADO: 0, EN_REVISION: 1, BLOQUEADO: 2 };
       const porMandante = {};
-      for (const tid of trabIds) {
-        const acr = await acreditacionTrabajador(tid);
-        for (const a of acr) {
-          porMandante[a.mandante] = porMandante[a.mandante] || { ACREDITADO: 0, EN_REVISION: 0, BLOQUEADO: 0 };
-          porMandante[a.mandante][a.estado]++;
+      const perWorst = {};
+      for (const a of asigRows) {
+        let bloq = false, rev = false;
+        for (const req of (reqByMand[a.mandante_id] || [])) {
+          if (!req.obligatorio) continue;
+          const d = docMap[dkey(a.trabajador_id, a.mandante_id, req.requisito_id)];
+          let estado = d ? d.estado : 'faltante';
+          if (d && d.estado === 'aprobado' && d.fecha_vencimiento && new Date(d.fecha_vencimiento) < now) estado = 'vencido';
+          if (['faltante', 'vencido', 'rechazado'].includes(estado)) bloq = true;
+          else if (['en_revision', 'pendiente'].includes(estado)) rev = true;
         }
-        const peor = acr.some((a) => a.estado === 'BLOQUEADO') ? 'BLOQUEADO' : acr.some((a) => a.estado === 'EN_REVISION') ? 'EN_REVISION' : 'ACREDITADO';
-        if (peor === 'BLOQUEADO') bloqueados++; else if (peor === 'EN_REVISION') revision++; else acreditados++;
+        const eg = bloq ? 'BLOQUEADO' : rev ? 'EN_REVISION' : 'ACREDITADO';
+        porMandante[a.mandante] = porMandante[a.mandante] || { ACREDITADO: 0, EN_REVISION: 0, BLOQUEADO: 0 };
+        porMandante[a.mandante][eg]++;
+        const cur = perWorst[a.trabajador_id];
+        if (cur === undefined || rank[eg] > rank[cur]) perWorst[a.trabajador_id] = eg;
       }
+      let acreditados = 0, bloqueados = 0, revision = 0;
+      Object.values(perWorst).forEach((v) => { if (v === 'BLOQUEADO') bloqueados++; else if (v === 'EN_REVISION') revision++; else acreditados++; });
       stats.trabajadores_acreditados = acreditados;
       stats.trabajadores_bloqueados = bloqueados;
       stats.trabajadores_revision = revision;
@@ -393,4 +412,65 @@ export async function POST(request, { params }) {
   } catch (e) {
     return json({ error: e.message }, 500);
   }
+}
+
+export async function PUT(request, { params }) {
+  try {
+    await ensureSchema();
+    const p = (await params)?.path || [];
+    const profile = await getProfile(request);
+    if (!profile) return json({ error: 'No autorizado' }, 401);
+    if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+    const body = await request.json().catch(() => ({}));
+    const build = (allowed) => { const cols = []; const vals = []; let i = 1; for (const k of allowed) { if (body[k] !== undefined) { cols.push(`${k}=$${i++}`); vals.push(body[k]); } } return { cols, vals, i }; };
+
+    if (p[0] === 'mandantes' && p[1]) {
+      const { cols, vals, i } = build(['razon_social', 'rut', 'direccion', 'region', 'comuna', 'activo']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      await query(`update mandantes set ${cols.join(', ')}, updated_at=now() where mandante_id=$${i}`, vals);
+      await audit(profile, 'editar_mandante', 'mandante', p[1], body);
+      return json({ mandante: (await query('select * from mandantes where mandante_id=$1', [p[1]])).rows[0] });
+    }
+    if (p[0] === 'contratos' && p[1]) {
+      const { cols, vals, i } = build(['numero_oc', 'limite_contingente', 'fecha_inicio', 'fecha_termino', 'estado', 'observaciones', 'gerencia_id']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      await query(`update contratos set ${cols.join(', ')}, updated_at=now() where contrato_id=$${i}`, vals);
+      await audit(profile, 'editar_contrato', 'contrato', p[1], body);
+      return json({ contrato: (await query('select * from contratos where contrato_id=$1', [p[1]])).rows[0] });
+    }
+    if (p[0] === 'trabajadores' && p[1]) {
+      const { cols, vals, i } = build(['nombre', 'apellido', 'cargo', 'genero', 'region', 'comuna', 'telefono', 'email', 'direccion', 'estado']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      await query(`update trabajadores set ${cols.join(', ')}, updated_at=now() where trabajador_id=$${i}`, vals);
+      await audit(profile, 'editar_trabajador', 'trabajador', p[1], body);
+      return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [p[1]])).rows[0] });
+    }
+    if (p[0] === 'requisitos' && p[1]) {
+      const { cols, vals, i } = build(['nombre', 'descripcion', 'obligatorio', 'tiene_vencimiento', 'dias_alerta', 'orden', 'activo', 'categoria_id']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      await query(`update requisitos_documentales set ${cols.join(', ')}, updated_at=now() where requisito_id=$${i}`, vals);
+      return json({ requisito: (await query('select * from requisitos_documentales where requisito_id=$1', [p[1]])).rows[0] });
+    }
+    return json({ error: 'No encontrado' }, 404);
+  } catch (e) { return json({ error: e.message }, 500); }
+}
+
+export async function DELETE(request, { params }) {
+  try {
+    await ensureSchema();
+    const p = (await params)?.path || [];
+    const profile = await getProfile(request);
+    if (!profile) return json({ error: 'No autorizado' }, 401);
+    if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+
+    if (p[0] === 'requisitos' && p[1]) { await query('update requisitos_documentales set activo=false where requisito_id=$1', [p[1]]); return json({ ok: true }); }
+    if (p[0] === 'categorias' && p[1]) { await query('update categorias_documentales set activo=false where categoria_id=$1', [p[1]]); return json({ ok: true }); }
+    if (p[0] === 'mandantes' && p[1] && p[2] === 'empresas' && p[3]) { await query('update mandante_empresas set activo=false where mandante_id=$1 and empresa_id=$2', [p[1], p[3]]); return json({ ok: true }); }
+    if (p[0] === 'trabajadores' && p[1]) { await query("update trabajadores set deleted_at=now(), estado='inactivo' where trabajador_id=$1", [p[1]]); await audit(profile, 'desactivar_trabajador', 'trabajador', p[1], null); return json({ ok: true }); }
+    return json({ error: 'No encontrado' }, 404);
+  } catch (e) { return json({ error: e.message }, 500); }
 }
