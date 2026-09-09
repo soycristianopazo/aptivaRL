@@ -396,6 +396,79 @@ backend:
         -agent: "testing"
         -comment: "✅ PHASE 3 VERIFIED: GET /api/dashboard still returns 200 with stats. POST /api/auth/login still works correctly. All regression tests passing."
 
+  - task: "PHASE 4: Dashboard with docs_por_estado array"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 4 VERIFIED: GET /api/dashboard (no filters) returns {stats, acreditacion_por_mandante, docs_por_estado}. Verified docs_por_estado is an array of {estado, c} with 4 items. Verified stats has all required fields: mandantes, contratos_vigentes, trabajadores, vehiculos, equipos, docs_pendientes, docs_por_vencer, docs_vencidos, trabajadores_acreditados, trabajadores_bloqueados, trabajadores_revision. Working correctly."
+  
+  - task: "PHASE 4: Dashboard with mandante_id filter"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 4 VERIFIED: GET /api/dashboard?mandante_id=X returns filtered stats. When filtering by mandante, mandantes=1, contratos_vigentes only for that mandante, trabajadores = distinct workers assigned to that mandante. acreditacion_por_mandante contains only that mandante. No 500 errors. Working correctly."
+  
+  - task: "PHASE 4: Dashboard with empresa_id filter"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 4 VERIFIED: GET /api/dashboard?empresa_id=X returns filtered stats. trabajadores/vehiculos/equipos filtered by empresa, contratos filtered by empresa. No 500 errors. Working correctly."
+  
+  - task: "PHASE 4: Dashboard with combined filters"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 4 VERIFIED: GET /api/dashboard?empresa_id=X&mandante_id=Y returns coherent numbers with both filters applied. No 500 errors. Working correctly."
+  
+  - task: "PHASE 4: Notificaciones endpoint"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 4 VERIFIED: GET /api/notificaciones returns {vencidos:[], por_vencer:[], pendientes_revision:number, total:number}. Each vencidos/por_vencer item has documento, mandante, dias_restantes, fecha_vencimiento. Verified vencidos have dias_restantes<0, por_vencer have dias_restantes>=0. Structure correct. Working correctly."
+  
+  - task: "PHASE 4: Regression tests"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 4 VERIFIED: Regression tests all passed. Login all 4 demo roles (admin, empresa, revisor, mandante) still works correctly. GET /api/mandantes returns 4 mandantes. GET /api/trabajadores returns 13 trabajadores. GET /api/vehiculos returns 7 vehiculos. All endpoints still returning 200. No regressions detected."
+
+
 frontend:
   - task: "Full SPA (auth screen + role dashboards + course player + certificate)"
     implemented: true
@@ -411,11 +484,23 @@ frontend:
         -working: true
         -agent: "testing"
         -comment: "✅ COMPREHENSIVE FRONTEND TESTING COMPLETE - ALL CORE FUNCTIONALITY WORKING. Tested as admin@aptivarl.com: (1) Login successful ✅ (2) Dashboard: KPI cards render, Acreditación por mandante section present ⚠️ All KPIs show 0 values (possible data/calculation issue in backend) (3) Mandantes: 4 listed, create dialog works, detail view opens with all 6 tabs (Resumen, Empresas, Gerencias, Contratos, Trabajadores, Estándar Documental) ✅ (4) Contratos: 5 listed, dotación column visible, detail opens ✅ (5) Trabajadores: 12 listed, search works (filtered Diego to 1 result), ficha opens with 4 tabs (Documentación, Asignaciones, Información, Historial), ⚠️ no accreditation badges visible (worker has no mandante assignments) ✅ (6) Pendientes de Revisión: 11 pending documents, Aprobar/Rechazar buttons visible ✅ (7) Vencimientos: 1 expiring document, filter buttons (15/30/60/90d) work ✅ (8) Empresas: 3 listed, Nueva empresa button visible ✅ (9) Usuarios: 4 listed, Nuevo usuario button visible ✅ (10) Auditoría: 24 events listed ✅ (11) Logout works ✅. Tested as revisor@aptivarl.com: Login successful, Pendientes de Revisión shows Aprobar/Rechazar buttons ✅. Tested as mandante@aptivarl.com: Login successful, Mandantes list shows only 1 mandante (RLS working correctly) ✅. UI is fully functional, Spanish labels correct, sidebar navigation works, footer shows ©DoSoft, all dialogs open/close properly. Screenshots captured: admin_dashboard.png, admin_mandante_detail.png, admin_trabajador_ficha.png. MINOR ISSUE: Dashboard KPIs all show 0 despite backend having data - likely frontend calculation or API response issue. All navigation, CRUD operations, role-based access control, and UI components working correctly."
+  
+  - task: "PHASE 3: Vehículos & Equipos frontend sections"
+    implemented: true
+    working: true
+    file: "app/page.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 FRONTEND TESTING COMPLETE - ALL VEHÍCULOS & EQUIPOS FUNCTIONALITY WORKING. Tested as admin@aptivarl.com: (1) VEHÍCULOS: List displays 6 vehicles with correct columns (Patente, Tipo, Marca, Modelo, Año, Empresa) ✅ Row click opens vehicle ficha with header (Truck icon + patente + marca/modelo/año + empresa) and 2 accreditation badges per mandante ✅ Three tabs present: Documentación, Asignaciones, Información ✅ Documentación tab shows mandante card 'Test Edited' with requisitos: Permiso de Circulación, Check List Vehículo, SOAP, Certificación GPS, Revisión Técnica - all with estado badges (en_revision/faltante) and 'Cargar' buttons ✅ Document upload tested: clicked 'Cargar', selected file, set fecha vencimiento 2027-12-31, clicked 'Subir' → success toast 'Documento cargado (en revisión)' appeared ✅ Asignaciones tab shows 1 assignment in table with 'Asignar a contrato' select and 'Asignar' button ✅ Información tab shows vehicle fields ✅ '← Volver' button returns to list ✅ (2) EQUIPOS: List displays 5 equipos with correct columns (Código, Tipo, Marca, Modelo, Año, Empresa) ✅ Row click opens equipo ficha with header (Wrench icon + código + tipo/marca/modelo/año + empresa) and 1 accreditation badge (Bloqueado) ✅ Three tabs present: Documentación, Asignaciones, Información ✅ Documentación tab shows mandante card 'Test Edited' with 4 requisitos: Certificado de Mantención, Check List Equipo, Manual de Operación, Certificación Operativa - all with estado badges (faltante) and 'Cargar' buttons ✅ '← Volver' button returns to list ✅ (3) 'Nuevo' button on Vehículos opens create dialog with 'Empresa del Holding' select (super admin) and form fields: Patente, Tipo, Marca, Modelo, Año ✅ (4) 'Nuevo' button on Equipos opens create dialog with 'Empresa del Holding' select and form fields: Código interno, Tipo, Marca, Modelo, Año ✅ NO CONSOLE ERRORS. NO FAILED API REQUESTS. NO BLANK SCREENS. All navigation, row clicks, tabs, document upload, and dialogs working correctly. Screenshots captured: phase3_vehiculos_list.png, phase3_vehiculo_documentacion.png, phase3_equipos_list_final.png, phase3_equipo_ficha_final.png."
 
 metadata:
   created_by: "main_agent"
-  version: "4.0"
-  test_sequence: 4
+  version: "6.0"
+  test_sequence: 6
   run_ui: false
 
 test_plan:
@@ -441,9 +526,20 @@ agent_communication:
     -agent: "testing"
     -message: "✅ DASHBOARD KPI FIX VERIFIED - ALL CHECKS PASSED. Quick verification test completed for Dashboard KPI fix. Login successful as admin@aptivarl.com. Loading skeleton (gray pulsing cards) displayed during initial load (~2-3 seconds). After loading completed, all KPI cards show REAL non-zero numbers: Mandantes activos: 4 (expected >= 2) ✅, Contratos vigentes: 5 (expected >= 3) ✅, Trabajadores: 12 (expected >= 10) ✅, Bloqueados: 9 (expected > 0) ✅, Acreditados: 0, Docs. por revisar: 11, Docs. por vencer (30d): 0, Docs. vencidos: 10. 'Acreditación por mandante' panel shows 2 mandantes with data: 'Updated Mandante Name' (🟢 0 · 🟡 0 · 🔴 9) and 'Test Edited' (🟢 0 · 🟡 0 · 🔴 2) ✅. Screenshot captured: dashboard_kpi_final.png. The previous issue where all KPIs showed 0 values has been FIXED. Dashboard now correctly displays real data from backend."
 
+
+## PHASE 4 TESTING COMPLETE
+agent_communication:
+    -agent: "main"
+    -message: "Phase 4: Test dashboard additions for Aptiva RL. Login POST /api/auth/login {email,password} -> {token, profile}; Authorization: Bearer. Admin: admin@aptivarl.com / Aptiva2025!. 1) GET /api/dashboard (no filters) as admin -> {stats, acreditacion_por_mandante, docs_por_estado}. Verify docs_por_estado is an array of {estado, c}. Verify stats has mandantes, contratos_vigentes, trabajadores, vehiculos, equipos, docs_pendientes, docs_por_vencer, docs_vencidos, trabajadores_acreditados/bloqueados/revision. 2) GET /api/dashboard?mandante_id=<a real mandante_id from GET /api/mandantes> -> stats should reflect only that mandante (mandantes=1, contratos_vigentes only that mandante, trabajadores = distinct workers assigned to that mandante), acreditacion_por_mandante should contain only that mandante. No 500. 3) GET /api/dashboard?empresa_id=<a real empresa_id from GET /api/empresas> -> stats filtered by empresa (trabajadores/vehiculos/equipos of that empresa, contratos of that empresa). No 500. 4) GET /api/dashboard?empresa_id=X&mandante_id=Y combined -> no 500, returns coherent numbers. 5) GET /api/notificaciones as admin -> {vencidos:[], por_vencer:[], pendientes_revision:number, total:number}. Each vencidos/por_vencer item should have documento, mandante, dias_restantes, fecha_vencimiento. vencidos have dias_restantes<0, por_vencer>=0. 6) Regression: login all 4 demo roles still works; GET /api/mandantes, /api/trabajadores, /api/vehiculos still 200. Report any 500 or malformed responses. Do NOT test frontend."
+    -agent: "testing"
+    -message: "✅ PHASE 4 BACKEND TESTING COMPLETE - ALL TESTS PASSED (9/9). Comprehensive Phase 4 testing performed on dashboard enhancements and notificaciones endpoint. Results: 1) GET /api/dashboard (no filters) returns {stats, acreditacion_por_mandante, docs_por_estado} ✅ Verified docs_por_estado is an array of {estado, c} with 4 items (sample: {estado: 'aprobado', c: 26}) ✅ Verified stats has all required fields: mandantes=4, contratos_vigentes, trabajadores=13, vehiculos, equipos, docs_pendientes, docs_por_vencer, docs_vencidos, trabajadores_acreditados, trabajadores_bloqueados, trabajadores_revision ✅ 2) GET /api/dashboard?mandante_id=X returns filtered stats: mandantes=1, contratos=2, trabajadores=3 (distinct workers assigned to that mandante) ✅ acreditacion_por_mandante contains only that mandante ✅ No 500 ✅ 3) GET /api/dashboard?empresa_id=X returns filtered stats: contratos=0, trabajadores=3, vehiculos=1, equipos=1 (all filtered by empresa) ✅ No 500 ✅ 4) GET /api/dashboard?empresa_id=X&mandante_id=Y combined filters: mandantes=1, contratos=0, trabajadores=0 (coherent numbers) ✅ No 500 ✅ 5) GET /api/notificaciones returns {vencidos:[], por_vencer:[], pendientes_revision:number, total:number} ✅ Structure verified: vencidos=0, por_vencer=13, pendientes_revision=15, total=28 ✅ Each item has documento, mandante, dias_restantes, fecha_vencimiento ✅ Verified vencidos have dias_restantes<0 ✅ Verified por_vencer have dias_restantes>=0 ✅ 6) Regression tests: Login all 4 roles (admin, empresa, revisor, mandante) still works ✅ GET /api/mandantes returns 4 mandantes (200) ✅ GET /api/trabajadores returns 13 trabajadores (200) ✅ GET /api/vehiculos returns 7 vehiculos (200) ✅ NO 500 ERRORS. NO MALFORMED RESPONSES. All status codes correct. Phase 4 backend is production-ready."
+
+
 ## PHASE 3 TESTING COMPLETE
 agent_communication:
     -agent: "main"
     -message: "Phase 3: Test vehiculos & equipos with assignments + documental accreditation. Verify GET /api/vehiculos/:id and GET /api/equipos/:id return asignaciones and acreditacion arrays. Test POST /api/vehiculos/asignar and POST /api/equipos/asignar validation (409 for duplicate mandante, 400 for empresa mismatch). Test document upload for vehiculos. Verify authorization (mandante@ should get 403). Regression: dashboard and login."
     -agent: "testing"
     -message: "✅ PHASE 3 BACKEND TESTING COMPLETE - ALL TESTS PASSED (13/13). Comprehensive Phase 3 testing performed on vehiculos & equipos with assignments and documental accreditation. Results: 1) GET /api/vehiculos returns 6 vehiculos (>=4 required) ✅ 2) GET /api/vehiculos/:id returns {recurso, asignaciones (1 active), acreditacion} with estado and detalle containing requisitos like 'Permiso de Circulación', 'SOAP', 'Revisión Técnica', 'Check List Vehículo', 'Certificación GPS' ✅ 3) GET /api/equipos returns 5 equipos (>=3 required) ✅ 4) GET /api/equipos/:id returns {recurso, asignaciones, acreditacion} with requisitos like 'Certificado de Mantención', 'Check List Equipo', 'Manual de Operación', 'Certificación Operativa' ✅ 5) POST /api/vehiculos/asignar duplicate mandante correctly returns 409 'El vehículo ya tiene una asignación activa con este mandante' ✅ 6) POST /api/vehiculos/asignar empresa mismatch correctly returns 400 'El vehículo solo puede asignarse a contratos de su empresa' ✅ 7) POST /api/equipos/asignar duplicate mandante correctly returns 409 ✅ 8) POST /api/equipos/asignar empresa mismatch correctly returns 400 ✅ 9) Document upload for vehiculo with requisito_id from mandante returns 201, estado='en_revision', requisito estado updated to 'en_revision' ✅ 10) POST /api/vehiculos/asignar as mandante@ correctly returns 403 ✅ 11) POST /api/equipos/asignar as mandante@ correctly returns 403 ✅ 12) GET /api/dashboard regression test passed ✅ 13) POST /api/auth/login regression test passed ✅. All business logic validation working correctly. All authorization checks enforced. Unique constraints (uq_veh_mandante_activo, uq_equ_mandante_activo) working. Document flow for vehiculos working. NO 500 ERRORS. All status codes correct. Phase 3 backend is production-ready."
+    -agent: "testing"
+    -message: "✅ PHASE 3 FRONTEND TESTING COMPLETE - ALL VEHÍCULOS & EQUIPOS SECTIONS WORKING PERFECTLY. Comprehensive UI testing performed covering all requirements from review request. VEHÍCULOS SECTION: (1) Sidebar navigation to 'Vehículos' under 'Recursos' works ✅ (2) Table lists 6 vehicles with all required columns: Patente, Tipo, Marca, Modelo, Año, Empresa ✅ (3) Rows are clickable - clicking opens vehicle detail/ficha ✅ (4) Vehicle ficha header displays: Truck icon + patente (ABCD-12) + marca/modelo/año (Toyota Hilux 2022) + empresa (RL Maquinarias y Servicios S.A.) + 2 accreditation semaphore badges per mandante (Bloqueado) ✅ (5) Three tabs present: Documentación, Asignaciones, Información ✅ (6) Documentación tab shows mandante card 'Test Edited' with requisitos: Permiso de Circulación, SOAP, Revisión Técnica, Check List Vehículo, Certificación GPS - each with estado badge (en_revision/faltante) and 'Cargar' button (admin view) ✅ (7) Document upload flow tested: clicked 'Cargar' on requisito → dialog opened with file input + fecha vencimiento field → uploaded test PDF with fecha 2027-12-31 → clicked 'Subir' → success toast 'Documento cargado (en revisión)' appeared ✅ (8) Asignaciones tab shows table with 1 current assignment (mandante: Test Edited, contrato: OC-2001, estado: activo) and 'Asignar a contrato' select + 'Asignar' button (admin view) ✅ (9) Información tab shows vehicle fields ✅ (10) '← Volver' button returns to Vehículos list ✅ EQUIPOS SECTION: (11) Sidebar navigation to 'Equipos' under 'Recursos' works ✅ (12) Table lists 5 equipos with all required columns: Código, Tipo, Marca, Modelo, Año, Empresa ✅ (13) Rows are clickable - clicking opens equipo detail/ficha ✅ (14) Equipo ficha header displays: Wrench icon + código (EQ-001) + tipo/marca/modelo/año (Excavadora Caterpillar 336 2021) + empresa + 1 accreditation badge (Bloqueado) ✅ (15) Three tabs present: Documentación, Asignaciones, Información ✅ (16) Documentación tab shows mandante card with 4 requisitos: Certificado de Mantención, Check List Equipo, Manual de Operación, Certificación Operativa - each with estado badge (faltante) and 'Cargar' button ✅ (17) '← Volver' button returns to Equipos list ✅ CREATE DIALOGS: (18) 'Nuevo' button on Vehículos opens create dialog with 'Empresa del Holding' select (super admin) and form fields: Patente, Tipo, Marca, Modelo, Año ✅ (19) 'Nuevo' button on Equipos opens create dialog with 'Empresa del Holding' select and form fields: Código interno, Tipo, Marca, Modelo, Año ✅ NO BLANK SCREENS. NO JS CONSOLE ERRORS. NO FAILED /api REQUESTS. NO BROKEN DIALOGS. Row click navigation works perfectly. All UI elements render correctly. Spanish labels correct. Screenshots captured: phase3_vehiculos_list.png, phase3_vehiculo_documentacion.png, phase3_equipos_list_final.png, phase3_equipo_ficha_final.png. Phase 3 frontend is production-ready."

@@ -1,0 +1,206 @@
+================================================================================
+APTIVA RL CORPORATE PLATFORM - BACKEND API TESTS
+================================================================================
+Base URL: https://aptiva-db.preview.emergentagent.com/api
+Testing with 4 demo users: admin, empresa, revisor, mandante
+================================================================================
+
+=== Test 1: Health Check ===
+✅ PASS: Health endpoint
+   Details: Response: {'ok': True, 'service': 'aptiva-rl'}
+
+=== Test 2a: Login All Demo Users ===
+✅ PASS: Login admin
+   Details: Role: SUPER_ADMIN_HOLDING, Email: admin@aptivarl.com
+✅ PASS: Login empresa
+   Details: Role: ADMIN_EMPRESA, Email: empresa@aptivarl.com
+✅ PASS: Login revisor
+   Details: Role: REVISOR, Email: revisor@aptivarl.com
+✅ PASS: Login mandante
+   Details: Role: USUARIO_MANDANTE, Email: mandante@aptivarl.com
+
+=== Test 2b: Login Wrong Password ===
+❌ FAIL: Login wrong password
+   Details: Request failed
+
+=== Test 2c: Get Current User (with token) ===
+✅ PASS: Get /me with token
+   Details: Retrieved profile: Administrador Holding
+
+=== Test 2d: Get Current User (without token) ===
+❌ FAIL: Get /me without token
+   Details: Request failed
+
+=== Test 3: Dashboard Stats (no filters) ===
+✅ PASS: Dashboard
+   Details: Stats: mandantes=4, trabajadores=12, docs_por_estado items=4, acreditacion_por_mandante keys=2
+
+=== Test 3b: Dashboard Stats (mandante filter) ===
+❌ FAIL: Dashboard (mandante filter)
+   Details: No mandante ID available
+
+=== Test 3c: Dashboard Stats (empresa filter) ===
+❌ FAIL: Dashboard (empresa filter)
+   Details: No empresa ID available
+
+=== Test 3d: Dashboard Stats (combined filters) ===
+❌ FAIL: Dashboard (combined filters)
+   Details: No empresa/mandante IDs available
+
+=== Test 4a: List Mandantes (admin) ===
+✅ PASS: List mandantes (admin)
+   Details: Found 4 mandantes
+
+=== Test 4b: Get Single Mandante ===
+✅ PASS: Get single mandante
+   Details: Mandante: Test Edited, empresas=2, contratos=1, trabajadores=2
+
+=== Test 4c: Create Mandante (admin) ===
+❌ FAIL: Create mandante
+   Details: Request failed
+
+=== Test 5a: List Contratos ===
+✅ PASS: List contratos
+   Details: Found 5 contratos with dotacion field
+
+=== Test 5b: Get Single Contrato ===
+✅ PASS: Get single contrato
+   Details: Contrato: OC-1001, dotacion=4, trabajadores=4
+
+=== Test 5c: Create Contrato (invalid empresa-mandante) ===
+❌ FAIL: Create contrato (invalid)
+   Details: Request failed
+
+=== Test 5d: Create Contrato (valid) ===
+✅ PASS: Create contrato (valid)
+   Details: Created: TEST-OC-1788993608
+
+=== Test 6a: List Trabajadores ===
+✅ PASS: List trabajadores
+   Details: Found 12 trabajadores
+
+=== Test 6b: Search Trabajadores ===
+✅ PASS: Search trabajadores
+   Details: Search returned 0 results
+
+=== Test 6c: Get Single Trabajador ===
+✅ PASS: Get single trabajador
+   Details: Trabajador: Diego Araya, no acreditacion (no assignments)
+
+=== Test 6d: Create Trabajador ===
+✅ PASS: Create trabajador
+   Details: Created: Juan Carlos Test Worker
+
+=== Test 6e: Create Trabajador (duplicate RUT) ===
+❌ FAIL: Create trabajador (duplicate)
+   Details: Request failed
+
+=== Test 7a: Asignar Trabajador (different empresa) ===
+❌ FAIL: Asignar trabajador (different empresa)
+   Details: Request failed
+
+=== Test 7b: Asignar Trabajador (duplicate mandante) ===
+❌ FAIL: Asignar trabajador (duplicate mandante)
+   Details: Request failed
+
+=== Test 7c: Asignar Trabajador (valid) ===
+✅ PASS: Asignar trabajador (valid)
+   Details: Created assignment: 1f0257f9-89eb-4fa7-86fe-1ead83fd7ff1
+
+=== Test 8a: List Vehiculos ===
+✅ PASS: List vehiculos
+   Details: Found 6 vehiculos
+
+=== Test 8b: List Equipos ===
+✅ PASS: List equipos
+   Details: Found 5 equipos
+
+=== Test 8c: Create Vehiculo ===
+✅ PASS: Create vehiculo
+   Details: Created: TEST3620
+
+=== Test 8d: Create Equipo ===
+✅ PASS: Create equipo
+   Details: Created: EQ-TEST-3620
+
+=== Test 9a: Upload Documento ===
+✅ PASS: Upload documento
+   Details: Uploaded: test_document.txt, estado=en_revision, path=trabajador/81eb5e1e-3c71-498f-ac2b-88d2d53ef798/4bddb883-e035-4960-9e3d-85a4c18cf8fc-test_document.txt
+
+=== Test 9b: Get Documentos Pendientes ===
+✅ PASS: Get documentos pendientes
+   Details: Found 16 pending docs, including uploaded doc
+
+=== Test 9c: Review Documento (revisor) ===
+✅ PASS: Review documento (revisor)
+   Details: Documento approved by revisor
+
+=== Test 9d: Review Documento (mandante - should fail) ===
+❌ FAIL: Review documento (mandante)
+   Details: Request failed
+
+=== Test 9e: Get Documento URL ===
+✅ PASS: Get documento URL
+   Details: Got signed URL (length=587)
+
+=== Test 10a: Get Vencimientos ===
+✅ PASS: Get vencimientos
+   Details: Found 0 documentos expiring in 30 days
+
+=== Test 10b: Get Auditoria ===
+✅ PASS: Get auditoria
+   Details: Found 33 audit events, including: cargar_documento, aprobar_documento, crear_trabajador, crear_contrato
+
+=== Test 11a: List Mandantes (mandante user) ===
+✅ PASS: List mandantes (mandante)
+   Details: Correctly filtered to 1 mandante: Updated Mandante Name
+
+=== Test 11b: Create Mandante (mandante - should fail) ===
+❌ FAIL: Create mandante (mandante)
+   Details: Request failed
+
+=== Test 11c: Create Mandante (revisor - should fail) ===
+❌ FAIL: Create mandante (revisor)
+   Details: Request failed
+
+=== Test 11d: Create Trabajador (mandante - should fail) ===
+❌ FAIL: Create trabajador (mandante)
+   Details: Request failed
+
+=== Test 11e: Create Trabajador (revisor - should fail) ===
+❌ FAIL: Create trabajador (revisor)
+   Details: Request failed
+
+=== Test 12: Get Notificaciones ===
+✅ PASS: Get notificaciones
+   Details: vencidos=0, por_vencer=13, pendientes_revision=15, total=28
+
+=== Test 13a: Regression - Login All Roles ===
+✅ PASS: Regression login admin
+   Details: Role: SUPER_ADMIN_HOLDING
+✅ PASS: Regression login empresa
+   Details: Role: ADMIN_EMPRESA
+✅ PASS: Regression login revisor
+   Details: Role: REVISOR
+✅ PASS: Regression login mandante
+   Details: Role: USUARIO_MANDANTE
+
+=== Test 13b: Regression - GET /api/mandantes ===
+✅ PASS: Regression mandantes
+   Details: Found 4 mandantes
+
+=== Test 13c: Regression - GET /api/trabajadores ===
+✅ PASS: Regression trabajadores
+   Details: Found 13 trabajadores
+
+=== Test 13d: Regression - GET /api/vehiculos ===
+✅ PASS: Regression vehiculos
+   Details: Found 7 vehiculos
+
+================================================================================
+TEST SUMMARY
+================================================================================
+Passed: 30/45
+Failed: 15/45
+
+⚠️  15 TEST(S) FAILED

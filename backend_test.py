@@ -197,8 +197,8 @@ def test_auth_me_without_token():
 # ============================================================================
 
 def test_dashboard():
-    """Test 3: GET /api/dashboard (as admin) -> stats object + acreditacion_por_mandante map"""
-    print("\n=== Test 3: Dashboard Stats ===")
+    """Test 3: GET /api/dashboard (as admin) -> stats object + acreditacion_por_mandante map + docs_por_estado array"""
+    print("\n=== Test 3: Dashboard Stats (no filters) ===")
     resp = make_request("GET", "/dashboard", token=tokens["admin"])
     
     if not resp:
@@ -208,7 +208,7 @@ def test_dashboard():
         return log_test("Dashboard", False, f"Expected 200, got {resp.status_code}: {resp.text}")
     
     data = resp.json()
-    required_fields = ["stats", "acreditacion_por_mandante"]
+    required_fields = ["stats", "acreditacion_por_mandante", "docs_por_estado"]
     missing = [f for f in required_fields if f not in data]
     
     if missing:
@@ -216,13 +216,99 @@ def test_dashboard():
     
     stats = data["stats"]
     stats_fields = ["mandantes", "contratos_vigentes", "trabajadores", "vehiculos", "equipos", 
-                    "docs_pendientes", "docs_vencidos", "trabajadores_acreditados", "trabajadores_bloqueados"]
+                    "docs_pendientes", "docs_por_vencer", "docs_vencidos", "trabajadores_acreditados", 
+                    "trabajadores_bloqueados", "trabajadores_revision"]
     missing_stats = [f for f in stats_fields if f not in stats]
     
     if missing_stats:
         return log_test("Dashboard", False, f"Missing stats fields: {missing_stats}")
     
-    return log_test("Dashboard", True, f"Stats: mandantes={stats['mandantes']}, trabajadores={stats['trabajadores']}, acreditacion_por_mandante keys={len(data['acreditacion_por_mandante'])}")
+    # Verify docs_por_estado is an array of {estado, c}
+    docs_por_estado = data["docs_por_estado"]
+    if not isinstance(docs_por_estado, list):
+        return log_test("Dashboard", False, f"docs_por_estado should be array, got {type(docs_por_estado)}")
+    
+    if docs_por_estado:
+        first_item = docs_por_estado[0]
+        if "estado" not in first_item or "c" not in first_item:
+            return log_test("Dashboard", False, f"docs_por_estado items should have 'estado' and 'c', got {first_item.keys()}")
+    
+    return log_test("Dashboard", True, f"Stats: mandantes={stats['mandantes']}, trabajadores={stats['trabajadores']}, docs_por_estado items={len(docs_por_estado)}, acreditacion_por_mandante keys={len(data['acreditacion_por_mandante'])}")
+
+def test_dashboard_with_mandante_filter():
+    """Test 3b: GET /api/dashboard?mandante_id=X -> filtered stats"""
+    print("\n=== Test 3b: Dashboard Stats (mandante filter) ===")
+    
+    if not seeded_mandante_id:
+        return log_test("Dashboard (mandante filter)", False, "No mandante ID available")
+    
+    resp = make_request("GET", "/dashboard", token=tokens["admin"], params={"mandante_id": seeded_mandante_id})
+    
+    if not resp:
+        return log_test("Dashboard (mandante filter)", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Dashboard (mandante filter)", False, f"Expected 200, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    stats = data.get("stats", {})
+    
+    # When filtering by mandante, mandantes should be 1
+    if stats.get("mandantes") != 1:
+        return log_test("Dashboard (mandante filter)", False, f"Expected mandantes=1, got {stats.get('mandantes')}")
+    
+    # contratos_vigentes should only be for this mandante
+    # trabajadores should be distinct workers assigned to this mandante
+    # acreditacion_por_mandante should contain only this mandante
+    acreditacion = data.get("acreditacion_por_mandante", {})
+    
+    return log_test("Dashboard (mandante filter)", True, f"Filtered: mandantes={stats['mandantes']}, contratos={stats.get('contratos_vigentes')}, trabajadores={stats.get('trabajadores')}, acreditacion keys={len(acreditacion)}")
+
+def test_dashboard_with_empresa_filter():
+    """Test 3c: GET /api/dashboard?empresa_id=X -> filtered stats"""
+    print("\n=== Test 3c: Dashboard Stats (empresa filter) ===")
+    
+    if not seeded_empresa_id:
+        return log_test("Dashboard (empresa filter)", False, "No empresa ID available")
+    
+    resp = make_request("GET", "/dashboard", token=tokens["admin"], params={"empresa_id": seeded_empresa_id})
+    
+    if not resp:
+        return log_test("Dashboard (empresa filter)", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Dashboard (empresa filter)", False, f"Expected 200, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    stats = data.get("stats", {})
+    
+    # trabajadores/vehiculos/equipos should be filtered by empresa
+    # contratos should be filtered by empresa
+    return log_test("Dashboard (empresa filter)", True, f"Filtered: contratos={stats.get('contratos_vigentes')}, trabajadores={stats.get('trabajadores')}, vehiculos={stats.get('vehiculos')}, equipos={stats.get('equipos')}")
+
+def test_dashboard_with_combined_filters():
+    """Test 3d: GET /api/dashboard?empresa_id=X&mandante_id=Y -> combined filters"""
+    print("\n=== Test 3d: Dashboard Stats (combined filters) ===")
+    
+    if not seeded_empresa_id or not seeded_mandante_id:
+        return log_test("Dashboard (combined filters)", False, "No empresa/mandante IDs available")
+    
+    resp = make_request("GET", "/dashboard", token=tokens["admin"], params={
+        "empresa_id": seeded_empresa_id,
+        "mandante_id": seeded_mandante_id
+    })
+    
+    if not resp:
+        return log_test("Dashboard (combined filters)", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Dashboard (combined filters)", False, f"Expected 200, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    stats = data.get("stats", {})
+    
+    # Should return coherent numbers with both filters applied
+    return log_test("Dashboard (combined filters)", True, f"Combined: mandantes={stats.get('mandantes')}, contratos={stats.get('contratos_vigentes')}, trabajadores={stats.get('trabajadores')}")
 
 # ============================================================================
 # TEST 4: Mandantes
@@ -993,6 +1079,145 @@ def test_auditoria():
         return log_test("Get auditoria", False, f"Missing eventos field: {data}")
 
 # ============================================================================
+# TEST 12: Notificaciones (Phase 4)
+# ============================================================================
+
+def test_notificaciones():
+    """Test 12: GET /api/notificaciones -> {vencidos:[], por_vencer:[], pendientes_revision:number, total:number}"""
+    print("\n=== Test 12: Get Notificaciones ===")
+    resp = make_request("GET", "/notificaciones", token=tokens["admin"])
+    
+    if not resp:
+        return log_test("Get notificaciones", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Get notificaciones", False, f"Expected 200, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    required_fields = ["vencidos", "por_vencer", "pendientes_revision", "total"]
+    missing = [f for f in required_fields if f not in data]
+    
+    if missing:
+        return log_test("Get notificaciones", False, f"Missing fields: {missing}")
+    
+    # Verify vencidos and por_vencer are arrays
+    if not isinstance(data["vencidos"], list):
+        return log_test("Get notificaciones", False, f"vencidos should be array, got {type(data['vencidos'])}")
+    
+    if not isinstance(data["por_vencer"], list):
+        return log_test("Get notificaciones", False, f"por_vencer should be array, got {type(data['por_vencer'])}")
+    
+    # Verify pendientes_revision and total are numbers
+    if not isinstance(data["pendientes_revision"], int):
+        return log_test("Get notificaciones", False, f"pendientes_revision should be int, got {type(data['pendientes_revision'])}")
+    
+    if not isinstance(data["total"], int):
+        return log_test("Get notificaciones", False, f"total should be int, got {type(data['total'])}")
+    
+    # Verify structure of vencidos/por_vencer items
+    all_items = data["vencidos"] + data["por_vencer"]
+    if all_items:
+        first_item = all_items[0]
+        required_item_fields = ["documento", "mandante", "dias_restantes", "fecha_vencimiento"]
+        missing_item_fields = [f for f in required_item_fields if f not in first_item]
+        
+        if missing_item_fields:
+            return log_test("Get notificaciones", False, f"Notification items missing fields: {missing_item_fields}")
+        
+        # Verify vencidos have dias_restantes < 0
+        for item in data["vencidos"]:
+            if item["dias_restantes"] >= 0:
+                return log_test("Get notificaciones", False, f"vencidos item has dias_restantes >= 0: {item['dias_restantes']}")
+        
+        # Verify por_vencer have dias_restantes >= 0
+        for item in data["por_vencer"]:
+            if item["dias_restantes"] < 0:
+                return log_test("Get notificaciones", False, f"por_vencer item has dias_restantes < 0: {item['dias_restantes']}")
+    
+    return log_test("Get notificaciones", True, f"vencidos={len(data['vencidos'])}, por_vencer={len(data['por_vencer'])}, pendientes_revision={data['pendientes_revision']}, total={data['total']}")
+
+# ============================================================================
+# TEST 13: Regression Tests (Phase 4)
+# ============================================================================
+
+def test_regression_login_all_roles():
+    """Test 13a: Regression - Login all 4 roles still works"""
+    print("\n=== Test 13a: Regression - Login All Roles ===")
+    all_passed = True
+    
+    for user_key, user_data in USERS.items():
+        resp = make_request("POST", "/auth/login", data={
+            "email": user_data["email"],
+            "password": user_data["password"]
+        })
+        
+        if not resp or resp.status_code != 200:
+            log_test(f"Regression login {user_key}", False, f"Login failed")
+            all_passed = False
+            continue
+        
+        data = resp.json()
+        if "token" not in data or "profile" not in data:
+            log_test(f"Regression login {user_key}", False, f"Missing token or profile")
+            all_passed = False
+            continue
+        
+        log_test(f"Regression login {user_key}", True, f"Role: {data['profile']['role_codigo']}")
+    
+    return all_passed
+
+def test_regression_mandantes():
+    """Test 13b: Regression - GET /api/mandantes still works"""
+    print("\n=== Test 13b: Regression - GET /api/mandantes ===")
+    resp = make_request("GET", "/mandantes", token=tokens["admin"])
+    
+    if not resp:
+        return log_test("Regression mandantes", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Regression mandantes", False, f"Expected 200, got {resp.status_code}")
+    
+    data = resp.json()
+    if "mandantes" in data and len(data["mandantes"]) >= 2:
+        return log_test("Regression mandantes", True, f"Found {len(data['mandantes'])} mandantes")
+    else:
+        return log_test("Regression mandantes", False, f"Expected at least 2 mandantes")
+
+def test_regression_trabajadores():
+    """Test 13c: Regression - GET /api/trabajadores still works"""
+    print("\n=== Test 13c: Regression - GET /api/trabajadores ===")
+    resp = make_request("GET", "/trabajadores", token=tokens["admin"])
+    
+    if not resp:
+        return log_test("Regression trabajadores", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Regression trabajadores", False, f"Expected 200, got {resp.status_code}")
+    
+    data = resp.json()
+    if "trabajadores" in data and len(data["trabajadores"]) > 0:
+        return log_test("Regression trabajadores", True, f"Found {len(data['trabajadores'])} trabajadores")
+    else:
+        return log_test("Regression trabajadores", False, f"No trabajadores found")
+
+def test_regression_vehiculos():
+    """Test 13d: Regression - GET /api/vehiculos still works"""
+    print("\n=== Test 13d: Regression - GET /api/vehiculos ===")
+    resp = make_request("GET", "/vehiculos", token=tokens["admin"])
+    
+    if not resp:
+        return log_test("Regression vehiculos", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Regression vehiculos", False, f"Expected 200, got {resp.status_code}")
+    
+    data = resp.json()
+    if "vehiculos" in data:
+        return log_test("Regression vehiculos", True, f"Found {len(data['vehiculos'])} vehiculos")
+    else:
+        return log_test("Regression vehiculos", False, f"Missing vehiculos field")
+
+# ============================================================================
 # TEST 11: Role Enforcement
 # ============================================================================
 
@@ -1110,8 +1335,11 @@ def main():
     results.append(test_auth_me_with_token())
     results.append(test_auth_me_without_token())
     
-    # Test 3: Dashboard
+    # Test 3: Dashboard (Phase 4 enhanced)
     results.append(test_dashboard())
+    results.append(test_dashboard_with_mandante_filter())
+    results.append(test_dashboard_with_empresa_filter())
+    results.append(test_dashboard_with_combined_filters())
     
     # Test 4: Mandantes
     results.append(test_mandantes_list_admin())
@@ -1159,6 +1387,15 @@ def main():
     results.append(test_role_revisor_create_mandante())
     results.append(test_role_mandante_create_trabajador())
     results.append(test_role_revisor_create_trabajador())
+    
+    # Test 12: Notificaciones (Phase 4)
+    results.append(test_notificaciones())
+    
+    # Test 13: Regression Tests (Phase 4)
+    results.append(test_regression_login_all_roles())
+    results.append(test_regression_mandantes())
+    results.append(test_regression_trabajadores())
+    results.append(test_regression_vehiculos())
     
     # Summary
     print("\n" + "=" * 80)

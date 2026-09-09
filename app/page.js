@@ -15,7 +15,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3,
 } from 'lucide-react';
 
 const LOGO = '/logo-aptiva.png';
@@ -172,6 +172,7 @@ function Shell({ token, profile, onLogout }) {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationsBell api={api} onGo={go} />
             <div className="text-right hidden sm:block"><p className="text-sm font-medium text-slate-800">{profile.nombre}</p><p className="text-xs text-slate-400">{roleLabel[profile.role_codigo]}</p></div>
             <div className="h-9 w-9 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-semibold">{profile.nombre?.charAt(0)}</div>
             <button onClick={onLogout} className="text-slate-400 hover:text-red-500"><LogOut className="h-5 w-5" /></button>
@@ -240,41 +241,117 @@ function Table({ columns, rows, onRow, empty = 'Sin registros' }) {
 }
 
 /* ------------ Dashboard ------------ */
+function csvDownload(filename, headers, rows) {
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [headers.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+}
+
+function NotificationsBell({ api, onGo }) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { api('/notificaciones').then(setData).catch(() => {}); }, [api]);
+  const total = data?.total || 0;
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(!open)} className="relative text-slate-500 hover:text-slate-800">
+        <Bell className="h-5 w-5" />
+        {total > 0 && <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] rounded-full h-4 min-w-4 px-1 flex items-center justify-center">{total > 99 ? '99+' : total}</span>}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-80 bg-white border rounded-lg shadow-xl z-50 max-h-[70vh] overflow-y-auto">
+            <div className="p-3 border-b font-medium text-slate-800 text-sm">Notificaciones</div>
+            <div className="p-2 space-y-1 text-sm">
+              {data?.pendientes_revision > 0 && <button onClick={() => { setOpen(false); onGo('revision'); }} className="w-full text-left px-2 py-2 rounded hover:bg-slate-50 flex items-center gap-2"><FileClock className="h-4 w-4 text-amber-500" />{data.pendientes_revision} documento(s) por revisar</button>}
+              {(data?.vencidos || []).map((v) => <div key={v.documento_id} className="px-2 py-2 rounded hover:bg-slate-50"><p className="text-slate-700 truncate">{v.documento}</p><p className="text-xs text-red-600">Vencido · {v.mandante}</p></div>)}
+              {(data?.por_vencer || []).map((v) => <div key={v.documento_id} className="px-2 py-2 rounded hover:bg-slate-50"><p className="text-slate-700 truncate">{v.documento}</p><p className="text-xs text-amber-600">Vence en {v.dias_restantes}d · {v.mandante}</p></div>)}
+              {total === 0 && <p className="text-slate-400 px-2 py-4 text-center">Sin alertas</p>}
+            </div>
+            <button onClick={() => { setOpen(false); onGo('vencimientos'); }} className="w-full text-center p-2 text-blue-600 text-sm border-t hover:bg-slate-50">Ver vencimientos</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+const estadoBar = { aprobado: 'bg-emerald-500', en_revision: 'bg-blue-500', rechazado: 'bg-red-500', vencido: 'bg-red-600', pendiente: 'bg-slate-400' };
+
 function Dashboard({ api }) {
-  const [data] = useData(api, '/dashboard');
-  if (!data) return <div><PageHead title="Dashboard ejecutivo" sub="Estado en tiempo real del Holding Río Loa" /><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{Array.from({ length: 8 }).map((_, i) => <Card key={i}><CardContent className="p-4 h-[76px] animate-pulse bg-slate-50" /></Card>)}</div></div>;
+  const [empresas] = useData(api, '/empresas');
+  const [mandantes] = useData(api, '/mandantes');
+  const [fEmp, setFEmp] = useState('all');
+  const [fMan, setFMan] = useState('all');
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    const qs = new URLSearchParams();
+    if (fEmp !== 'all') qs.set('empresa_id', fEmp);
+    if (fMan !== 'all') qs.set('mandante_id', fMan);
+    setData(null);
+    api(`/dashboard?${qs.toString()}`).then(setData).catch((e) => toast.error(e.message));
+  }, [api, fEmp, fMan]);
+
   const s = data?.stats || {};
   const totalAcr = (s.trabajadores_acreditados || 0) + (s.trabajadores_bloqueados || 0) + (s.trabajadores_revision || 0) || 1;
+  const docsEstado = data?.docs_por_estado || [];
+  const maxDocs = Math.max(1, ...docsEstado.map((d) => d.c));
+  const exportar = () => {
+    const rows = Object.entries(data?.acreditacion_por_mandante || {}).map(([m, v]) => [m, v.ACREDITADO || 0, v.EN_REVISION || 0, v.BLOQUEADO || 0]);
+    csvDownload('acreditacion_por_mandante.csv', ['Mandante', 'Acreditados', 'En revisión', 'Bloqueados'], rows);
+  };
+
   return (
     <div>
-      <PageHead title="Dashboard ejecutivo" sub="Estado en tiempo real del Holding Río Loa" />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <Kpi label="Mandantes activos" value={s.mandantes} icon={Building2} color="bg-blue-50 text-blue-600" />
-        <Kpi label="Contratos vigentes" value={s.contratos_vigentes} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
-        <Kpi label="Trabajadores" value={s.trabajadores} icon={Users} color="bg-slate-100 text-slate-600" />
-        <Kpi label="Acreditados" value={s.trabajadores_acreditados} icon={CheckCircle2} color="bg-emerald-50 text-emerald-600" />
-        <Kpi label="Bloqueados" value={s.trabajadores_bloqueados} icon={XCircle} color="bg-red-50 text-red-600" />
-        <Kpi label="Docs. por revisar" value={s.docs_pendientes} icon={FileClock} color="bg-amber-50 text-amber-600" />
-        <Kpi label="Docs. por vencer (30d)" value={s.docs_por_vencer} icon={CalendarClock} color="bg-orange-50 text-orange-600" />
-        <Kpi label="Docs. vencidos" value={s.docs_vencidos} icon={AlertTriangle} color="bg-red-50 text-red-600" />
+      <PageHead title="Dashboard ejecutivo" sub="Estado en tiempo real del Holding Río Loa"
+        action={<Button variant="outline" onClick={exportar} disabled={!data}><Download className="h-4 w-4 mr-1" />Exportar</Button>} />
+      <div className="flex flex-wrap gap-2 mb-4">
+        <Select value={fEmp} onValueChange={setFEmp}><SelectTrigger className="w-56"><SelectValue placeholder="Empresa" /></SelectTrigger><SelectContent><SelectItem value="all">Todas las empresas</SelectItem>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select>
+        <Select value={fMan} onValueChange={setFMan}><SelectTrigger className="w-56"><SelectValue placeholder="Mandante" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los mandantes</SelectItem>{(mandantes?.mandantes || []).map((m) => <SelectItem key={m.mandante_id} value={m.mandante_id}>{m.razon_social}</SelectItem>)}</SelectContent></Select>
+        {(fEmp !== 'all' || fMan !== 'all') && <Button variant="ghost" onClick={() => { setFEmp('all'); setFMan('all'); }}>Limpiar</Button>}
       </div>
-      <div className="grid lg:grid-cols-2 gap-4">
-        <Card><CardHeader><CardTitle className="text-base">Estado de acreditación</CardTitle><CardDescription>Distribución de trabajadores</CardDescription></CardHeader><CardContent className="space-y-3">
-          {[['ACREDITADO', s.trabajadores_acreditados], ['EN_REVISION', s.trabajadores_revision], ['BLOQUEADO', s.trabajadores_bloqueados]].map(([k, v]) => (
-            <div key={k}><div className="flex justify-between text-sm mb-1"><SemBadge estado={k} /><span className="font-medium">{v || 0}</span></div><Progress value={((v || 0) / totalAcr) * 100} className="h-2" /></div>
-          ))}
-        </CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-base">Acreditación por mandante</CardTitle></CardHeader><CardContent className="space-y-3">
-          {Object.entries(data?.acreditacion_por_mandante || {}).map(([m, v]) => (
-            <div key={m}><p className="text-sm font-medium text-slate-700 mb-1">{m}</p><div className="flex gap-1 h-3 rounded overflow-hidden">
-              <div className="bg-emerald-500" style={{ width: `${(v.ACREDITADO || 0) * 20 + 2}%` }} title={`Acreditados: ${v.ACREDITADO}`} />
-              <div className="bg-amber-500" style={{ width: `${(v.EN_REVISION || 0) * 20 + 2}%` }} />
-              <div className="bg-red-500" style={{ width: `${(v.BLOQUEADO || 0) * 20 + 2}%` }} />
-            </div><p className="text-xs text-slate-400 mt-1">🟢 {v.ACREDITADO || 0} · 🟡 {v.EN_REVISION || 0} · 🔴 {v.BLOQUEADO || 0}</p></div>
-          ))}
-          {!Object.keys(data?.acreditacion_por_mandante || {}).length && <p className="text-sm text-slate-400">Sin datos</p>}
-        </CardContent></Card>
-      </div>
+      {!data ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{Array.from({ length: 8 }).map((_, i) => <Card key={i}><CardContent className="p-4 h-[76px] animate-pulse bg-slate-50" /></Card>)}</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <Kpi label="Mandantes activos" value={s.mandantes} icon={Building2} color="bg-blue-50 text-blue-600" />
+            <Kpi label="Contratos vigentes" value={s.contratos_vigentes} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
+            <Kpi label="Trabajadores" value={s.trabajadores} icon={Users} color="bg-slate-100 text-slate-600" />
+            <Kpi label="Acreditados" value={s.trabajadores_acreditados} icon={CheckCircle2} color="bg-emerald-50 text-emerald-600" />
+            <Kpi label="Bloqueados" value={s.trabajadores_bloqueados} icon={XCircle} color="bg-red-50 text-red-600" />
+            <Kpi label="Docs. por revisar" value={s.docs_pendientes} icon={FileClock} color="bg-amber-50 text-amber-600" />
+            <Kpi label="Docs. por vencer (30d)" value={s.docs_por_vencer} icon={CalendarClock} color="bg-orange-50 text-orange-600" />
+            <Kpi label="Docs. vencidos" value={s.docs_vencidos} icon={AlertTriangle} color="bg-red-50 text-red-600" />
+          </div>
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card><CardHeader><CardTitle className="text-base">Estado de acreditación</CardTitle><CardDescription>Distribución de trabajadores</CardDescription></CardHeader><CardContent className="space-y-3">
+              {[['ACREDITADO', s.trabajadores_acreditados], ['EN_REVISION', s.trabajadores_revision], ['BLOQUEADO', s.trabajadores_bloqueados]].map(([k, v]) => (
+                <div key={k}><div className="flex justify-between text-sm mb-1"><SemBadge estado={k} /><span className="font-medium">{v || 0}</span></div><Progress value={((v || 0) / totalAcr) * 100} className="h-2" /></div>
+              ))}
+            </CardContent></Card>
+            <Card><CardHeader><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="h-4 w-4 text-slate-400" />Documentos por estado</CardTitle></CardHeader><CardContent className="space-y-2">
+              {docsEstado.length === 0 && <p className="text-sm text-slate-400">Sin documentos</p>}
+              {docsEstado.map((d) => (
+                <div key={d.estado}><div className="flex justify-between text-sm mb-1"><span className="capitalize text-slate-600">{String(d.estado).replace('_', ' ')}</span><span className="font-medium">{d.c}</span></div>
+                  <div className="h-2.5 rounded bg-slate-100 overflow-hidden"><div className={`h-full ${estadoBar[d.estado] || 'bg-slate-400'}`} style={{ width: `${(d.c / maxDocs) * 100}%` }} /></div></div>
+              ))}
+            </CardContent></Card>
+            <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Acreditación por mandante</CardTitle></CardHeader><CardContent className="space-y-3">
+              {Object.entries(data?.acreditacion_por_mandante || {}).map(([m, v]) => (
+                <div key={m}><p className="text-sm font-medium text-slate-700 mb-1">{m}</p><div className="flex gap-1 h-3 rounded overflow-hidden">
+                  <div className="bg-emerald-500" style={{ width: `${(v.ACREDITADO || 0) * 20 + 2}%` }} />
+                  <div className="bg-amber-500" style={{ width: `${(v.EN_REVISION || 0) * 20 + 2}%` }} />
+                  <div className="bg-red-500" style={{ width: `${(v.BLOQUEADO || 0) * 20 + 2}%` }} />
+                </div><p className="text-xs text-slate-400 mt-1">🟢 {v.ACREDITADO || 0} · 🟡 {v.EN_REVISION || 0} · 🔴 {v.BLOQUEADO || 0}</p></div>
+              ))}
+              {!Object.keys(data?.acreditacion_por_mandante || {}).length && <p className="text-sm text-slate-400">Sin datos</p>}
+            </CardContent></Card>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -726,7 +803,7 @@ function Vencimientos({ api }) {
   const load = async (d) => { setDias(d); const r = await api(`/vencimientos?dias=${d}`); setRows(r.documentos); };
   return (
     <div>
-      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-blue-600' : ''} onClick={() => load(d)}>{d}d</Button>)}</div>} />
+      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-blue-600' : ''} onClick={() => load(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Trabajador', 'Mandante', 'Vence', 'Dias'], (rows || []).map((r) => [r.requisito || '', `${r.trab_nombre || ''} ${r.trab_apellido || ''}`, r.mandante || '', String(r.fecha_vencimiento).slice(0, 10), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
       <Table columns={[
         { key: 'requisito', label: 'Documento' },
         { key: 'trab', label: 'Trabajador', render: (r) => `${r.trab_nombre || ''} ${r.trab_apellido || ''}` },

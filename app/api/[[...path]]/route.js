@@ -204,31 +204,46 @@ export async function GET(request, { params }) {
 
     if (p[0] === 'auditoria') return json({ eventos: (await query('select * from auditoria order by created_at desc limit 200')).rows });
 
+    if (p[0] === 'notificaciones') {
+      const rows = (await query(`select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento, coalesce(r.nombre, d.nombre_archivo) as documento, coalesce(r.dias_alerta,30) as dias_alerta, m.razon_social as mandante, (d.fecha_vencimiento - current_date) as dias_restantes from documentos d left join requisitos_documentales r on r.requisito_id=d.requisito_id left join mandantes m on m.mandante_id=d.mandante_id where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null and d.fecha_vencimiento <= current_date + (coalesce(r.dias_alerta,30) || ' days')::interval order by d.fecha_vencimiento`)).rows;
+      const vencidos = rows.filter((x) => x.dias_restantes < 0);
+      const por_vencer = rows.filter((x) => x.dias_restantes >= 0);
+      const pendientes_revision = (await query("select count(*)::int c from documentos where estado='en_revision' and deleted_at is null")).rows[0].c;
+      return json({ vencidos, por_vencer, pendientes_revision, total: vencidos.length + por_vencer.length + pendientes_revision });
+    }
+
     if (p[0] === 'dashboard') {
+      const empF = searchParams.get('empresa_id') || null;
+      const manF = searchParams.get('mandante_id') || null;
       const q1 = async (s, a = []) => (await query(s, a)).rows[0].c;
-      const stats = {
-        mandantes: await q1("select count(*)::int c from mandantes where activo=true and deleted_at is null"),
-        contratos_vigentes: await q1("select count(*)::int c from contratos where estado='vigente' and deleted_at is null"),
-        trabajadores: await q1("select count(*)::int c from trabajadores where estado='activo' and deleted_at is null"),
-        vehiculos: await q1('select count(*)::int c from vehiculos where deleted_at is null'),
-        equipos: await q1('select count(*)::int c from equipos where deleted_at is null'),
-        docs_pendientes: await q1("select count(*)::int c from documentos where estado='en_revision' and deleted_at is null"),
-        docs_por_vencer: await q1("select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento is not null and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null"),
-        docs_vencidos: await q1("select count(*)::int c from documentos where deleted_at is null and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))"),
-      };
-      // Bulk acreditación (evita N+1)
-      const asigRows = (await query("select a.trabajador_id, a.mandante_id, m.razon_social as mandante from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.estado='activo'")).rows;
+      const stats = {};
+      stats.mandantes = manF ? 1 : await q1("select count(*)::int c from mandantes where activo=true and deleted_at is null");
+      { let s = "select count(*)::int c from contratos where estado='vigente' and deleted_at is null"; const a = []; if (empF) { a.push(empF); s += ` and empresa_id=$${a.length}`; } if (manF) { a.push(manF); s += ` and mandante_id=$${a.length}`; } stats.contratos_vigentes = await q1(s, a); }
+      if (manF) {
+        { const a = [manF]; let s = "select count(distinct a.trabajador_id)::int c from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and a.mandante_id=$1 and t.deleted_at is null"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } stats.trabajadores = await q1(s, a); }
+        { const a = [manF]; let s = "select count(distinct a.vehiculo_id)::int c from vehiculo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } stats.vehiculos = await q1(s, a); }
+        { const a = [manF]; let s = "select count(distinct a.equipo_id)::int c from equipo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } stats.equipos = await q1(s, a); }
+      } else {
+        const ea = empF ? [empF] : []; const w = empF ? ' and empresa_id=$1' : '';
+        stats.trabajadores = await q1(`select count(*)::int c from trabajadores where estado='activo' and deleted_at is null${w}`, ea);
+        stats.vehiculos = await q1(`select count(*)::int c from vehiculos where deleted_at is null${w}`, ea);
+        stats.equipos = await q1(`select count(*)::int c from equipos where deleted_at is null${w}`, ea);
+      }
+      const dw = manF ? ' and mandante_id=$1' : ''; const da = manF ? [manF] : [];
+      stats.docs_pendientes = await q1(`select count(*)::int c from documentos where estado='en_revision' and deleted_at is null${dw}`, da);
+      stats.docs_por_vencer = await q1(`select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null${dw}`, da);
+      stats.docs_vencidos = await q1(`select count(*)::int c from documentos where deleted_at is null and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))${dw}`, da);
+      const docs_por_estado = (await query(`select case when estado='aprobado' and fecha_vencimiento is not null and fecha_vencimiento < current_date then 'vencido' else estado end as estado, count(*)::int c from documentos where deleted_at is null${dw} group by 1`, da)).rows;
+
+      const asigRows = (await query("select a.trabajador_id, a.empresa_id, a.mandante_id, m.razon_social as mandante from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and t.deleted_at is null")).rows
+        .filter((r) => (!empF || r.empresa_id === empF) && (!manF || r.mandante_id === manF));
       const reqRows = (await query("select mandante_id, requisito_id, obligatorio from requisitos_documentales where tipo_recurso='trabajador' and activo=true")).rows;
       const docRows = (await query("select recurso_id, mandante_id, requisito_id, estado, fecha_vencimiento from documentos where recurso_tipo='trabajador' and deleted_at is null")).rows;
-      const reqByMand = {};
-      reqRows.forEach((r) => { (reqByMand[r.mandante_id] = reqByMand[r.mandante_id] || []).push(r); });
+      const reqByMand = {}; reqRows.forEach((r) => { (reqByMand[r.mandante_id] = reqByMand[r.mandante_id] || []).push(r); });
       const dkey = (rid, mid, reqid) => `${rid}|${mid}|${reqid}`;
-      const docMap = {};
-      docRows.forEach((d) => { const k = dkey(d.recurso_id, d.mandante_id, d.requisito_id); if (!docMap[k]) docMap[k] = d; });
-      const now = new Date();
-      const rank = { ACREDITADO: 0, EN_REVISION: 1, BLOQUEADO: 2 };
-      const porMandante = {};
-      const perWorst = {};
+      const docMap = {}; docRows.forEach((d) => { const k = dkey(d.recurso_id, d.mandante_id, d.requisito_id); if (!docMap[k]) docMap[k] = d; });
+      const now = new Date(); const rank = { ACREDITADO: 0, EN_REVISION: 1, BLOQUEADO: 2 };
+      const porMandante = {}; const perWorst = {};
       for (const a of asigRows) {
         let bloq = false, rev = false;
         for (const req of (reqByMand[a.mandante_id] || [])) {
@@ -247,10 +262,8 @@ export async function GET(request, { params }) {
       }
       let acreditados = 0, bloqueados = 0, revision = 0;
       Object.values(perWorst).forEach((v) => { if (v === 'BLOQUEADO') bloqueados++; else if (v === 'EN_REVISION') revision++; else acreditados++; });
-      stats.trabajadores_acreditados = acreditados;
-      stats.trabajadores_bloqueados = bloqueados;
-      stats.trabajadores_revision = revision;
-      return json({ stats, acreditacion_por_mandante: porMandante });
+      stats.trabajadores_acreditados = acreditados; stats.trabajadores_bloqueados = bloqueados; stats.trabajadores_revision = revision;
+      return json({ stats, acreditacion_por_mandante: porMandante, docs_por_estado });
     }
 
     return json({ error: 'No encontrado' }, 404);
