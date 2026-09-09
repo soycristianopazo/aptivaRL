@@ -311,6 +311,90 @@ backend:
         -working: true
         -agent: "testing"
         -comment: "✅ PHASE 2 VERIFIED: POST /api/mandantes/gerencias {mandante_id, nombre:'Gerencia Test'} returns 201. Working correctly."
+  
+  - task: "PHASE 3: Vehiculos detail with assignments and acreditacion"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 VERIFIED: GET /api/vehiculos returns 6 vehiculos (>=4 required). GET /api/vehiculos/:id returns {recurso, asignaciones (1 active), acreditacion} with estado and detalle array containing requisitos like 'Permiso de Circulación', 'SOAP', 'Revisión Técnica', 'Check List Vehículo', 'Certificación GPS'. Acreditacion structure correct with mandante_id, estado (BLOQUEADO/EN_REVISION/ACREDITADO), and detalle with requisito_id, nombre, obligatorio, estado fields. Working correctly."
+  
+  - task: "PHASE 3: Equipos detail with assignments and acreditacion"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 VERIFIED: GET /api/equipos returns 5 equipos (>=3 required). GET /api/equipos/:id returns {recurso, asignaciones, acreditacion} with detalle array containing requisitos like 'Certificado de Mantención', 'Check List Equipo', 'Manual de Operación', 'Certificación Operativa'. Acreditacion structure correct. Working correctly."
+  
+  - task: "PHASE 3: Vehiculos assignment validation"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 VERIFIED: POST /api/vehiculos/asignar validates correctly: (a) duplicate mandante assignment correctly rejected with 409 'El vehículo ya tiene una asignación activa con este mandante' (unique index uq_veh_mandante_activo), (b) vehiculo to contrato of different empresa correctly rejected with 400 'El vehículo solo puede asignarse a contratos de su empresa'. All business logic validation working correctly."
+  
+  - task: "PHASE 3: Equipos assignment validation"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 VERIFIED: POST /api/equipos/asignar validates correctly: (a) duplicate mandante assignment correctly rejected with 409 'El equipo ya tiene una asignación activa con este mandante' (unique index uq_equ_mandante_activo), (b) equipo to contrato of different empresa correctly rejected with 400 'El equipo solo puede asignarse a contratos de su empresa'. All business logic validation working correctly."
+  
+  - task: "PHASE 3: Document upload for vehiculos"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 VERIFIED: POST /api/documentos/upload with multipart/form-data (file, recurso_tipo=vehiculo, recurso_id, requisito_id from vehiculo's mandante, mandante_id, fecha_vencimiento=2027-06-01) returns 201 with documento having estado='en_revision'. GET /api/vehiculos/:id after upload shows requisito estado changed to 'en_revision'. Document flow for vehiculos working correctly."
+  
+  - task: "PHASE 3: Authorization for vehiculos/equipos assignment"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 VERIFIED: POST /api/vehiculos/asignar as mandante@ (USUARIO_MANDANTE) correctly returns 403 'No autorizado'. POST /api/equipos/asignar as mandante@ correctly returns 403 'No autorizado'. Authorization checks enforced correctly."
+  
+  - task: "PHASE 3: Regression tests"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "testing"
+        -comment: "✅ PHASE 3 VERIFIED: GET /api/dashboard still returns 200 with stats. POST /api/auth/login still works correctly. All regression tests passing."
 
 frontend:
   - task: "Full SPA (auth screen + role dashboards + course player + certificate)"
@@ -330,8 +414,8 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "3.0"
-  test_sequence: 3
+  version: "4.0"
+  test_sequence: 4
   run_ui: false
 
 test_plan:
@@ -356,3 +440,10 @@ agent_communication:
     -message: "✅ FRONTEND TESTING COMPLETE - ALL FEATURES WORKING. Comprehensive test executed covering: Login (3 roles: admin, revisor, mandante) ✅, Dashboard with KPIs and acreditación section ✅, Mandantes list/detail/tabs ✅, Contratos list/detail ✅, Trabajadores list/search/ficha/tabs ✅, Pendientes de Revisión with Aprobar/Rechazar ✅, Vencimientos with filters ✅, Empresas list ✅, Usuarios list ✅, Auditoría list ✅, Logout ✅, Role-based access (mandante sees only their mandante) ✅. MINOR ISSUE: Dashboard KPIs show 0 values despite backend having data - needs investigation of /api/dashboard endpoint or frontend calculation logic. All UI components, navigation, dialogs, tables, tabs, and role-based permissions working correctly. Spanish UI labels correct. Footer shows ©DoSoft. No console errors (only minor accessibility warnings). Screenshots captured successfully."
     -agent: "testing"
     -message: "✅ DASHBOARD KPI FIX VERIFIED - ALL CHECKS PASSED. Quick verification test completed for Dashboard KPI fix. Login successful as admin@aptivarl.com. Loading skeleton (gray pulsing cards) displayed during initial load (~2-3 seconds). After loading completed, all KPI cards show REAL non-zero numbers: Mandantes activos: 4 (expected >= 2) ✅, Contratos vigentes: 5 (expected >= 3) ✅, Trabajadores: 12 (expected >= 10) ✅, Bloqueados: 9 (expected > 0) ✅, Acreditados: 0, Docs. por revisar: 11, Docs. por vencer (30d): 0, Docs. vencidos: 10. 'Acreditación por mandante' panel shows 2 mandantes with data: 'Updated Mandante Name' (🟢 0 · 🟡 0 · 🔴 9) and 'Test Edited' (🟢 0 · 🟡 0 · 🔴 2) ✅. Screenshot captured: dashboard_kpi_final.png. The previous issue where all KPIs showed 0 values has been FIXED. Dashboard now correctly displays real data from backend."
+
+## PHASE 3 TESTING COMPLETE
+agent_communication:
+    -agent: "main"
+    -message: "Phase 3: Test vehiculos & equipos with assignments + documental accreditation. Verify GET /api/vehiculos/:id and GET /api/equipos/:id return asignaciones and acreditacion arrays. Test POST /api/vehiculos/asignar and POST /api/equipos/asignar validation (409 for duplicate mandante, 400 for empresa mismatch). Test document upload for vehiculos. Verify authorization (mandante@ should get 403). Regression: dashboard and login."
+    -agent: "testing"
+    -message: "✅ PHASE 3 BACKEND TESTING COMPLETE - ALL TESTS PASSED (13/13). Comprehensive Phase 3 testing performed on vehiculos & equipos with assignments and documental accreditation. Results: 1) GET /api/vehiculos returns 6 vehiculos (>=4 required) ✅ 2) GET /api/vehiculos/:id returns {recurso, asignaciones (1 active), acreditacion} with estado and detalle containing requisitos like 'Permiso de Circulación', 'SOAP', 'Revisión Técnica', 'Check List Vehículo', 'Certificación GPS' ✅ 3) GET /api/equipos returns 5 equipos (>=3 required) ✅ 4) GET /api/equipos/:id returns {recurso, asignaciones, acreditacion} with requisitos like 'Certificado de Mantención', 'Check List Equipo', 'Manual de Operación', 'Certificación Operativa' ✅ 5) POST /api/vehiculos/asignar duplicate mandante correctly returns 409 'El vehículo ya tiene una asignación activa con este mandante' ✅ 6) POST /api/vehiculos/asignar empresa mismatch correctly returns 400 'El vehículo solo puede asignarse a contratos de su empresa' ✅ 7) POST /api/equipos/asignar duplicate mandante correctly returns 409 ✅ 8) POST /api/equipos/asignar empresa mismatch correctly returns 400 ✅ 9) Document upload for vehiculo with requisito_id from mandante returns 201, estado='en_revision', requisito estado updated to 'en_revision' ✅ 10) POST /api/vehiculos/asignar as mandante@ correctly returns 403 ✅ 11) POST /api/equipos/asignar as mandante@ correctly returns 403 ✅ 12) GET /api/dashboard regression test passed ✅ 13) POST /api/auth/login regression test passed ✅. All business logic validation working correctly. All authorization checks enforced. Unique constraints (uq_veh_mandante_activo, uq_equ_mandante_activo) working. Document flow for vehiculos working. NO 500 ERRORS. All status codes correct. Phase 3 backend is production-ready."

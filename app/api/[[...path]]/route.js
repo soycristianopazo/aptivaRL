@@ -56,6 +56,31 @@ async function acreditacionTrabajador(trabajadorId) {
   return out;
 }
 
+async function acreditacionRecurso(tipo, recursoId) {
+  const map = { vehiculo: { tbl: 'vehiculo_asignaciones', col: 'vehiculo_id' }, equipo: { tbl: 'equipo_asignaciones', col: 'equipo_id' }, trabajador: { tbl: 'trabajador_asignaciones', col: 'trabajador_id' } };
+  const T = map[tipo];
+  const asigs = (await query(
+    `select a.mandante_id, m.razon_social as mandante, a.contrato_id, c.numero_oc
+     from ${T.tbl} a join mandantes m on m.mandante_id=a.mandante_id
+     join contratos c on c.contrato_id=a.contrato_id where a.${T.col}=$1 and a.estado='activo'`, [recursoId])).rows;
+  const out = [];
+  for (const a of asigs) {
+    const reqs = (await query('select * from requisitos_documentales where mandante_id=$1 and tipo_recurso=$2 and activo=true order by orden', [a.mandante_id, tipo])).rows;
+    const docs = (await query('select * from documentos where recurso_tipo=$1 and recurso_id=$2 and mandante_id=$3 and deleted_at is null', [tipo, recursoId, a.mandante_id])).rows;
+    let bloqueado = false, revision = false, obligTotal = 0, okCount = 0;
+    const detalle = [];
+    for (const req of reqs) {
+      const doc = docs.filter((d) => d.requisito_id === req.requisito_id).sort((x, y) => new Date(y.created_at) - new Date(x.created_at))[0];
+      let estado = 'faltante';
+      if (doc) { estado = doc.estado; if (doc.estado === 'aprobado' && doc.fecha_vencimiento && new Date(doc.fecha_vencimiento) < new Date()) estado = 'vencido'; }
+      if (req.obligatorio) { obligTotal++; if (['faltante', 'vencido', 'rechazado'].includes(estado)) bloqueado = true; else if (['en_revision', 'pendiente'].includes(estado)) revision = true; else if (estado === 'aprobado') okCount++; }
+      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
+    }
+    out.push({ mandante_id: a.mandante_id, mandante: a.mandante, contrato: a.numero_oc, estado: bloqueado ? 'BLOQUEADO' : revision ? 'EN_REVISION' : 'ACREDITADO', docs_ok: okCount, docs_total: obligTotal, detalle });
+  }
+  return out;
+}
+
 export async function GET(request, { params }) {
   try {
     await ensureSchema();
@@ -138,7 +163,21 @@ export async function GET(request, { params }) {
       return json({ trabajador: t, asignaciones, acreditacion, historial });
     }
 
+    if (p[0] === 'vehiculos' && p[1]) {
+      const v = (await query('select v.*, e.razon_social as empresa from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.vehiculo_id=$1', [p[1]])).rows[0];
+      if (!v) return json({ error: 'No encontrado' }, 404);
+      const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from vehiculo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.vehiculo_id=$1 order by a.created_at desc', [p[1]])).rows;
+      const acreditacion = await acreditacionRecurso('vehiculo', p[1]);
+      return json({ recurso: v, asignaciones, acreditacion });
+    }
     if (p[0] === 'vehiculos') return json({ vehiculos: (await query('select v.*, e.razon_social as empresa from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null order by v.patente')).rows });
+    if (p[0] === 'equipos' && p[1]) {
+      const q = (await query('select q.*, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.equipo_id=$1', [p[1]])).rows[0];
+      if (!q) return json({ error: 'No encontrado' }, 404);
+      const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from equipo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.equipo_id=$1 order by a.created_at desc', [p[1]])).rows;
+      const acreditacion = await acreditacionRecurso('equipo', p[1]);
+      return json({ recurso: q, asignaciones, acreditacion });
+    }
     if (p[0] === 'equipos') return json({ equipos: (await query('select q.*, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null order by q.codigo_interno')).rows });
 
     if (p[0] === 'documentos' && p[1] === 'pendientes') {
@@ -389,7 +428,26 @@ export async function POST(request, { params }) {
       }
     }
 
-    if (p[0] === 'vehiculos') {
+    if ((p[0] === 'vehiculos' || p[0] === 'equipos') && p[1] === 'asignar') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const veh = p[0] === 'vehiculos';
+      const { recurso_id, contrato_id } = body;
+      const c = (await query('select * from contratos where contrato_id=$1', [contrato_id])).rows[0];
+      const r = (await query(`select * from ${veh ? 'vehiculos' : 'equipos'} where ${veh ? 'vehiculo_id' : 'equipo_id'}=$1`, [recurso_id])).rows[0];
+      if (!c || !r) return json({ error: 'Datos inválidos' }, 400);
+      if (c.empresa_id !== r.empresa_id) return json({ error: `El ${veh ? 'vehículo' : 'equipo'} solo puede asignarse a contratos de su empresa` }, 400);
+      try {
+        const id = uuid();
+        await query(`insert into ${veh ? 'vehiculo_asignaciones' : 'equipo_asignaciones'} (asignacion_id, ${veh ? 'vehiculo_id' : 'equipo_id'}, empresa_id, mandante_id, contrato_id) values ($1,$2,$3,$4,$5)`, [id, recurso_id, r.empresa_id, c.mandante_id, contrato_id]);
+        await audit(profile, veh ? 'asignar_vehiculo' : 'asignar_equipo', p[0].slice(0, -1), recurso_id, { contrato_id });
+        return json({ ok: true, asignacion_id: id }, 201);
+      } catch (e) {
+        if (/uq_veh_mandante_activo|uq_equ_mandante_activo/.test(e.message)) return json({ error: `El ${veh ? 'vehículo' : 'equipo'} ya tiene una asignación activa con este mandante` }, 409);
+        throw e;
+      }
+    }
+
+    if (p[0] === 'vehiculos' && !p[1]) {
       if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
       const { empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis } = body;
       const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
@@ -398,7 +456,7 @@ export async function POST(request, { params }) {
       await query('insert into vehiculos (vehiculo_id, empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, empId, patente, tipo || null, marca || null, modelo || null, anio || null, num_motor || null, num_chasis || null]);
       return json({ vehiculo: (await query('select * from vehiculos where vehiculo_id=$1', [id])).rows[0] }, 201);
     }
-    if (p[0] === 'equipos') {
+    if (p[0] === 'equipos' && !p[1]) {
       if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
       const { empresa_id, codigo_interno, tipo, marca, modelo, anio, num_serie } = body;
       const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
