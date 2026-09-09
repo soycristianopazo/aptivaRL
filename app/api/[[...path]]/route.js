@@ -1,92 +1,198 @@
 import { NextResponse } from 'next/server';
 import { query, ensureSchema, uuid } from '@/lib/db';
-import { hashPassword, verifyPassword, signToken, getAuth } from '@/lib/auth-server';
+import { authSignIn, getAuthUser, adminCreateUser, storageUpload, storageSignedUrl, BUCKET } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const json = (data, status = 200) =>
-  NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
+const json = (data, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 
-async function getUser(request) {
-  const a = getAuth(request);
-  if (!a) return null;
-  const r = await query(
-    'select user_id, email, full_name, role, company_id, rut from users where user_id=$1',
-    [a.sub]
-  );
+async function getProfile(request) {
+  const h = request.headers.get('authorization') || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  if (!token) return null;
+  const authUser = await getAuthUser(token);
+  if (!authUser?.id) return null;
+  const r = await query('select * from usuarios_perfiles where auth_user_id=$1 and activo=true', [authUser.id]);
   return r.rows[0] || null;
 }
-const isAdmin = (u) => u && (u.role === 'admin' || u.role === 'superadmin');
+const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
+const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
+
+async function audit(p, accion, entidad, entidad_id, nuevos) {
+  try { await query('insert into auditoria (usuario, usuario_id, accion, entidad, entidad_id, valores_nuevos) values ($1,$2,$3,$4,$5,$6)', [p?.email || 'sistema', p?.auth_user_id || null, accion, entidad, entidad_id || null, nuevos ? JSON.stringify(nuevos) : null]); } catch {}
+}
+
+/* ------- Accreditation per mandante for a trabajador ------- */
+async function acreditacionTrabajador(trabajadorId) {
+  const asigs = (await query(
+    `select a.mandante_id, m.razon_social as mandante, a.contrato_id, c.numero_oc
+     from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id
+     join contratos c on c.contrato_id=a.contrato_id where a.trabajador_id=$1 and a.estado='activo'`, [trabajadorId])).rows;
+  const out = [];
+  for (const a of asigs) {
+    const reqs = (await query("select * from requisitos_documentales where mandante_id=$1 and tipo_recurso='trabajador' and activo=true order by orden", [a.mandante_id])).rows;
+    const docs = (await query('select * from documentos where recurso_tipo=$1 and recurso_id=$2 and mandante_id=$3 and deleted_at is null', ['trabajador', trabajadorId, a.mandante_id])).rows;
+    let bloqueado = false, revision = false, obligTotal = 0, okCount = 0;
+    const detalle = [];
+    for (const req of reqs) {
+      const doc = docs.filter((d) => d.requisito_id === req.requisito_id).sort((x, y) => new Date(y.created_at) - new Date(x.created_at))[0];
+      let estado = 'faltante';
+      if (doc) {
+        estado = doc.estado;
+        if (doc.estado === 'aprobado' && doc.fecha_vencimiento && new Date(doc.fecha_vencimiento) < new Date()) estado = 'vencido';
+      }
+      if (req.obligatorio) {
+        obligTotal++;
+        if (['faltante', 'vencido', 'rechazado'].includes(estado)) bloqueado = true;
+        else if (['en_revision', 'pendiente'].includes(estado)) revision = true;
+        else if (estado === 'aprobado') okCount++;
+      }
+      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
+    }
+    const estadoGlobal = bloqueado ? 'BLOQUEADO' : revision ? 'EN_REVISION' : 'ACREDITADO';
+    out.push({ mandante_id: a.mandante_id, mandante: a.mandante, contrato: a.numero_oc, estado: estadoGlobal, docs_ok: okCount, docs_total: obligTotal, detalle });
+  }
+  return out;
+}
 
 export async function GET(request, { params }) {
   try {
     await ensureSchema();
     const p = (await params)?.path || [];
+    const { searchParams } = new URL(request.url);
     if (p.length === 0 || p[0] === 'health') return json({ ok: true, service: 'aptiva-rl' });
 
-    if (p[0] === 'auth' && p[1] === 'me') {
-      const u = await getUser(request);
-      if (!u) return json({ error: 'No autorizado' }, 401);
-      return json({ user: u });
+    const profile = await getProfile(request);
+    if (!profile) return json({ error: 'No autorizado' }, 401);
+
+    if (p[0] === 'me') return json({ profile });
+    if (p[0] === 'roles') return json({ roles: (await query('select * from roles order by nombre')).rows });
+
+    if (p[0] === 'usuarios' && isSuper(profile)) {
+      const r = await query('select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, e.razon_social as empresa, m.razon_social as mandante from usuarios_perfiles up left join empresas_grupo e on e.empresa_id=up.empresa_id left join mandantes m on m.mandante_id=up.mandante_id order by up.created_at');
+      return json({ usuarios: r.rows });
     }
 
-    const u = await getUser(request);
-    if (!u) return json({ error: 'No autorizado' }, 401);
+    if (p[0] === 'empresas') {
+      const r = await query('select e.*, (select count(*)::int from trabajadores t where t.empresa_id=e.empresa_id and t.deleted_at is null) as trabajadores_count from empresas_grupo e where e.deleted_at is null order by e.razon_social');
+      return json({ empresas: r.rows });
+    }
 
-    if (p[0] === 'stats') {
-      const courses = (await query('select count(*)::int c from courses')).rows[0].c;
-      const my = (await query('select status, count(*)::int c from enrollments where user_id=$1 group by status', [u.user_id])).rows;
-      const byStatus = { enrolled: 0, in_progress: 0, completed: 0 };
-      my.forEach((r) => { byStatus[r.status] = r.c; });
-      const out = {
-        total_courses: courses,
-        my_enrolled: (byStatus.enrolled || 0) + (byStatus.in_progress || 0),
-        my_completed: byStatus.completed || 0,
-        my_total: my.reduce((a, r) => a + r.c, 0),
+    if (p[0] === 'mandantes' && !p[1]) {
+      let sql = 'select m.*, (select count(*)::int from contratos c where c.mandante_id=m.mandante_id and c.deleted_at is null) as contratos_count from mandantes m where m.deleted_at is null';
+      const args = [];
+      if (profile.role_codigo === 'USUARIO_MANDANTE') { sql += ' and m.mandante_id=$1'; args.push(profile.mandante_id); }
+      sql += ' order by m.razon_social';
+      return json({ mandantes: (await query(sql, args)).rows });
+    }
+
+    if (p[0] === 'mandantes' && p[1]) {
+      const mid = p[1];
+      const mandante = (await query('select * from mandantes where mandante_id=$1', [mid])).rows[0];
+      if (!mandante) return json({ error: 'No encontrado' }, 404);
+      const empresas = (await query('select e.* from mandante_empresas me join empresas_grupo e on e.empresa_id=me.empresa_id where me.mandante_id=$1 and me.activo=true', [mid])).rows;
+      const gerencias = (await query('select * from mandante_gerencias where mandante_id=$1 order by nombre', [mid])).rows;
+      const contratos = (await query('select c.*, e.razon_social as empresa, (select count(*)::int from trabajador_asignaciones a where a.contrato_id=c.contrato_id and a.estado=\'activo\') as dotacion from contratos c join empresas_grupo e on e.empresa_id=c.empresa_id where c.mandante_id=$1 and c.deleted_at is null order by c.numero_oc', [mid])).rows;
+      const requisitos = (await query('select r.*, cat.nombre as categoria from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 order by r.tipo_recurso, r.orden', [mid])).rows;
+      const trabajadores = (await query("select distinct t.trabajador_id, t.nombre, t.apellido, t.rut, t.cargo from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.mandante_id=$1 and a.estado='activo'", [mid])).rows;
+      return json({ mandante, empresas, gerencias, contratos, requisitos, trabajadores });
+    }
+
+    if (p[0] === 'contratos' && !p[1]) {
+      let sql = "select c.*, m.razon_social as mandante, e.razon_social as empresa, g.nombre as gerencia, (select count(*)::int from trabajador_asignaciones a where a.contrato_id=c.contrato_id and a.estado='activo') as dotacion from contratos c join mandantes m on m.mandante_id=c.mandante_id join empresas_grupo e on e.empresa_id=c.empresa_id left join mandante_gerencias g on g.gerencia_id=c.gerencia_id where c.deleted_at is null";
+      const args = [];
+      if (profile.role_codigo === 'ADMIN_EMPRESA') { sql += ` and c.empresa_id=$${args.length + 1}`; args.push(profile.empresa_id); }
+      if (profile.role_codigo === 'USUARIO_MANDANTE') { sql += ` and c.mandante_id=$${args.length + 1}`; args.push(profile.mandante_id); }
+      sql += ' order by c.numero_oc';
+      return json({ contratos: (await query(sql, args)).rows });
+    }
+
+    if (p[0] === 'contratos' && p[1]) {
+      const c = (await query('select c.*, m.razon_social as mandante, e.razon_social as empresa, g.nombre as gerencia from contratos c join mandantes m on m.mandante_id=c.mandante_id join empresas_grupo e on e.empresa_id=c.empresa_id left join mandante_gerencias g on g.gerencia_id=c.gerencia_id where c.contrato_id=$1', [p[1]])).rows[0];
+      if (!c) return json({ error: 'No encontrado' }, 404);
+      const trabajadores = (await query("select t.trabajador_id, t.nombre, t.apellido, t.rut, t.cargo from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.contrato_id=$1 and a.estado='activo'", [p[1]])).rows;
+      c.dotacion = trabajadores.length;
+      return json({ contrato: c, trabajadores });
+    }
+
+    if (p[0] === 'trabajadores' && !p[1]) {
+      const search = searchParams.get('q');
+      const empresaFilter = searchParams.get('empresa_id');
+      let sql = 'select t.*, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.deleted_at is null';
+      const args = [];
+      if (profile.role_codigo === 'ADMIN_EMPRESA') { args.push(profile.empresa_id); sql += ` and t.empresa_id=$${args.length}`; }
+      else if (empresaFilter) { args.push(empresaFilter); sql += ` and t.empresa_id=$${args.length}`; }
+      if (search) { args.push(`%${search}%`); sql += ` and (t.nombre ilike $${args.length} or t.apellido ilike $${args.length} or t.rut ilike $${args.length} or t.cargo ilike $${args.length})`; }
+      sql += ' order by t.apellido, t.nombre limit 500';
+      return json({ trabajadores: (await query(sql, args)).rows });
+    }
+
+    if (p[0] === 'trabajadores' && p[1]) {
+      const t = (await query('select t.*, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.trabajador_id=$1', [p[1]])).rows[0];
+      if (!t) return json({ error: 'No encontrado' }, 404);
+      const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc, g.nombre as gerencia from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id left join mandante_gerencias g on g.gerencia_id=a.gerencia_id where a.trabajador_id=$1 order by a.created_at desc', [p[1]])).rows;
+      const acreditacion = await acreditacionTrabajador(p[1]);
+      const historial = (await query("select * from auditoria where entidad='trabajador' and entidad_id=$1 order by created_at desc limit 50", [p[1]])).rows;
+      return json({ trabajador: t, asignaciones, acreditacion, historial });
+    }
+
+    if (p[0] === 'vehiculos') return json({ vehiculos: (await query('select v.*, e.razon_social as empresa from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null order by v.patente')).rows });
+    if (p[0] === 'equipos') return json({ equipos: (await query('select q.*, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null order by q.codigo_interno')).rows });
+
+    if (p[0] === 'documentos' && p[1] === 'pendientes') {
+      const r = await query("select d.*, r.nombre as requisito, t.nombre as trab_nombre, t.apellido as trab_apellido, m.razon_social as mandante from documentos d left join requisitos_documentales r on r.requisito_id=d.requisito_id left join trabajadores t on t.trabajador_id=d.recurso_id left join mandantes m on m.mandante_id=d.mandante_id where d.estado='en_revision' and d.deleted_at is null order by d.fecha_subida desc");
+      return json({ documentos: r.rows });
+    }
+    if (p[0] === 'documentos' && p[1] && p[2] === 'url') {
+      const d = (await query('select * from documentos where documento_id=$1', [p[1]])).rows[0];
+      if (!d?.path) return json({ error: 'Sin archivo' }, 404);
+      return json({ url: await storageSignedUrl(d.path, 900) });
+    }
+
+    if (p[0] === 'vencimientos') {
+      const dias = Number(searchParams.get('dias') || 30);
+      const r = await query(`select d.*, r.nombre as requisito, t.nombre as trab_nombre, t.apellido as trab_apellido, m.razon_social as mandante,
+        (d.fecha_vencimiento - current_date) as dias_restantes from documentos d
+        left join requisitos_documentales r on r.requisito_id=d.requisito_id
+        left join trabajadores t on t.trabajador_id=d.recurso_id
+        left join mandantes m on m.mandante_id=d.mandante_id
+        where d.fecha_vencimiento is not null and d.deleted_at is null and d.estado='aprobado'
+        and d.fecha_vencimiento <= current_date + ($1 || ' days')::interval order by d.fecha_vencimiento`, [dias]);
+      return json({ documentos: r.rows });
+    }
+
+    if (p[0] === 'auditoria') return json({ eventos: (await query('select * from auditoria order by created_at desc limit 200')).rows });
+
+    if (p[0] === 'dashboard') {
+      const q1 = async (s, a = []) => (await query(s, a)).rows[0].c;
+      const stats = {
+        mandantes: await q1("select count(*)::int c from mandantes where activo=true and deleted_at is null"),
+        contratos_vigentes: await q1("select count(*)::int c from contratos where estado='vigente' and deleted_at is null"),
+        trabajadores: await q1("select count(*)::int c from trabajadores where estado='activo' and deleted_at is null"),
+        vehiculos: await q1('select count(*)::int c from vehiculos where deleted_at is null'),
+        equipos: await q1('select count(*)::int c from equipos where deleted_at is null'),
+        docs_pendientes: await q1("select count(*)::int c from documentos where estado='en_revision' and deleted_at is null"),
+        docs_por_vencer: await q1("select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento is not null and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null"),
+        docs_vencidos: await q1("select count(*)::int c from documentos where deleted_at is null and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))"),
       };
-      if (isAdmin(u)) {
-        out.total_users = (await query('select count(*)::int c from users')).rows[0].c;
-        out.total_companies = (await query('select count(*)::int c from companies')).rows[0].c;
-        out.total_completions = (await query("select count(*)::int c from enrollments where status='completed'")).rows[0].c;
+      // acreditación agregada de trabajadores activos
+      const trabIds = (await query("select distinct trabajador_id from trabajador_asignaciones where estado='activo'")).rows.map((r) => r.trabajador_id);
+      let acreditados = 0, bloqueados = 0, revision = 0;
+      const porMandante = {};
+      for (const tid of trabIds) {
+        const acr = await acreditacionTrabajador(tid);
+        for (const a of acr) {
+          porMandante[a.mandante] = porMandante[a.mandante] || { ACREDITADO: 0, EN_REVISION: 0, BLOQUEADO: 0 };
+          porMandante[a.mandante][a.estado]++;
+        }
+        const peor = acr.some((a) => a.estado === 'BLOQUEADO') ? 'BLOQUEADO' : acr.some((a) => a.estado === 'EN_REVISION') ? 'EN_REVISION' : 'ACREDITADO';
+        if (peor === 'BLOQUEADO') bloqueados++; else if (peor === 'EN_REVISION') revision++; else acreditados++;
       }
-      return json(out);
-    }
-
-    if (p[0] === 'companies') {
-      const r = await query('select c.*, (select count(*)::int from users u where u.company_id=c.company_id) as users_count from companies c order by c.created_at desc');
-      return json({ companies: r.rows });
-    }
-
-    if (p[0] === 'users') {
-      if (!isAdmin(u)) return json({ error: 'No autorizado' }, 403);
-      const r = await query('select u.user_id, u.email, u.full_name, u.rut, u.role, u.company_id, u.created_at, c.name as company_name from users u left join companies c on c.company_id=u.company_id order by u.created_at desc');
-      return json({ users: r.rows });
-    }
-
-    if (p[0] === 'courses') {
-      if (p[1]) {
-        const r = await query('select * from courses where course_id=$1', [p[1]]);
-        if (!r.rows[0]) return json({ error: 'Curso no encontrado' }, 404);
-        return json({ course: r.rows[0] });
-      }
-      const r = await query('select course_id, title, description, category, duration_minutes, pass_score, jsonb_array_length(lessons) as lessons_count, jsonb_array_length(quiz) as quiz_count, created_at from courses order by created_at desc');
-      return json({ courses: r.rows });
-    }
-
-    if (p[0] === 'enrollments') {
-      const { searchParams } = new URL(request.url);
-      const all = searchParams.get('all') === '1' && isAdmin(u);
-      const base = `select e.enrollment_id, e.user_id, e.course_id, e.status, e.progress, e.score, e.completed_at, e.created_at,
-        c.title as course_title, c.category, c.duration_minutes, c.pass_score,
-        us.full_name as user_name, us.email as user_email
-        from enrollments e
-        join courses c on c.course_id=e.course_id
-        join users us on us.user_id=e.user_id`;
-      const r = all
-        ? await query(base + ' order by e.created_at desc')
-        : await query(base + ' where e.user_id=$1 order by e.created_at desc', [u.user_id]);
-      return json({ enrollments: r.rows });
+      stats.trabajadores_acreditados = acreditados;
+      stats.trabajadores_bloqueados = bloqueados;
+      stats.trabajadores_revision = revision;
+      return json({ stats, acreditacion_por_mandante: porMandante });
     }
 
     return json({ error: 'No encontrado' }, 404);
@@ -99,128 +205,190 @@ export async function POST(request, { params }) {
   try {
     await ensureSchema();
     const p = (await params)?.path || [];
-    const body = await request.json().catch(() => ({}));
-
-    if (p[0] === 'auth' && p[1] === 'register') {
-      const { email, password, full_name, rut } = body;
-      if (!email || !password || !full_name) return json({ error: 'Faltan campos obligatorios' }, 400);
-      const exists = await query('select 1 from users where email=$1', [email.toLowerCase()]);
-      if (exists.rows.length) return json({ error: 'El correo ya est\u00e1 registrado' }, 409);
-      const hash = await hashPassword(password);
-      const id = uuid();
-      await query('insert into users (user_id, email, password_hash, full_name, rut, role) values ($1,$2,$3,$4,$5,$6)', [id, email.toLowerCase(), hash, full_name, rut || null, 'worker']);
-      const u = (await query('select user_id, email, full_name, role, company_id, rut from users where user_id=$1', [id])).rows[0];
-      return json({ token: signToken(u), user: u }, 201);
-    }
 
     if (p[0] === 'auth' && p[1] === 'login') {
-      const { email, password } = body;
-      const r = await query('select * from users where email=$1', [(email || '').toLowerCase()]);
-      const u = r.rows[0];
-      if (!u || !(await verifyPassword(password || '', u.password_hash))) return json({ error: 'Credenciales inv\u00e1lidas' }, 401);
-      const safe = { user_id: u.user_id, email: u.email, full_name: u.full_name, role: u.role, company_id: u.company_id, rut: u.rut };
-      return json({ token: signToken(safe), user: safe });
+      const { email, password } = await request.json().catch(() => ({}));
+      try {
+        const session = await authSignIn(email, password);
+        if (!session?.access_token) return json({ error: 'Credenciales inválidas' }, 401);
+        const prof = (await query('select * from usuarios_perfiles where auth_user_id=$1', [session.user?.id])).rows[0];
+        if (!prof) return json({ error: 'Usuario sin perfil asignado' }, 403);
+        return json({ token: session.access_token, refresh_token: session.refresh_token, profile: prof });
+      } catch (e) {
+        return json({ error: 'Credenciales inválidas' }, 401);
+      }
     }
 
-    const u = await getUser(request);
-    if (!u) return json({ error: 'No autorizado' }, 401);
-
-    if (p[0] === 'companies') {
-      if (!isAdmin(u)) return json({ error: 'No autorizado' }, 403);
-      const { name, rut } = body;
-      if (!name) return json({ error: 'Nombre requerido' }, 400);
+    // multipart upload handled separately (documentos/upload uses formData)
+    if (p[0] === 'documentos' && p[1] === 'upload') {
+      const profile = await getProfile(request);
+      if (!profile) return json({ error: 'No autorizado' }, 401);
+      const form = await request.formData();
+      const file = form.get('file');
+      if (!(file instanceof File)) return json({ error: 'Archivo requerido' }, 400);
+      const recurso_tipo = form.get('recurso_tipo') || 'trabajador';
+      const recurso_id = form.get('recurso_id');
+      const requisito_id = form.get('requisito_id');
+      const mandante_id = form.get('mandante_id');
+      const fecha_emision = form.get('fecha_emision') || null;
+      const fecha_vencimiento = form.get('fecha_vencimiento') || null;
+      const safe = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `${recurso_tipo}/${recurso_id}/${uuid()}-${safe}`;
+      const bytes = Buffer.from(await file.arrayBuffer());
+      await storageUpload({ path, bytes, contentType: file.type });
       const id = uuid();
-      await query('insert into companies (company_id, name, rut) values ($1,$2,$3)', [id, name, rut || null]);
-      return json({ company: (await query('select * from companies where company_id=$1', [id])).rows[0] }, 201);
+      await query(
+        `insert into documentos (documento_id, recurso_tipo, recurso_id, requisito_id, mandante_id, bucket, path, nombre_archivo, mime, tamano, fecha_emision, fecha_vencimiento, estado, subido_por)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'en_revision',$13)`,
+        [id, recurso_tipo, recurso_id, requisito_id || null, mandante_id || null, BUCKET, path, file.name, file.type, file.size, fecha_emision || null, fecha_vencimiento || null, profile.auth_user_id]
+      );
+      await audit(profile, 'cargar_documento', recurso_tipo, recurso_id, { requisito_id, nombre_archivo: file.name });
+      return json({ documento: (await query('select * from documentos where documento_id=$1', [id])).rows[0] }, 201);
     }
 
-    if (p[0] === 'users') {
-      if (!isAdmin(u)) return json({ error: 'No autorizado' }, 403);
-      const { email, password, full_name, rut, role, company_id } = body;
-      if (!email || !password || !full_name) return json({ error: 'Faltan campos obligatorios' }, 400);
-      const exists = await query('select 1 from users where email=$1', [email.toLowerCase()]);
-      if (exists.rows.length) return json({ error: 'El correo ya est\u00e1 registrado' }, 409);
-      const hash = await hashPassword(password);
-      const id = uuid();
-      const finalRole = ['worker', 'admin', 'superadmin'].includes(role) ? role : 'worker';
-      await query('insert into users (user_id, email, password_hash, full_name, rut, role, company_id) values ($1,$2,$3,$4,$5,$6,$7)', [id, email.toLowerCase(), hash, full_name, rut || null, finalRole, company_id || u.company_id || null]);
-      const nu = (await query('select user_id, email, full_name, rut, role, company_id from users where user_id=$1', [id])).rows[0];
-      return json({ user: nu }, 201);
-    }
-
-    if (p[0] === 'courses') {
-      if (!isAdmin(u)) return json({ error: 'No autorizado' }, 403);
-      const { title, description, category, duration_minutes, lessons, quiz, pass_score } = body;
-      if (!title) return json({ error: 'T\u00edtulo requerido' }, 400);
-      const id = uuid();
-      await query('insert into courses (course_id, title, description, category, duration_minutes, lessons, quiz, pass_score, company_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, title, description || '', category || 'General', duration_minutes || 30, JSON.stringify(lessons || []), JSON.stringify(quiz || []), pass_score || 70, u.company_id || null]);
-      return json({ course: (await query('select * from courses where course_id=$1', [id])).rows[0] }, 201);
-    }
-
-    if (p[0] === 'enrollments' && !p[1]) {
-      const { course_id, user_id } = body;
-      if (!course_id) return json({ error: 'course_id requerido' }, 400);
-      const targetUser = isAdmin(u) && user_id ? user_id : u.user_id;
-      const existing = await query('select * from enrollments where user_id=$1 and course_id=$2', [targetUser, course_id]);
-      if (existing.rows.length) return json({ enrollment: existing.rows[0] });
-      const id = uuid();
-      await query('insert into enrollments (enrollment_id, user_id, course_id, status, progress) values ($1,$2,$3,$4,$5)', [id, targetUser, course_id, 'enrolled', 0]);
-      return json({ enrollment: (await query('select * from enrollments where enrollment_id=$1', [id])).rows[0] }, 201);
-    }
-
-    if (p[0] === 'enrollments' && p[1] && p[2] === 'complete') {
-      const enr = (await query('select * from enrollments where enrollment_id=$1', [p[1]])).rows[0];
-      if (!enr) return json({ error: 'Inscripci\u00f3n no encontrada' }, 404);
-      if (enr.user_id !== u.user_id && !isAdmin(u)) return json({ error: 'No autorizado' }, 403);
-      const score = Number.isFinite(body.score) ? Math.round(body.score) : 100;
-      const course = (await query('select pass_score from courses where course_id=$1', [enr.course_id])).rows[0];
-      const passed = score >= (course?.pass_score || 70);
-      await query('update enrollments set status=$1, progress=$2, score=$3, completed_at=$4 where enrollment_id=$5', [passed ? 'completed' : 'in_progress', passed ? 100 : Math.max(enr.progress, 50), score, passed ? new Date() : null, p[1]]);
-      return json({ enrollment: (await query('select * from enrollments where enrollment_id=$1', [p[1]])).rows[0], passed });
-    }
-
-    return json({ error: 'No encontrado' }, 404);
-  } catch (e) {
-    return json({ error: e.message }, 500);
-  }
-}
-
-export async function PUT(request, { params }) {
-  try {
-    await ensureSchema();
-    const p = (await params)?.path || [];
-    const u = await getUser(request);
-    if (!u) return json({ error: 'No autorizado' }, 401);
+    const profile = await getProfile(request);
+    if (!profile) return json({ error: 'No autorizado' }, 401);
     const body = await request.json().catch(() => ({}));
 
-    if (p[0] === 'courses' && p[1]) {
-      if (!isAdmin(u)) return json({ error: 'No autorizado' }, 403);
-      const { title, description, category, duration_minutes, lessons, quiz, pass_score } = body;
-      await query('update courses set title=coalesce($1,title), description=coalesce($2,description), category=coalesce($3,category), duration_minutes=coalesce($4,duration_minutes), lessons=coalesce($5,lessons), quiz=coalesce($6,quiz), pass_score=coalesce($7,pass_score) where course_id=$8', [title ?? null, description ?? null, category ?? null, duration_minutes ?? null, lessons ? JSON.stringify(lessons) : null, quiz ? JSON.stringify(quiz) : null, pass_score ?? null, p[1]]);
-      return json({ course: (await query('select * from courses where course_id=$1', [p[1]])).rows[0] });
+    if (p[0] === 'documentos' && p[1] && p[2] === 'revision') {
+      if (!['SUPER_ADMIN_HOLDING', 'REVISOR'].includes(profile.role_codigo)) return json({ error: 'No autorizado' }, 403);
+      const { estado, observacion } = body;
+      if (!['aprobado', 'rechazado'].includes(estado)) return json({ error: 'Estado inválido' }, 400);
+      await query('update documentos set estado=$1, observacion_revisor=$2, revisado_por=$3, fecha_revision=now(), updated_at=now() where documento_id=$4', [estado, observacion || null, profile.auth_user_id, p[1]]);
+      await query('insert into revisiones_documentales (documento_id, estado, observacion, revisado_por) values ($1,$2,$3,$4)', [p[1], estado, observacion || null, profile.auth_user_id]);
+      const d = (await query('select * from documentos where documento_id=$1', [p[1]])).rows[0];
+      await audit(profile, estado === 'aprobado' ? 'aprobar_documento' : 'rechazar_documento', d.recurso_tipo, d.recurso_id, { documento_id: p[1], estado });
+      return json({ documento: d });
     }
-    return json({ error: 'No encontrado' }, 404);
-  } catch (e) {
-    return json({ error: e.message }, 500);
-  }
-}
 
-export async function DELETE(request, { params }) {
-  try {
-    await ensureSchema();
-    const p = (await params)?.path || [];
-    const u = await getUser(request);
-    if (!u) return json({ error: 'No autorizado' }, 401);
-    if (!isAdmin(u)) return json({ error: 'No autorizado' }, 403);
+    if (!canManage(profile) && !['mandantes', 'contratos'].includes(p[0])) {
+      // allow only managers for most creates
+    }
 
-    if (p[0] === 'courses' && p[1]) {
-      await query('delete from courses where course_id=$1', [p[1]]);
-      return json({ ok: true });
+    if (p[0] === 'usuarios') {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const { email, password, nombre, role_codigo, empresa_id, mandante_id } = body;
+      if (!email || !password || !nombre || !role_codigo) return json({ error: 'Faltan campos' }, 400);
+      const authUser = await adminCreateUser(email, password, { nombre, rol: role_codigo });
+      const authId = authUser.id || authUser.user?.id;
+      const id = uuid();
+      await query('insert into usuarios_perfiles (perfil_id, auth_user_id, email, nombre, role_codigo, empresa_id, mandante_id) values ($1,$2,$3,$4,$5,$6,$7)', [id, authId, email.toLowerCase(), nombre, role_codigo, empresa_id || null, mandante_id || null]);
+      await audit(profile, 'crear_usuario', 'usuario', id, { email, role_codigo });
+      return json({ perfil: (await query('select * from usuarios_perfiles where perfil_id=$1', [id])).rows[0] }, 201);
     }
-    if (p[0] === 'users' && p[1]) {
-      await query('delete from users where user_id=$1', [p[1]]);
-      return json({ ok: true });
+
+    if (p[0] === 'empresas') {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const { razon_social, rut, nombre_fantasia, region, comuna, direccion } = body;
+      if (!razon_social) return json({ error: 'Razón social requerida' }, 400);
+      const holding = (await query('select holding_id from holdings limit 1')).rows[0];
+      const id = uuid();
+      await query('insert into empresas_grupo (empresa_id, holding_id, razon_social, rut, nombre_fantasia, region, comuna, direccion) values ($1,$2,$3,$4,$5,$6,$7,$8)', [id, holding?.holding_id || null, razon_social, rut || null, nombre_fantasia || null, region || null, comuna || null, direccion || null]);
+      await audit(profile, 'crear_empresa', 'empresa', id, { razon_social });
+      return json({ empresa: (await query('select * from empresas_grupo where empresa_id=$1', [id])).rows[0] }, 201);
     }
+
+    if (p[0] === 'mandantes' && !p[1]) {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { razon_social, rut, region, comuna, direccion } = body;
+      if (!razon_social || !rut) return json({ error: 'Razón social y RUT requeridos' }, 400);
+      const id = uuid();
+      await query('insert into mandantes (mandante_id, razon_social, rut, region, comuna, direccion) values ($1,$2,$3,$4,$5,$6)', [id, razon_social, rut, region || null, comuna || null, direccion || null]);
+      await audit(profile, 'crear_mandante', 'mandante', id, { razon_social, rut });
+      return json({ mandante: (await query('select * from mandantes where mandante_id=$1', [id])).rows[0] }, 201);
+    }
+
+    if (p[0] === 'mandantes' && p[1] === 'empresas') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { mandante_id, empresa_id } = body;
+      await query('insert into mandante_empresas (mandante_id, empresa_id) values ($1,$2) on conflict (mandante_id, empresa_id) do update set activo=true', [mandante_id, empresa_id]);
+      return json({ ok: true }, 201);
+    }
+    if (p[0] === 'mandantes' && p[1] === 'gerencias') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { mandante_id, nombre } = body;
+      const id = uuid();
+      await query('insert into mandante_gerencias (gerencia_id, mandante_id, nombre) values ($1,$2,$3)', [id, mandante_id, nombre]);
+      return json({ gerencia: (await query('select * from mandante_gerencias where gerencia_id=$1', [id])).rows[0] }, 201);
+    }
+
+    if (p[0] === 'requisitos') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, dias_alerta } = body;
+      const id = uuid();
+      await query('insert into requisitos_documentales (requisito_id, mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, dias_alerta) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, mandante_id, tipo_recurso || 'trabajador', categoria_id || null, nombre, descripcion || null, obligatorio !== false, !!tiene_vencimiento, dias_alerta || 30]);
+      return json({ requisito: (await query('select * from requisitos_documentales where requisito_id=$1', [id])).rows[0] }, 201);
+    }
+    if (p[0] === 'categorias') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { mandante_id, tipo_recurso, nombre } = body;
+      const id = uuid();
+      await query('insert into categorias_documentales (categoria_id, mandante_id, tipo_recurso, nombre) values ($1,$2,$3,$4)', [id, mandante_id, tipo_recurso || 'trabajador', nombre]);
+      return json({ categoria: (await query('select * from categorias_documentales where categoria_id=$1', [id])).rows[0] }, 201);
+    }
+
+    if (p[0] === 'contratos') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { numero_oc, mandante_id, empresa_id, gerencia_id, limite_contingente, fecha_inicio, fecha_termino, estado, observaciones } = body;
+      if (!numero_oc || !mandante_id || !empresa_id) return json({ error: 'Faltan campos' }, 400);
+      const rel = await query('select 1 from mandante_empresas where mandante_id=$1 and empresa_id=$2 and activo=true', [mandante_id, empresa_id]);
+      if (!rel.rows.length) return json({ error: 'La empresa no está habilitada para este mandante' }, 400);
+      const id = uuid();
+      await query('insert into contratos (contrato_id, numero_oc, mandante_id, empresa_id, gerencia_id, limite_contingente, fecha_inicio, fecha_termino, estado, observaciones) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [id, numero_oc, mandante_id, empresa_id, gerencia_id || null, limite_contingente || 0, fecha_inicio || null, fecha_termino || null, estado || 'vigente', observaciones || null]);
+      await audit(profile, 'crear_contrato', 'contrato', id, { numero_oc });
+      return json({ contrato: (await query('select * from contratos where contrato_id=$1', [id])).rows[0] }, 201);
+    }
+
+    if (p[0] === 'trabajadores' && !p[1]) {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono } = body;
+      const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
+      if (!empId || !rut || !nombre || !apellido) return json({ error: 'Faltan campos obligatorios' }, 400);
+      const dup = await query('select 1 from trabajadores where rut=$1', [rut]);
+      if (dup.rows.length) return json({ error: 'Ya existe un trabajador con ese RUT' }, 409);
+      const id = uuid();
+      await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [id, empId, rut, nombre, apellido, cargo || null, genero || null, region || null, comuna || null, telefono || null]);
+      await audit(profile, 'crear_trabajador', 'trabajador', id, { rut, nombre, apellido });
+      return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [id])).rows[0] }, 201);
+    }
+
+    if (p[0] === 'trabajadores' && p[1] === 'asignar') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { trabajador_id, contrato_id } = body;
+      const c = (await query('select * from contratos where contrato_id=$1', [contrato_id])).rows[0];
+      const t = (await query('select * from trabajadores where trabajador_id=$1', [trabajador_id])).rows[0];
+      if (!c || !t) return json({ error: 'Datos inválidos' }, 400);
+      if (c.empresa_id !== t.empresa_id) return json({ error: 'El trabajador solo puede asignarse a contratos de su empresa' }, 400);
+      try {
+        const id = uuid();
+        await query('insert into trabajador_asignaciones (asignacion_id, trabajador_id, empresa_id, mandante_id, contrato_id, gerencia_id) values ($1,$2,$3,$4,$5,$6)', [id, trabajador_id, t.empresa_id, c.mandante_id, contrato_id, c.gerencia_id]);
+        await audit(profile, 'asignar_trabajador', 'trabajador', trabajador_id, { contrato_id, mandante_id: c.mandante_id });
+        return json({ asignacion: (await query('select * from trabajador_asignaciones where asignacion_id=$1', [id])).rows[0] }, 201);
+      } catch (e) {
+        if (/uq_trab_mandante_activo/.test(e.message)) return json({ error: 'El trabajador ya tiene un contrato activo con este mandante' }, 409);
+        throw e;
+      }
+    }
+
+    if (p[0] === 'vehiculos') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis } = body;
+      const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
+      if (!empId || !patente) return json({ error: 'Empresa y patente requeridas' }, 400);
+      const id = uuid();
+      await query('insert into vehiculos (vehiculo_id, empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, empId, patente, tipo || null, marca || null, modelo || null, anio || null, num_motor || null, num_chasis || null]);
+      return json({ vehiculo: (await query('select * from vehiculos where vehiculo_id=$1', [id])).rows[0] }, 201);
+    }
+    if (p[0] === 'equipos') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const { empresa_id, codigo_interno, tipo, marca, modelo, anio, num_serie } = body;
+      const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
+      if (!empId || !codigo_interno) return json({ error: 'Empresa y código requeridos' }, 400);
+      const id = uuid();
+      await query('insert into equipos (equipo_id, empresa_id, codigo_interno, tipo, marca, modelo, anio, num_serie) values ($1,$2,$3,$4,$5,$6,$7,$8)', [id, empId, codigo_interno, tipo || null, marca || null, modelo || null, anio || null, num_serie || null]);
+      return json({ equipo: (await query('select * from equipos where equipo_id=$1', [id])).rows[0] }, 201);
+    }
+
     return json({ error: 'No encontrado' }, 404);
   } catch (e) {
     return json({ error: e.message }, 500);
