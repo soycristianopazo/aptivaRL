@@ -74,20 +74,21 @@ function Login({ onLogin }) {
   };
   return (
     <div className="min-h-screen grid lg:grid-cols-5 bg-white">
-      <div className="lg:col-span-3 relative hidden lg:flex flex-col justify-between p-12 bg-slate-900 text-white overflow-hidden">
-        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(circle at 20% 20%, #2563eb55, transparent 40%), radial-gradient(circle at 80% 60%, #1e40af55, transparent 45%)' }} />
-        <div className="relative bg-white rounded-xl px-5 py-3 w-fit shadow-lg"><img src={LOGO} alt="Aptiva" className="h-9" /></div>
+      <div className="lg:col-span-3 relative hidden lg:flex flex-col justify-between p-12 text-white overflow-hidden">
+        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: 'url(/login-bg.jpg)' }} />
+        <div className="absolute inset-0 bg-slate-950/75" />
+        <div className="relative"><img src={LOGO} alt="Aptiva" className="h-16 w-auto" style={{ filter: 'brightness(0) invert(1)' }} /></div>
         <div className="relative space-y-4 max-w-lg">
           <h1 className="text-4xl font-bold leading-tight">Gestión documental y acreditación de recursos</h1>
-          <p className="text-slate-300">Plataforma corporativa multiempresa del <strong>Holding Río Loa</strong>. Controla en tiempo real qué recursos están acreditados para operar en cada mandante y contrato.</p>
+          <p className="text-slate-200">Plataforma corporativa multiempresa del <strong>Holding Río Loa</strong>. Controla en tiempo real qué recursos están acreditados para operar en cada mandante y contrato.</p>
           <div className="flex gap-8 pt-4">
-            <div><div className="text-3xl font-bold text-blue-400">Multi</div><div className="text-sm text-slate-400">Empresa · Mandante · Contrato</div></div>
-            <div><div className="text-3xl font-bold text-blue-400">RLS</div><div className="text-sm text-slate-400">Seguridad por rol</div></div>
+            <div><div className="text-3xl font-bold text-blue-400">Multi</div><div className="text-sm text-slate-300">Empresa · Mandante · Contrato</div></div>
+            <div><div className="text-3xl font-bold text-blue-400">RLS</div><div className="text-sm text-slate-300">Seguridad por rol</div></div>
           </div>
         </div>
-        <div className="relative text-xs text-slate-400">© DoSoft {YEAR}</div>
+        <div className="relative" />
       </div>
-      <div className="lg:col-span-2 flex items-center justify-center p-6 sm:p-10">
+      <div className="lg:col-span-2 flex flex-col items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-sm">
           <img src={LOGO} alt="Aptiva" className="h-10 mb-8 lg:hidden" />
           <h2 className="text-2xl font-bold text-slate-900">Iniciar sesión</h2>
@@ -104,6 +105,7 @@ function Login({ onLogin }) {
             <p>revisor@aptivarl.com · Revisor · mandante@aptivarl.com · Mandante</p>
           </div>
         </div>
+        <div className="mt-8 text-center text-xs text-slate-400">© DoSoft {YEAR}</div>
       </div>
     </div>
   );
