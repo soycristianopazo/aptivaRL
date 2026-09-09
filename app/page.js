@@ -81,10 +81,6 @@ function Login({ onLogin }) {
         <div className="relative space-y-4 max-w-lg">
           <h1 className="text-4xl font-bold leading-tight">Gestión documental y acreditación de recursos</h1>
           <p className="text-slate-200">Plataforma corporativa multiempresa del <strong>Holding Río Loa</strong>. Controla en tiempo real qué recursos están acreditados para operar en cada mandante y contrato.</p>
-          <div className="flex gap-8 pt-4">
-            <div><div className="text-3xl font-bold text-blue-400">Multi</div><div className="text-sm text-slate-300">Empresa · Mandante · Contrato</div></div>
-            <div><div className="text-3xl font-bold text-blue-400">RLS</div><div className="text-sm text-slate-300">Seguridad por rol</div></div>
-          </div>
         </div>
         <div className="relative" />
       </div>
