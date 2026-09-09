@@ -1,20 +1,18 @@
-import './globals.css'
-import { Providers } from './providers'
+import './globals.css';
+import { Toaster } from '@/components/ui/sonner';
 
 export const metadata = {
-  title: 'Next.js MongoDB Template',
-  description: 'A simple template with App Router, MongoDB, and shadcn/ui',
-}
+  title: 'Aptiva RL \u2013 Capacitaci\u00f3n y Competencias',
+  description: 'Plataforma de capacitaci\u00f3n y certificaci\u00f3n de competencias laborales.',
+};
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <head>
-        <script dangerouslySetInnerHTML={{__html:'window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);'}} />
-      </head>
+    <html lang="es" suppressHydrationWarning>
       <body>
-        <Providers>{children}</Providers>
+        {children}
+        <Toaster richColors position="top-right" />
       </body>
     </html>
-  )
+  );
 }
