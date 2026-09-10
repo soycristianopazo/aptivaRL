@@ -219,22 +219,42 @@ function useData(api, path, dep = []) {
   useEffect(() => { reload(); }, dep); // eslint-disable-line
   return [data, reload];
 }
-function Table({ columns, rows, onRow, empty = 'Sin registros' }) {
+function Table({ columns, rows, onRow, empty = 'Sin registros', pageSize = 15 }) {
+  const [page, setPage] = useState(1);
+  const all = rows || [];
+  const totalPages = Math.max(1, Math.ceil(all.length / pageSize));
+  const cur = Math.min(page, totalPages);
+  useEffect(() => { if (page !== cur) setPage(cur); }, [cur, page]);
+  const start = (cur - 1) * pageSize;
+  const pageRows = all.slice(start, start + pageSize);
+  const cols = onRow
+    ? [...columns, { key: '__acceder', label: '', render: (r) => <Button size="sm" variant="outline" className="h-7 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => onRow(r)}>Acceder <ChevronRight className="h-3.5 w-3.5 ml-0.5" /></Button> }]
+    : columns;
   return (
     <div className="bg-white rounded-lg border overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-500"><tr>{columns.map((c) => <th key={c.key} className="text-left font-medium px-4 py-2.5 whitespace-nowrap">{c.label}</th>)}</tr></thead>
+          <thead className="bg-slate-50 text-slate-500"><tr>{cols.map((c) => <th key={c.key} className="text-left font-medium px-4 py-2.5 whitespace-nowrap">{c.label}</th>)}</tr></thead>
           <tbody className="divide-y">
-            {(rows || []).map((r, i) => (
-              <tr key={i} className={`hover:bg-slate-50 ${onRow ? 'cursor-pointer' : ''}`} onClick={() => onRow && onRow(r)}>
-                {columns.map((c) => <td key={c.key} className="px-4 py-2.5 whitespace-nowrap">{c.render ? c.render(r) : r[c.key]}</td>)}
+            {pageRows.map((r, i) => (
+              <tr key={start + i} className="hover:bg-slate-50">
+                {cols.map((c) => <td key={c.key} className="px-4 py-2.5 whitespace-nowrap">{c.render ? c.render(r) : r[c.key]}</td>)}
               </tr>
             ))}
-            {rows && rows.length === 0 && <tr><td colSpan={columns.length} className="px-4 py-8 text-center text-slate-400">{empty}</td></tr>}
+            {all.length === 0 && <tr><td colSpan={cols.length} className="px-4 py-8 text-center text-slate-400">{empty}</td></tr>}
           </tbody>
         </table>
       </div>
+      {all.length > pageSize && (
+        <div className="flex items-center justify-between px-4 py-2.5 border-t bg-slate-50 text-sm">
+          <span className="text-slate-500">Mostrando {start + 1}–{Math.min(start + pageSize, all.length)} de {all.length}</span>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" className="h-7" disabled={cur <= 1} onClick={() => setPage(cur - 1)}>Anterior</Button>
+            <span className="text-slate-600">{cur} / {totalPages}</span>
+            <Button size="sm" variant="outline" className="h-7" disabled={cur >= totalPages} onClick={() => setPage(cur + 1)}>Siguiente</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
