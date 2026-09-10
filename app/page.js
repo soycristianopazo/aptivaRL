@@ -141,8 +141,8 @@ function Shell({ token, profile, onLogout }) {
     <div className="min-h-screen bg-slate-100 flex">
       {/* Sidebar */}
       <aside className={`fixed z-40 inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 flex flex-col transition-transform md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="h-16 flex items-center px-4 bg-white border-b border-slate-200">
-          <img src={LOGO} alt="Aptiva RL" className="h-8" />
+        <div className="h-16 flex items-center justify-center px-4 bg-white border-b border-slate-200">
+          <img src={LOGO} alt="Aptiva RL" className="h-11 w-auto" />
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-4">
           {NAV.map((sec, i) => (
@@ -534,10 +534,22 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
   return (
     <div>
       <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver a Mandantes</button>
-      <PageHead title={mandante.razon_social} sub={`RUT ${mandante.rut} · ${mandante.comuna || ''}, ${mandante.region || ''}`}
-        action={canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button></div>} />
+      <div className="rounded-xl border bg-white shadow-sm p-5 mb-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="h-14 w-14 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><Building2 className="h-7 w-7" /></div>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800 leading-tight">{mandante.razon_social}</h1>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-slate-500">
+              <span><span className="text-slate-400">RUT:</span> <span className="font-medium text-slate-600">{mandante.rut}</span></span>
+              <span><span className="text-slate-400">Ubicación:</span> <span className="font-medium text-slate-600">{[mandante.comuna, mandante.region].filter(Boolean).join(', ') || '—'}</span></span>
+              <Badge className={mandante.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}>{mandante.activo ? 'Activo' : 'Inactivo'}</Badge>
+            </div>
+          </div>
+        </div>
+        {canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button></div>}
+      </div>
       <Tabs defaultValue="resumen">
-        <TabsList className="flex flex-wrap h-auto gap-1 bg-slate-100 p-1 rounded-xl mb-5 w-fit max-w-full">{['resumen','empresas','gerencias','contratos','trabajadores','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-lg px-4 py-1.5 text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-blue-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
+        <TabsList className="flex flex-wrap h-auto gap-0 bg-transparent p-0 mb-6 border-b border-slate-200 rounded-none w-full justify-start">{['resumen','empresas','gerencias','contratos','trabajadores','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-slate-500 data-[state=active]:border-blue-600 data-[state=active]:text-blue-700 data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-slate-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
         <TabsContent value="resumen"><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Kpi label="Empresas Holding" value={empresas.length} icon={Building} color="bg-blue-50 text-blue-600" />
           <Kpi label="Contratos" value={contratos.length} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
