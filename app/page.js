@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings,
 } from 'lucide-react';
 
 const LOGO = '/logo-aptiva.png';
@@ -157,7 +157,7 @@ const NAV = [
   { group: 'Operación', items: [{ id: 'mandantes', label: 'Mandantes', icon: Building2 }, { id: 'contratos', label: 'Contratos', icon: FileSignature }] },
   { group: 'Recursos', items: [{ id: 'trabajadores', label: 'Trabajadores', icon: Users }, { id: 'vehiculos', label: 'Vehículos', icon: Truck }, { id: 'equipos', label: 'Equipos', icon: Wrench }] },
   { group: 'Acreditación', items: [{ id: 'revision', label: 'Pendientes de Revisión', icon: FileClock }, { id: 'vencimientos', label: 'Vencimientos', icon: CalendarClock }] },
-  { group: 'Administración', items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'auditoria', label: 'Auditoría', icon: History }] },
+  { group: 'Administración', items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings, super: true }, { id: 'auditoria', label: 'Auditoría', icon: History }] },
 ];
 
 function Shell({ token, profile, onLogout }) {
@@ -192,7 +192,7 @@ function Shell({ token, profile, onLogout }) {
             <div key={i}>
               {sec.group && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{sec.group}</p>}
               <div className="space-y-0.5">
-                {sec.items.map((it) => (
+                {sec.items.filter((it) => !it.super || isSuper).map((it) => (
                   <button key={it.id} onClick={() => go(it.id)} className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${view === it.id && !detail ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
                     <it.icon className="h-4 w-4 shrink-0" />{it.label}
                   </button>
@@ -236,6 +236,7 @@ function Shell({ token, profile, onLogout }) {
           {!detail && view === 'vencimientos' && <Vencimientos {...ctx} />}
           {!detail && view === 'empresas' && <Empresas {...ctx} />}
           {!detail && view === 'usuarios' && <Usuarios {...ctx} />}
+          {!detail && view === 'mantenedores' && isSuper && <Mantenedores {...ctx} />}
           {!detail && view === 'auditoria' && <Auditoria {...ctx} />}
         </main>
 
@@ -1494,6 +1495,7 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
   const [data, reload] = useData(api, `/${kind}`);
   const [empresas] = useData(api, '/empresas');
   const [tiposVeh] = useData(api, '/tipos-vehiculo');
+  const [marcasVeh] = useData(api, '/marcas-vehiculo');
   const [open, setOpen] = useState(false);
   const isVeh = kind === 'vehiculos';
   const [f, setF] = useState({});
@@ -1516,7 +1518,9 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
             <div className="space-y-1.5"><Label>Tipo</Label>{isVeh
               ? <Select value={f.tipo} onValueChange={(v) => setF({ ...f, tipo: v })}><SelectTrigger><SelectValue placeholder="Selecciona tipo" /></SelectTrigger><SelectContent className="max-h-72">{(tiposVeh?.tipos || []).map((t) => <SelectItem key={t.id} value={t.nombre}>{t.nombre}</SelectItem>)}</SelectContent></Select>
               : <Input onChange={(e) => setF({ ...f, tipo: e.target.value })} />}</div>
-            <div className="space-y-1.5"><Label>Marca</Label><Input onChange={(e) => setF({ ...f, marca: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Marca</Label>{isVeh
+              ? <Select value={f.marca} onValueChange={(v) => setF({ ...f, marca: v })}><SelectTrigger><SelectValue placeholder="Selecciona marca" /></SelectTrigger><SelectContent className="max-h-72">{(marcasVeh?.marcas || []).map((mm) => <SelectItem key={mm.id} value={mm.nombre}>{mm.nombre}</SelectItem>)}</SelectContent></Select>
+              : <Input onChange={(e) => setF({ ...f, marca: e.target.value })} />}</div>
             <div className="space-y-1.5"><Label>Modelo</Label><Input onChange={(e) => setF({ ...f, modelo: e.target.value })} /></div>
             <div className="space-y-1.5"><Label>Año</Label><Input type="number" onChange={(e) => setF({ ...f, anio: Number(e.target.value) })} /></div>
           </div>
@@ -1532,6 +1536,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
   const [data, reload] = useData(api, `/${tipo}s/${id}`, [tipo, id]);
   const [contratos] = useData(api, '/contratos');
   const [tiposVeh] = useData(api, '/tipos-vehiculo');
+  const [marcasVeh] = useData(api, '/marcas-vehiculo');
   const [upload, setUpload] = useState(null);
   const [asig, setAsig] = useState('');
   const [edit, setEdit] = useState(false);
@@ -1579,7 +1584,9 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
           <div className="space-y-1.5"><Label>Tipo</Label>{tipo === 'vehiculo'
             ? <Select value={ef.tipo} onValueChange={(v) => setEf({ ...ef, tipo: v })}><SelectTrigger><SelectValue placeholder="Selecciona tipo" /></SelectTrigger><SelectContent className="max-h-72">{(tiposVeh?.tipos || []).map((t) => <SelectItem key={t.id} value={t.nombre}>{t.nombre}</SelectItem>)}</SelectContent></Select>
             : <Input value={ef.tipo || ''} onChange={(e) => setEf({ ...ef, tipo: e.target.value })} />}</div>
-          <div className="space-y-1.5"><Label>Marca</Label><Input value={ef.marca || ''} onChange={(e) => setEf({ ...ef, marca: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Marca</Label>{tipo === 'vehiculo'
+            ? <Select value={ef.marca} onValueChange={(v) => setEf({ ...ef, marca: v })}><SelectTrigger><SelectValue placeholder="Selecciona marca" /></SelectTrigger><SelectContent className="max-h-72">{(marcasVeh?.marcas || []).map((mm) => <SelectItem key={mm.id} value={mm.nombre}>{mm.nombre}</SelectItem>)}</SelectContent></Select>
+            : <Input value={ef.marca || ''} onChange={(e) => setEf({ ...ef, marca: e.target.value })} />}</div>
           <div className="space-y-1.5"><Label>Modelo</Label><Input value={ef.modelo || ''} onChange={(e) => setEf({ ...ef, modelo: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Año</Label><Input type="number" value={ef.anio || ''} onChange={(e) => setEf({ ...ef, anio: e.target.value })} /></div>
         </div>
@@ -1690,6 +1697,65 @@ function Vencimientos({ api }) {
         { key: 'fecha_vencimiento', label: 'Vence', render: (r) => fdate(r.fecha_vencimiento) },
         { key: 'dias_restantes', label: 'Días', render: (r) => <Badge className={r.dias_restantes < 0 ? 'bg-red-100 text-red-700' : r.dias_restantes <= 7 ? 'bg-orange-100 text-orange-700' : r.dias_restantes <= 15 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100'}>{r.dias_restantes < 0 ? `Vencido ${Math.abs(r.dias_restantes)}d` : `${r.dias_restantes} días`}</Badge> },
       ]} rows={rows === null ? null : filtered} empty="Sin vencimientos en el rango" />
+    </div>
+  );
+}
+
+/* ------------ Mantenedores (catálogos, solo Super Admin) ------------ */
+function CatalogoTab({ api, endpoint, dataKey, singular }) {
+  const [data, reload] = useData(api, `/${endpoint}`);
+  const items = data?.[dataKey] || [];
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [nombre, setNombre] = useState('');
+  const openNew = () => { setEditItem(null); setNombre(''); setOpen(true); };
+  const openEdit = (it) => { setEditItem(it); setNombre(it.nombre); setOpen(true); };
+  const save = async () => {
+    const n = nombre.trim(); if (!n) { toast.error('Ingresa un nombre'); return; }
+    try {
+      if (editItem) await api(`/${endpoint}/${editItem.id}`, { method: 'PUT', body: JSON.stringify({ nombre: n }) });
+      else await api(`/${endpoint}`, { method: 'POST', body: JSON.stringify({ nombre: n }) });
+      toast.success('Guardado'); setOpen(false); reload();
+    } catch (e) { toast.error(e.message); }
+  };
+  const del = async (it) => { if (!window.confirm(`¿Eliminar "${it.nombre}"?`)) return; try { await api(`/${endpoint}/${it.id}`, { method: 'DELETE' }); toast.success('Eliminado'); reload(); } catch (e) { toast.error(e.message); } };
+  const filtered = items.filter((it) => !q || it.nombre.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Input className="h-9 w-64" placeholder={`Buscar ${singular}…`} value={q} onChange={(e) => setQ(e.target.value)} />
+          <span className="text-xs text-slate-400">{filtered.length} registros</span>
+        </div>
+        <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={openNew}><Plus className="h-4 w-4 mr-1" />Agregar</Button>
+      </div>
+      <Table pageSize={15} empty={`Sin ${singular}s`} columns={[
+        { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre}</span> },
+        { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}>Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200" onClick={() => del(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
+      ]} rows={filtered} />
+      <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>{editItem ? 'Editar' : 'Agregar'} {singular}</DialogTitle></DialogHeader>
+        <div className="space-y-1.5"><Label>Nombre</Label><Input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} autoFocus /></div>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Guardar</Button></DialogFooter>
+      </DialogContent></Dialog>
+    </div>
+  );
+}
+
+function Mantenedores({ api }) {
+  const [tab, setTab] = useState('marcas');
+  const TABS = [['marcas', 'Marcas de vehículo'], ['tipos', 'Tipos de vehículo']];
+  return (
+    <div>
+      <PageHead title="Mantenedores" sub="Catálogos del sistema · solo Super Admin" />
+      <div className="inline-flex rounded-lg border bg-slate-100 p-1 mb-4">
+        {TABS.map(([val, label]) => (
+          <button key={val} onClick={() => setTab(val)} className={`px-4 py-1.5 text-sm rounded-md transition-colors ${tab === val ? 'bg-white shadow-sm font-semibold text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>
+        ))}
+      </div>
+      {tab === 'marcas' && <CatalogoTab api={api} endpoint="marcas-vehiculo" dataKey="marcas" singular="marca" />}
+      {tab === 'tipos' && <CatalogoTab api={api} endpoint="tipos-vehiculo" dataKey="tipos" singular="tipo" />}
     </div>
   );
 }

@@ -213,6 +213,7 @@ export async function GET(request, { params }) {
     }
 
     if (p[0] === 'tipos-vehiculo') return json({ tipos: (await query('select id, nombre from tipos_vehiculo order by nombre')).rows });
+    if (p[0] === 'marcas-vehiculo') return json({ marcas: (await query('select id, nombre from marcas_vehiculo order by nombre')).rows });
 
     if (p[0] === 'empresas') {
       const r = await query('select e.*, (select count(*)::int from trabajadores t where t.empresa_id=e.empresa_id and t.deleted_at is null) as trabajadores_count from empresas_grupo e where e.deleted_at is null order by e.razon_social');
@@ -522,6 +523,19 @@ export async function POST(request, { params }) {
     if (!profile) return json({ error: 'No autorizado' }, 401);
     const body = await request.json().catch(() => ({}));
 
+    // Mantenedor de catálogos (solo Super Admin)
+    const CAT = { 'tipos-vehiculo': 'tipos_vehiculo', 'marcas-vehiculo': 'marcas_vehiculo' };
+    if (CAT[p[0]] && !p[1]) {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const nombre = (body.nombre || '').trim();
+      if (!nombre) return json({ error: 'Nombre requerido' }, 400);
+      try {
+        const row = (await query(`insert into ${CAT[p[0]]} (nombre) values ($1) returning id, nombre`, [nombre])).rows[0];
+        await audit(profile, 'crear_catalogo', p[0], String(row.id), { nombre });
+        return json({ item: row }, 201);
+      } catch (e) { return json({ error: 'Ya existe o inválido' }, 400); }
+    }
+
     if (p[0] === 'documentos' && p[1] && p[2] === 'revision') {
       if (!['SUPER_ADMIN_HOLDING', 'REVISOR'].includes(profile.role_codigo)) return json({ error: 'No autorizado' }, 403);
       const { estado, observacion } = body;
@@ -698,6 +712,15 @@ export async function PUT(request, { params }) {
     const body = await request.json().catch(() => ({}));
     const build = (allowed) => { const cols = []; const vals = []; let i = 1; for (const k of allowed) { if (body[k] !== undefined) { cols.push(`${k}=$${i++}`); vals.push(body[k]); } } return { cols, vals, i }; };
 
+    const CATP = { 'tipos-vehiculo': 'tipos_vehiculo', 'marcas-vehiculo': 'marcas_vehiculo' };
+    if (CATP[p[0]] && p[1]) {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const nombre = (body.nombre || '').trim();
+      if (!nombre) return json({ error: 'Nombre requerido' }, 400);
+      try { const row = (await query(`update ${CATP[p[0]]} set nombre=$1 where id=$2 returning id, nombre`, [nombre, p[1]])).rows[0]; return json({ item: row }); }
+      catch (e) { return json({ error: 'Ya existe o inválido' }, 400); }
+    }
+
     if (p[0] === 'mandantes' && p[1]) {
       const { cols, vals, i } = build(['razon_social', 'rut', 'direccion', 'region', 'comuna', 'activo']);
       if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
@@ -758,6 +781,15 @@ export async function DELETE(request, { params }) {
     const profile = await getProfile(request);
     if (!profile) return json({ error: 'No autorizado' }, 401);
     if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+
+    // Mantenedor de catálogos (solo Super Admin)
+    const CATD = { 'tipos-vehiculo': 'tipos_vehiculo', 'marcas-vehiculo': 'marcas_vehiculo' };
+    if (CATD[p[0]] && p[1]) {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      await query(`delete from ${CATD[p[0]]} where id=$1`, [p[1]]);
+      await audit(profile, 'eliminar_catalogo', p[0], p[1], null);
+      return json({ ok: true });
+    }
 
     // Super Admin Holding: borrado en cascada sin importar dependencias
     if (isSuper(profile) && p[1] && !p[2] && ['mandantes', 'contratos', 'trabajadores', 'vehiculos', 'equipos'].includes(p[0])) {
