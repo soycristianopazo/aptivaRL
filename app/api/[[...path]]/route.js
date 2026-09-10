@@ -164,6 +164,21 @@ async function acreditacionRecurso(tipo, recursoId) {
   return out;
 }
 
+async function acreditacionContrato(contratoId, mandanteId) {
+  const reqs = (await query("select r.*, cat.nombre as categoria, cat.orden as cat_orden from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 and r.tipo_recurso='contrato' and r.activo=true order by cat.orden nulls last, r.orden", [mandanteId])).rows;
+  const docs = (await query("select * from documentos where recurso_tipo='contrato' and recurso_id=$1 and deleted_at is null", [contratoId])).rows;
+  let bloqueado = false, revision = false, obligTotal = 0, okCount = 0;
+  const detalle = [];
+  for (const req of reqs) {
+    const doc = docs.filter((d) => d.requisito_id === req.requisito_id).sort((x, y) => new Date(y.created_at) - new Date(x.created_at))[0];
+    let estado = 'faltante';
+    if (doc) { estado = doc.estado; if (doc.estado === 'aprobado' && doc.fecha_vencimiento && new Date(doc.fecha_vencimiento) < new Date()) estado = 'vencido'; }
+    if (req.obligatorio) { obligTotal++; if (['faltante', 'vencido', 'rechazado'].includes(estado)) bloqueado = true; else if (['en_revision', 'pendiente'].includes(estado)) revision = true; else if (estado === 'aprobado') okCount++; }
+    detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, categoria: req.categoria || 'Sin categoría', obligatorio: req.obligatorio, tiene_vencimiento: req.tiene_vencimiento, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
+  }
+  return { estado: bloqueado ? 'BLOQUEADO' : revision ? 'EN_REVISION' : 'ACREDITADO', docs_ok: okCount, docs_total: obligTotal, detalle };
+}
+
 export async function GET(request, { params }) {
   try {
     await ensureSchema();
@@ -255,7 +270,8 @@ export async function GET(request, { params }) {
       if (!c) return json({ error: 'No encontrado' }, 404);
       const trabajadores = (await query("select t.trabajador_id, t.nombre, t.apellido, t.rut, t.cargo from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.contrato_id=$1 and a.estado='activo'", [p[1]])).rows;
       c.dotacion = trabajadores.length;
-      return json({ contrato: c, trabajadores });
+      const documentacion = await acreditacionContrato(p[1], c.mandante_id);
+      return json({ contrato: c, trabajadores, documentacion });
     }
 
     if (p[0] === 'trabajadores' && !p[1]) {
@@ -344,18 +360,20 @@ export async function GET(request, { params }) {
         coalesce(r.nombre, d.nombre_archivo) as requisito,
         m.razon_social as mandante,
         (d.fecha_vencimiento - current_date) as dias_restantes,
-        coalesce(nullif(trim(concat(t.nombre,' ',t.apellido)),''), v.patente, q.codigo_interno, '—') as recurso,
-        coalesce(t.empresa_id, v.empresa_id, q.empresa_id) as empresa_id,
-        coalesce(et.razon_social, ev.razon_social, eq.razon_social) as empresa
+        coalesce(nullif(trim(concat(t.nombre,' ',t.apellido)),''), v.patente, q.codigo_interno, concat('Contrato ', ct.numero_oc), '—') as recurso,
+        coalesce(t.empresa_id, v.empresa_id, q.empresa_id, ct.empresa_id) as empresa_id,
+        coalesce(et.razon_social, ev.razon_social, eq.razon_social, ect.razon_social) as empresa
         from documentos d
         left join requisitos_documentales r on r.requisito_id=d.requisito_id
         left join mandantes m on m.mandante_id=d.mandante_id
         left join trabajadores t on t.trabajador_id=d.recurso_id and d.recurso_tipo='trabajador'
         left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
         left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
+        left join contratos ct on ct.contrato_id=d.recurso_id and d.recurso_tipo='contrato'
         left join empresas_grupo et on et.empresa_id=t.empresa_id
         left join empresas_grupo ev on ev.empresa_id=v.empresa_id
         left join empresas_grupo eq on eq.empresa_id=q.empresa_id
+        left join empresas_grupo ect on ect.empresa_id=ct.empresa_id
         where d.fecha_vencimiento is not null and d.deleted_at is null and d.estado='aprobado'
         and d.fecha_vencimiento <= current_date + ($1 || ' days')::interval`;
       // Filtros por rol
@@ -363,11 +381,11 @@ export async function GET(request, { params }) {
       if (profile.role_codigo === 'ADMIN_EMPRESA') empF = profile.empresa_id;
       if (profile.role_codigo === 'USUARIO_MANDANTE') { args.push(profile.mandante_id); sql += ` and d.mandante_id=$${args.length}`; }
       else { const manF = searchParams.get('mandante_id'); if (manF) { args.push(manF); sql += ` and d.mandante_id=$${args.length}`; } }
-      if (empF) { args.push(empF); sql += ` and coalesce(t.empresa_id, v.empresa_id, q.empresa_id)=$${args.length}`; }
+      if (empF) { args.push(empF); sql += ` and coalesce(t.empresa_id, v.empresa_id, q.empresa_id, ct.empresa_id)=$${args.length}`; }
       const tipo = searchParams.get('tipo');
-      if (tipo && ['trabajador', 'vehiculo', 'equipo'].includes(tipo)) { args.push(tipo); sql += ` and d.recurso_tipo=$${args.length}`; }
+      if (tipo && ['trabajador', 'vehiculo', 'equipo', 'contrato'].includes(tipo)) { args.push(tipo); sql += ` and d.recurso_tipo=$${args.length}`; }
       const qq = (searchParams.get('q') || '').trim();
-      if (qq.length >= 2) { args.push(`%${qq}%`); const n = args.length; sql += ` and (coalesce(r.nombre, d.nombre_archivo) ilike $${n} or trim(concat(t.nombre,' ',t.apellido)) ilike $${n} or v.patente ilike $${n} or q.codigo_interno ilike $${n})`; }
+      if (qq.length >= 2) { args.push(`%${qq}%`); const n = args.length; sql += ` and (coalesce(r.nombre, d.nombre_archivo) ilike $${n} or trim(concat(t.nombre,' ',t.apellido)) ilike $${n} or v.patente ilike $${n} or q.codigo_interno ilike $${n} or ct.numero_oc ilike $${n})`; }
       sql += ' order by d.fecha_vencimiento';
       const r = await query(sql, args);
       return json({ documentos: r.rows });

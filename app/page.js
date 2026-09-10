@@ -1100,7 +1100,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
 
   // Level 1: categories list
   const cats = (categorias || []).filter((c) => (c.tipo_recurso || 'trabajador') === tipoRec).filter((c) => !q || c.nombre?.toLowerCase().includes(q.toLowerCase()) || (c.descripcion || '').toLowerCase().includes(q.toLowerCase()));
-  const TIPOS = [['trabajador', 'Trabajadores'], ['vehiculo', 'Vehículos'], ['equipo', 'Equipos']];
+  const TIPOS = [['trabajador', 'Trabajadores'], ['vehiculo', 'Vehículos'], ['equipo', 'Equipos'], ['contrato', 'Contratos']];
   return (
     <div>
       <div className="inline-flex rounded-lg border bg-slate-100 p-1 mb-4">
@@ -1230,6 +1230,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
   const [asignOpen, setAsignOpen] = useState(false);
   const [asig, setAsig] = useState('');
   const [crearOpen, setCrearOpen] = useState(false);
+  const [upload, setUpload] = useState(null);
   const [nf, setNf] = useState({ rut: '', nombre: '', apellido: '', cargo: '', genero: '', telefono: '', region: '', comuna: '' });
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const c = data.contrato; const pct = c.limite_contingente ? Math.min(100, (c.dotacion / c.limite_contingente) * 100) : 0;
@@ -1274,6 +1275,14 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
           {c.dotacion >= c.limite_contingente && <p className="text-xs text-red-600 mt-2 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Límite de contingente alcanzado</p>}
         </CardContent></Card>
       </div>
+      <Card className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between gap-2 flex-wrap">
+        <div><CardTitle className="text-base flex items-center gap-2"><FileClock className="h-4 w-4 text-slate-400" />Documentos del contrato</CardTitle><CardDescription>Estándar documental del contrato · {c.mandante}</CardDescription></div>
+        {data.documentacion && (data.documentacion.docs_total > 0 || (data.documentacion.detalle || []).length > 0) && <div className="flex items-center gap-2"><span className="text-xs text-slate-500">{data.documentacion.docs_ok}/{data.documentacion.docs_total} obligatorios</span><Badge className={`border-0 ${data.documentacion.estado === 'ACREDITADO' ? 'bg-emerald-100 text-emerald-700' : data.documentacion.estado === 'EN_REVISION' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{data.documentacion.estado === 'ACREDITADO' ? 'Al día' : data.documentacion.estado === 'EN_REVISION' ? 'En revisión' : 'Pendiente'}</Badge></div>}
+      </div></CardHeader><CardContent>
+        {(data.documentacion?.detalle || []).length === 0
+          ? <p className="text-sm text-slate-400">No hay estándar documental configurado para contratos de este mandante. Configúralo en el mandante → Estándar Documental → Contratos.</p>
+          : <DocsPorCategoria detalle={data.documentacion.detalle} canManage={canManage} api={api} onCargar={(d) => setUpload({ requisito: d })} />}
+      </CardContent></Card>
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <h3 className="font-semibold text-slate-700">Trabajadores asignados</h3>
         {canManage && <div className="flex gap-2">
@@ -1284,8 +1293,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
       <Table columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={data.trabajadores} onRow={(r) => openDetail && openDetail('trabajador', r.trabajador_id)} />
 
       <Dialog open={asignOpen} onOpenChange={setAsignOpen}><DialogContent>
-        <DialogHeader><DialogTitle>Asignar trabajador al contrato</DialogTitle><DialogDescription>Solo trabajadores de {c.empresa}. Un trabajador puede estar en varios contratos.</DialogDescription></DialogHeader>
-        <div className="space-y-1.5"><Label>Trabajador</Label>
+        <DialogHeader><DialogTitle>Asignar trabajador al contrato</DialogTitle><DialogDescription>Solo trabajadores de {c.empresa}. Un trabajador puede estar en varios contratos.</DialogDescription></DialogHeader>        <div className="space-y-1.5"><Label>Trabajador</Label>
           <Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Selecciona un trabajador…" /></SelectTrigger>
             <SelectContent>{disponibles.length === 0 ? <div className="px-3 py-2 text-sm text-slate-400">No hay trabajadores disponibles de esta empresa</div> : disponibles.map((t) => <SelectItem key={t.trabajador_id} value={t.trabajador_id}>{t.nombre} {t.apellido} · {t.rut}</SelectItem>)}</SelectContent>
           </Select>
@@ -1312,6 +1320,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
+      {upload && <UploadDialog api={api} recurso_tipo="contrato" recurso_id={id} requisito={upload.requisito} mandante_id={c.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
     </div>
   );
 }
@@ -1632,7 +1641,7 @@ function VencKpi({ label, value, accent, icon: Icon }) {
   );
 }
 
-const VENC_TIPO_LABEL = { trabajador: 'Trabajador', vehiculo: 'Vehículo', equipo: 'Equipo' };
+const VENC_TIPO_LABEL = { trabajador: 'Trabajador', vehiculo: 'Vehículo', equipo: 'Equipo', contrato: 'Contrato' };
 
 function Vencimientos({ api }) {
   const [dias, setDias] = useState(30);
@@ -1676,7 +1685,7 @@ function Vencimientos({ api }) {
 
       <div className="flex flex-wrap gap-2 mb-4">
         <div className="relative flex-1 min-w-[220px] max-w-sm"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar recurso o documento…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <Select value={fTipo} onValueChange={setFTipo}><SelectTrigger className="w-44"><SelectValue placeholder="Tipo" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem><SelectItem value="trabajador">Trabajadores</SelectItem><SelectItem value="vehiculo">Vehículos</SelectItem><SelectItem value="equipo">Equipos</SelectItem></SelectContent></Select>
+        <Select value={fTipo} onValueChange={setFTipo}><SelectTrigger className="w-44"><SelectValue placeholder="Tipo" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem><SelectItem value="trabajador">Trabajadores</SelectItem><SelectItem value="vehiculo">Vehículos</SelectItem><SelectItem value="equipo">Equipos</SelectItem><SelectItem value="contrato">Contratos</SelectItem></SelectContent></Select>
         <Select value={fEmp} onValueChange={setFEmp}><SelectTrigger className="w-52"><SelectValue placeholder="Empresa" /></SelectTrigger><SelectContent><SelectItem value="all">Todas las empresas</SelectItem>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select>
         <Select value={fMan} onValueChange={setFMan}><SelectTrigger className="w-52"><SelectValue placeholder="Mandante" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los mandantes</SelectItem>{(mandantes?.mandantes || []).map((m) => <SelectItem key={m.mandante_id} value={m.mandante_id}>{m.razon_social}</SelectItem>)}</SelectContent></Select>
         {hasFilters && <Button variant="ghost" onClick={() => { setFEmp('all'); setFMan('all'); setFTipo('all'); setQ(''); }}>Limpiar</Button>}
