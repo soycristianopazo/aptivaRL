@@ -158,7 +158,6 @@ function Shell({ token, profile, onLogout }) {
             </div>
           ))}
         </nav>
-        <div className="p-3 border-t border-slate-800 text-[10px] text-slate-500">© DoSoft {YEAR}</div>
       </aside>
 
       {/* Main */}
@@ -198,7 +197,7 @@ function Shell({ token, profile, onLogout }) {
         </main>
 
         <footer className="border-t bg-white px-6 py-3 flex items-center justify-center gap-2 text-xs text-slate-400">
-          <span>©DoSoft {YEAR}</span><img src={LOGO} alt="Aptiva" className="h-4 opacity-60" />
+          <span>©DoSoft {YEAR}</span>
         </footer>
       </div>
       {sidebarOpen && <div className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />}
