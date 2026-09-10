@@ -472,29 +472,39 @@ function DocsPorCategoria({ detalle, canManage, onCargar }) {
     if (!grupos[k]) { grupos[k] = []; orden.push(k); }
     grupos[k].push(d);
   });
+  const [abiertas, setAbiertas] = useState({});
+  const toggle = (cat) => setAbiertas((s) => ({ ...s, [cat]: !s[cat] }));
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       {orden.map((cat) => {
         const items = grupos[cat];
         const ok = items.filter((x) => x.estado === 'aprobado').length;
+        const falta = items.some((x) => x.obligatorio && ['faltante', 'vencido', 'rechazado'].includes(x.estado));
+        const open = !!abiertas[cat];
         return (
-          <div key={cat}>
-            <div className="flex items-center justify-between mb-1">
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{cat}</h4>
-              <span className="text-[11px] text-slate-400">{ok}/{items.length}</span>
-            </div>
-            <div className="divide-y rounded-lg border bg-white">
-              {items.map((d) => (
-                <div key={d.requisito_id} className="flex items-center justify-between py-2 px-3 gap-2">
-                  <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
-                  <div className="flex items-center gap-2">
-                    {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
-                    <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
-                    {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => onCargar(d)}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
+          <div key={cat} className="rounded-lg border bg-white overflow-hidden">
+            <button onClick={() => toggle(cat)} className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-slate-50 text-left">
+              <div className="flex items-center gap-2 min-w-0">
+                <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600 truncate">{cat}</span>
+                <span className={`h-2 w-2 rounded-full ${falta ? 'bg-red-400' : ok === items.length ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              </div>
+              <span className="text-[11px] text-slate-400 shrink-0">{ok}/{items.length}</span>
+            </button>
+            {open && (
+              <div className="divide-y border-t">
+                {items.map((d) => (
+                  <div key={d.requisito_id} className="flex items-center justify-between py-2 px-3 gap-2">
+                    <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
+                    <div className="flex items-center gap-2">
+                      {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
+                      <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
+                      {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => onCargar(d)}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}
