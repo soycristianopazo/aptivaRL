@@ -47,7 +47,7 @@ export default function ValidarPage() {
   const now = new Date();
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col items-center py-6 px-4" style={{ fontFamily: 'Montserrat, sans-serif' }}>
+    <div className="min-h-screen bg-slate-100 flex flex-col items-center pb-10 px-4" style={{ fontFamily: 'Montserrat, sans-serif', paddingTop: 'calc(5rem + env(safe-area-inset-top))' }}>
       <div className="w-full max-w-md">
         <div className="flex items-center justify-center mb-4">
           <img src={LOGO} alt="Aptiva" className="h-8 invert-0" onError={(e) => { e.currentTarget.style.display = 'none'; }} />

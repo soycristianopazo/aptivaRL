@@ -1429,11 +1429,11 @@ function QRDialog({ id, titulo, rut, onClose }) {
     <Dialog open onOpenChange={onClose}><DialogContent className="max-w-sm">
       <DialogHeader><DialogTitle>Expediente QR</DialogTitle><DialogDescription>Escanea para validar en terreno · {titulo}</DialogDescription></DialogHeader>
       <div className="flex flex-col items-center gap-3">
-        <div className="rounded-xl border bg-white p-3">
-          {img ? <img src={img} alt="QR expediente" className="h-56 w-56" /> : <div className="h-56 w-56 flex items-center justify-center text-slate-400 text-sm">Generando…</div>}
+        <div className="rounded-xl border bg-white p-4 flex items-center justify-center mx-auto">
+          {img ? <img src={img} alt="QR expediente" width={224} height={224} className="block" /> : <div className="h-56 w-56 flex items-center justify-center text-slate-400 text-sm">Generando…</div>}
         </div>
-        <div className="text-center">
-          <p className="text-sm font-medium text-slate-700">{titulo}</p>
+        <div className="text-center w-full">
+          <p className="text-sm font-medium text-slate-700 truncate">{titulo}</p>
           <p className="text-xs text-slate-400">{rut}</p>
         </div>
         <div className="w-full flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5">
