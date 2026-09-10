@@ -19,6 +19,31 @@ async function getProfile(request) {
 const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
 const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
 
+const titleCase = (s) => {
+  if (s == null) return s;
+  return String(s).trim().toLowerCase().replace(/([\p{L}][\p{L}'’-]*)/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1)) || null;
+};
+// Valida RUT chileno (módulo 11). Acepta con o sin puntos/guión.
+function validarRut(rut) {
+  if (!rut) return false;
+  const clean = String(rut).replace(/[.\-\s]/g, '').toUpperCase();
+  if (!/^\d{7,8}[0-9K]$/.test(clean)) return false;
+  const cuerpo = clean.slice(0, -1);
+  const dv = clean.slice(-1);
+  let suma = 0, mul = 2;
+  for (let i = cuerpo.length - 1; i >= 0; i--) { suma += parseInt(cuerpo[i], 10) * mul; mul = mul === 7 ? 2 : mul + 1; }
+  const res = 11 - (suma % 11);
+  const dvCalc = res === 11 ? '0' : res === 10 ? 'K' : String(res);
+  return dv === dvCalc;
+}
+function fmtRutStr(rut) {
+  const clean = String(rut || '').replace(/[.\-\s]/g, '').toUpperCase();
+  if (clean.length < 2) return rut;
+  const dv = clean.slice(-1); let body = clean.slice(0, -1), out = '';
+  while (body.length > 3) { out = '.' + body.slice(-3) + out; body = body.slice(0, -3); }
+  return body + out + '-' + dv;
+}
+
 const RECURSO_META = {
   trabajadores: { rt: 'trabajador', table: 'trabajadores', col: 'trabajador_id' },
   vehiculos: { rt: 'vehiculo', table: 'vehiculos', col: 'vehiculo_id' },
@@ -477,14 +502,16 @@ export async function POST(request, { params }) {
 
     if (p[0] === 'trabajadores' && !p[1]) {
       if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
-      const { empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono } = body;
+      const { empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email } = body;
       const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
       if (!empId || !rut || !nombre || !apellido) return json({ error: 'Faltan campos obligatorios' }, 400);
-      const dup = await query('select 1 from trabajadores where rut=$1', [rut]);
+      if (!validarRut(rut)) return json({ error: 'RUT inválido. Verifica el número y dígito verificador.' }, 400);
+      const rutFmt = fmtRutStr(rut);
+      const dup = await query('select 1 from trabajadores where rut=$1', [rutFmt]);
       if (dup.rows.length) return json({ error: 'Ya existe un trabajador con ese RUT' }, 409);
       const id = uuid();
-      await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [id, empId, rut, nombre, apellido, cargo || null, genero || null, region || null, comuna || null, telefono || null]);
-      await audit(profile, 'crear_trabajador', 'trabajador', id, { rut, nombre, apellido });
+      await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, empId, rutFmt, titleCase(nombre), titleCase(apellido), titleCase(cargo), genero || null, region || null, comuna || null, telefono || null, email || null]);
+      await audit(profile, 'crear_trabajador', 'trabajador', id, { rut: rutFmt, nombre, apellido });
       return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [id])).rows[0] }, 201);
     }
 
@@ -577,6 +604,7 @@ export async function PUT(request, { params }) {
       return json({ contrato: (await query('select * from contratos where contrato_id=$1', [p[1]])).rows[0] });
     }
     if (p[0] === 'trabajadores' && p[1]) {
+      ['nombre', 'apellido', 'cargo'].forEach((k) => { if (body[k] != null) body[k] = titleCase(body[k]); });
       const { cols, vals, i } = build(['nombre', 'apellido', 'cargo', 'genero', 'region', 'comuna', 'telefono', 'email', 'direccion', 'estado']);
       if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
       vals.push(p[1]);

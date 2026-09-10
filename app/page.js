@@ -40,6 +40,25 @@ const fdateCL = (d) => {
   if (!d) return '—';
   try { return new Date(d).toLocaleDateString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return fdate(d); }
 };
+// Validador de RUT chileno (módulo 11)
+const validarRut = (rut) => {
+  if (!rut) return false;
+  const c = String(rut).replace(/[.\-\s]/g, '').toUpperCase();
+  if (!/^\d{7,8}[0-9K]$/.test(c)) return false;
+  const cuerpo = c.slice(0, -1); const dv = c.slice(-1);
+  let suma = 0, mul = 2;
+  for (let i = cuerpo.length - 1; i >= 0; i--) { suma += parseInt(cuerpo[i], 10) * mul; mul = mul === 7 ? 2 : mul + 1; }
+  const res = 11 - (suma % 11);
+  const dvCalc = res === 11 ? '0' : res === 10 ? 'K' : String(res);
+  return dv === dvCalc;
+};
+const formatRut = (rut) => {
+  const c = String(rut || '').replace(/[.\-\s]/g, '').toUpperCase();
+  if (c.length < 2) return rut;
+  const dv = c.slice(-1); let body = c.slice(0, -1), out = '';
+  while (body.length > 3) { out = '.' + body.slice(-3) + out; body = body.slice(0, -3); }
+  return body + out + '-' + dv;
+};
 
 
 const roleLabel = { SUPER_ADMIN_HOLDING: 'Super Admin Holding', ADMIN_EMPRESA: 'Admin Empresa', USUARIO_MANDANTE: 'Usuario Mandante', REVISOR: 'Revisor Documental' };
@@ -762,11 +781,11 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
       <Dialog open={crearOpen} onOpenChange={setCrearOpen}><DialogContent>
         <DialogHeader><DialogTitle>Crear trabajador y asignar</DialogTitle><DialogDescription>Se creará en {c.empresa} y se asignará a este contrato.</DialogDescription></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={nf.rut} onChange={(e) => setNf({ ...nf, rut: e.target.value })} /></div><div className="space-y-1.5"><Label>Cargo</Label><Input value={nf.cargo} onChange={(e) => setNf({ ...nf, cargo: e.target.value })} /></div></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={nf.rut} onChange={(e) => setNf({ ...nf, rut: e.target.value })} className={nf.rut && !validarRut(nf.rut) ? 'border-red-400' : ''} />{nf.rut && !validarRut(nf.rut) && <p className="text-xs text-red-500">RUT inválido</p>}</div><div className="space-y-1.5"><Label>Cargo</Label><Input value={nf.cargo} onChange={(e) => setNf({ ...nf, cargo: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={nf.nombre} onChange={(e) => setNf({ ...nf, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={nf.apellido} onChange={(e) => setNf({ ...nf, apellido: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Teléfono</Label><Input value={nf.telefono} onChange={(e) => setNf({ ...nf, telefono: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={nf.comuna} onChange={(e) => setNf({ ...nf, comuna: e.target.value })} /></div></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setCrearOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={doCrear}>Crear y asignar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setCrearOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" disabled={!validarRut(nf.rut)} onClick={doCrear}>Crear y asignar</Button></DialogFooter>
       </DialogContent></Dialog>
       <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
         <DialogHeader><DialogTitle>Editar contrato</DialogTitle></DialogHeader>
@@ -809,10 +828,10 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
         <div className="space-y-3">
           {isSuper && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={f.nombre} onChange={(e) => setF({ ...f, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={f.apellido} onChange={(e) => setF({ ...f, apellido: e.target.value })} /></div></div>
-          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={f.rut} onChange={(e) => setF({ ...f, rut: e.target.value })} /></div><div className="space-y-1.5"><Label>Cargo</Label><Input value={f.cargo} onChange={(e) => setF({ ...f, cargo: e.target.value })} /></div></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={f.rut} onChange={(e) => setF({ ...f, rut: e.target.value })} className={f.rut && !validarRut(f.rut) ? 'border-red-400' : ''} />{f.rut && !validarRut(f.rut) && <p className="text-xs text-red-500">RUT inválido</p>}</div><div className="space-y-1.5"><Label>Cargo</Label><Input value={f.cargo} onChange={(e) => setF({ ...f, cargo: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Teléfono</Label><Input value={f.telefono} onChange={(e) => setF({ ...f, telefono: e.target.value })} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" disabled={!validarRut(f.rut)} onClick={save}>Crear</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
