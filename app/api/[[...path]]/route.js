@@ -139,6 +139,43 @@ async function acreditacionTrabajador(trabajadorId) {
   return out;
 }
 
+/* ------- Historical document snapshot for a finiquitado trabajador ------- */
+async function historialDocumentalTrabajador(trabajadorId) {
+  const asigs = (await query(
+    `select a.estado, a.mandante_id, m.razon_social as mandante, e.razon_social as empresa, a.contrato_id, c.numero_oc, a.fecha_desasignacion
+     from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id
+     join empresas_grupo e on e.empresa_id=a.empresa_id
+     join contratos c on c.contrato_id=a.contrato_id where a.trabajador_id=$1`, [trabajadorId])).rows;
+  const activos = new Set(asigs.filter((a) => a.estado === 'activo').map((a) => a.mandante_id));
+  const inactivos = asigs.filter((a) => a.estado === 'inactivo' && !activos.has(a.mandante_id));
+  if (inactivos.length === 0) return [];
+  const desv = (await query('select contrato_id, causal, tipo, created_at from desvinculaciones where trabajador_id=$1', [trabajadorId])).rows;
+  const desvByContrato = {};
+  desv.forEach((d) => { desvByContrato[d.contrato_id] = d; });
+  const byMandante = {};
+  for (const a of inactivos) {
+    if (!byMandante[a.mandante_id]) byMandante[a.mandante_id] = { mandante_id: a.mandante_id, mandante: a.mandante, contratos: [] };
+    const dv = desvByContrato[a.contrato_id];
+    byMandante[a.mandante_id].contratos.push({ contrato_id: a.contrato_id, numero_oc: a.numero_oc, empresa: a.empresa, fecha_desasignacion: a.fecha_desasignacion, causal: dv?.causal || null, tipo: dv?.tipo || null, fecha_finiquito: dv?.created_at || null });
+  }
+  const out = [];
+  for (const mid of Object.keys(byMandante)) {
+    const g = byMandante[mid];
+    const reqs = (await query("select r.requisito_id, r.nombre, r.obligatorio, cat.nombre as categoria, cat.orden as cat_orden, r.orden from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 and r.tipo_recurso='trabajador' order by cat.orden nulls last, r.orden", [mid])).rows;
+    const reqMap = {}; reqs.forEach((r) => { reqMap[r.requisito_id] = r; });
+    const docs = (await query('select * from documentos where recurso_tipo=$1 and recurso_id=$2 and mandante_id=$3 and deleted_at is null order by created_at desc', ['trabajador', trabajadorId, mid])).rows;
+    const detalle = docs.map((doc) => {
+      const req = reqMap[doc.requisito_id] || {};
+      let estado = doc.estado;
+      if (doc.estado === 'aprobado' && doc.fecha_vencimiento && new Date(doc.fecha_vencimiento) < new Date()) estado = 'vencido';
+      return { documento_id: doc.documento_id, requisito: req.nombre || 'Documento', categoria: req.categoria || 'Sin categoría', estado, fecha_vencimiento: doc.fecha_vencimiento || null, nombre_archivo: doc.nombre_archivo || null, created_at: doc.created_at };
+    });
+    out.push({ mandante_id: mid, mandante: g.mandante, contratos: g.contratos, docs_total: detalle.length, detalle });
+  }
+  return out;
+}
+
+
 async function acreditacionRecurso(tipo, recursoId) {
   const map = { vehiculo: { tbl: 'vehiculo_asignaciones', col: 'vehiculo_id' }, equipo: { tbl: 'equipo_asignaciones', col: 'equipo_id' }, trabajador: { tbl: 'trabajador_asignaciones', col: 'trabajador_id' } };
   const T = map[tipo];
@@ -338,7 +375,8 @@ export async function GET(request, { params }) {
       const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc, g.nombre as gerencia from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id left join mandante_gerencias g on g.gerencia_id=a.gerencia_id where a.trabajador_id=$1 order by a.created_at desc', [p[1]])).rows;
       const acreditacion = await acreditacionTrabajador(p[1]);
       const historial = (await query("select * from auditoria where entidad='trabajador' and entidad_id=$1 order by created_at desc limit 50", [p[1]])).rows;
-      return json({ trabajador: t, asignaciones, acreditacion, historial });
+      const historialDocumental = await historialDocumentalTrabajador(p[1]);
+      return json({ trabajador: t, asignaciones, acreditacion, historial, historialDocumental });
     }
 
     if (p[0] === 'vehiculos' && p[1]) {

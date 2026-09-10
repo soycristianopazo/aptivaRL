@@ -1464,8 +1464,9 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const [ef, setEf] = useState({});
   const [asig, setAsig] = useState('');
   const [desvincular, setDesvincular] = useState(null);
+  const [verHistDoc, setVerHistDoc] = useState(null);
   if (!data) return <p className="text-slate-400">Cargando…</p>;
-  const { trabajador: t, asignaciones, acreditacion, historial } = data;
+  const { trabajador: t, asignaciones, acreditacion, historial, historialDocumental } = data;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === t.empresa_id);
   const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email }); setEdit(true); };
   const saveEdit = async () => { try { await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); toast.success('Trabajador actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
@@ -1482,7 +1483,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
       />
       {acreditacion.length > 0 && <div className="flex gap-3 flex-wrap mb-4 -mt-2">{acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}</div>}
       <Tabs defaultValue="documentacion">
-        <TabsList className="flex-wrap h-auto"><TabsTrigger value="documentacion">Documentación</TabsTrigger><TabsTrigger value="asignaciones">Asignaciones</TabsTrigger><TabsTrigger value="info">Información</TabsTrigger><TabsTrigger value="historial">Historial</TabsTrigger></TabsList>
+        <TabsList className="flex-wrap h-auto"><TabsTrigger value="documentacion">Documentación</TabsTrigger><TabsTrigger value="asignaciones">Asignaciones</TabsTrigger>{historialDocumental?.length > 0 && <TabsTrigger value="dochist">Doc. histórica</TabsTrigger>}<TabsTrigger value="info">Información</TabsTrigger><TabsTrigger value="historial">Historial</TabsTrigger></TabsList>
         <TabsContent value="documentacion">
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes.</p>}
           {acreditacion.map((a) => (
@@ -1495,6 +1496,56 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
           {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={doAsignar}>Asignar</Button></div>}
           <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => (canManage && r.estado === 'activo') ? <div className="flex justify-end"><Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button></div> : null }]} rows={asignaciones} />
         </TabsContent>
+        {historialDocumental?.length > 0 && (
+          <TabsContent value="dochist">
+            <p className="text-sm text-slate-500 mb-3">Documentos que el trabajador tuvo mientras estuvo vinculado (ya finiquitado de estos mandantes). Se conservan segmentados por mandante, empresa y contrato.</p>
+            {historialDocumental.map((h) => {
+              const cats = {};
+              (h.detalle || []).forEach((d) => { (cats[d.categoria] = cats[d.categoria] || []).push(d); });
+              return (
+                <Card key={h.mandante_id} className="mb-4">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <CardTitle className="text-base flex items-center gap-2">{h.mandante}<Badge className="bg-slate-100 text-slate-500 border-0">Finiquitado</Badge></CardTitle>
+                      <span className="text-xs text-slate-500">{h.docs_total} documento{h.docs_total === 1 ? '' : 's'}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(h.contratos || []).map((c) => (
+                        <div key={c.contrato_id} className="text-xs rounded-md border bg-slate-50 px-2.5 py-1.5">
+                          <span className="font-medium text-slate-700">{c.empresa}</span>
+                          <span className="text-slate-400"> · Contrato </span><span className="tabular-nums text-slate-600">{(c.numero_oc || '').replace(/^\s*(Contrato|OC|PO|N°)\s+/i, '')}</span>
+                          {c.causal && <span className="block text-slate-500 mt-0.5">{c.tipo === 'anexo_traslado' ? 'Traslado' : 'Finiquito'}: {c.causal}{c.fecha_finiquito ? ` · ${fdate(c.fecha_finiquito)}` : ''}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {h.docs_total === 0 && <p className="text-sm text-slate-400">No se cargaron documentos para este mandante.</p>}
+                    {Object.keys(cats).map((cat) => (
+                      <div key={cat} className="mb-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1.5">{cat}</p>
+                        <div className="divide-y rounded-lg border">
+                          {cats[cat].map((d) => (
+                            <div key={d.documento_id} className="flex items-center justify-between gap-2 px-3 py-2">
+                              <div className="min-w-0">
+                                <p className="text-sm text-slate-700 truncate">{d.requisito}</p>
+                                <p className="text-xs text-slate-400 truncate">{d.nombre_archivo}{d.fecha_vencimiento ? ` · Vence ${fdate(d.fecha_vencimiento)}` : ''}</p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <Badge className={`border-0 ${d.estado === 'aprobado' ? 'bg-emerald-100 text-emerald-700' : (d.estado === 'vencido' || d.estado === 'rechazado') ? 'bg-red-100 text-red-700' : d.estado === 'en_revision' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>{d.estado}</Badge>
+                                <Button size="sm" variant="outline" className="h-7" onClick={() => setVerHistDoc({ documento_id: d.documento_id, nombre: d.requisito })}><Eye className="h-3.5 w-3.5 mr-1" />Ver</Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </TabsContent>
+        )}
         <TabsContent value="info"><Card><CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           {[['RUT', t.rut], ['Nombre', `${t.nombre} ${t.apellido}`], ['Cargo', t.cargo], ['Género', t.genero], ['Región', t.region], ['Comuna', t.comuna], ['Teléfono', t.telefono], ['Empresa', t.empresa]].map(([k, v]) => <div key={k}><p className="text-slate-400">{k}</p><p className="font-medium">{v || '—'}</p></div>)}
         </CardContent></Card></TabsContent>
@@ -1513,6 +1564,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
       {upload && <UploadDialog api={api} recurso_tipo="trabajador" recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
       {qrOpen && <QRDialog id={id} titulo={`${t.nombre} ${t.apellido}`} rut={t.rut} onClose={() => setQrOpen(false)} />}
       {desvincular && <DesvincularDialog api={api} trabajadorId={id} asignacion={desvincular} onClose={() => setDesvincular(null)} onDone={() => { setDesvincular(null); reload(); }} />}
+      {verHistDoc && <DocViewerModal api={api} doc={verHistDoc} onClose={() => setVerHistDoc(null)} />}
     </div>
   );
 }
