@@ -1524,7 +1524,15 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
       <Tabs defaultValue="documentacion">
         <TabsList className="flex-wrap h-auto"><TabsTrigger value="documentacion">Documentación</TabsTrigger><TabsTrigger value="asignaciones">Asignaciones</TabsTrigger>{historialDocumental?.length > 0 && <TabsTrigger value="dochist">Doc. histórica</TabsTrigger>}<TabsTrigger value="info">Información</TabsTrigger><TabsTrigger value="historial">Historial</TabsTrigger></TabsList>
         <TabsContent value="documentacion">
-          {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes.</p>}
+          {acreditacion.length === 0 && (
+            <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3.5 text-red-700">
+              <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium">Sin asignaciones a mandantes activas</p>
+                <p className="text-xs text-red-600/80 mt-0.5">Este trabajador no está vinculado a ningún contrato activo.{historialDocumental?.length > 0 ? ' Revisa la pestaña “Doc. histórica” para ver sus documentos anteriores.' : ''}</p>
+              </div>
+            </div>
+          )}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
               <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
