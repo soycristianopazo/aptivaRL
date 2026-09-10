@@ -209,6 +209,24 @@ function Shell({ token, profile, onLogout }) {
 function PageHead({ title, sub, action }) {
   return <div className="flex items-end justify-between mb-5 gap-4 flex-wrap"><div><h1 className="text-xl font-bold text-slate-900">{title}</h1>{sub && <p className="text-sm text-slate-500">{sub}</p>}</div>{action}</div>;
 }
+function DetailHeader({ icon, title, subtitle, meta = [], badge, actions }) {
+  return (
+    <div className="rounded-xl border bg-white shadow-sm p-5 mb-5 flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center gap-4">
+        <div className="h-14 w-14 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">{icon}</div>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800 leading-tight">{title}</h1>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-slate-500">
+            {subtitle && <span>{subtitle}</span>}
+            {meta.filter((m) => m && m.value != null && m.value !== '').map((m, i) => <span key={i}><span className="text-slate-400">{m.label}:</span> <span className="font-medium text-slate-600">{m.value}</span></span>)}
+            {badge}
+          </div>
+        </div>
+      </div>
+      {actions && <div className="flex gap-2 flex-wrap">{actions}</div>}
+    </div>
+  );
+}
 function Kpi({ label, value, icon: Icon, color }) {
   return <Card><CardContent className="p-4 flex items-center gap-3"><div className={`h-11 w-11 rounded-lg flex items-center justify-center ${color}`}><Icon className="h-5 w-5" /></div><div><div className="text-2xl font-bold text-slate-900">{value ?? 0}</div><div className="text-xs text-slate-500">{label}</div></div></CardContent></Card>;
 }
@@ -588,20 +606,13 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
   return (
     <div>
       <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver a Mandantes</button>
-      <div className="rounded-xl border bg-white shadow-sm p-5 mb-5 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="h-14 w-14 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><Building2 className="h-7 w-7" /></div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800 leading-tight">{mandante.razon_social}</h1>
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-slate-500">
-              <span><span className="text-slate-400">RUT:</span> <span className="font-medium text-slate-600">{mandante.rut}</span></span>
-              <span><span className="text-slate-400">Ubicación:</span> <span className="font-medium text-slate-600">{[mandante.comuna, mandante.region].filter(Boolean).join(', ') || '—'}</span></span>
-              <Badge className={mandante.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}>{mandante.activo ? 'Activo' : 'Inactivo'}</Badge>
-            </div>
-          </div>
-        </div>
-        {canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button>{isSuper && <CascadeDelete api={api} tipo="mandantes" id={id} nombre={mandante.razon_social} onDone={onBack} />}</div>}
-      </div>
+      <DetailHeader
+        icon={<Building2 className="h-7 w-7" />}
+        title={mandante.razon_social}
+        meta={[{ label: 'RUT', value: mandante.rut }, { label: 'Ubicación', value: [mandante.comuna, mandante.region].filter(Boolean).join(', ') || '—' }]}
+        badge={<Badge className={mandante.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}>{mandante.activo ? 'Activo' : 'Inactivo'}</Badge>}
+        actions={canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button>{isSuper && <CascadeDelete api={api} tipo="mandantes" id={id} nombre={mandante.razon_social} onDone={onBack} />}</>}
+      />
       <Tabs defaultValue="resumen">
         <TabsList className="flex flex-wrap h-auto gap-0 bg-transparent p-0 mb-6 border-b border-slate-200 rounded-none w-full justify-start">{['resumen','empresas','gerencias','contratos','trabajadores','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-slate-500 data-[state=active]:border-blue-600 data-[state=active]:text-blue-700 data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-slate-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
         <TabsContent value="resumen"><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -669,7 +680,13 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper }) {
   return (
     <div>
       <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
-      <PageHead title={`Contrato ${c.numero_oc}`} sub={`${c.mandante} · ${c.empresa}`} action={canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button>{isSuper && <CascadeDelete api={api} tipo="contratos" id={id} nombre={`Contrato ${c.numero_oc}`} onDone={onBack} />}</div>} />
+      <DetailHeader
+        icon={<FileSignature className="h-7 w-7" />}
+        title={`Contrato ${c.numero_oc}`}
+        meta={[{ label: 'Mandante', value: c.mandante }, { label: 'Empresa', value: c.empresa }]}
+        badge={<Badge className="bg-emerald-100 text-emerald-700">{c.estado}</Badge>}
+        actions={canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button>{isSuper && <CascadeDelete api={api} tipo="contratos" id={id} nombre={`Contrato ${c.numero_oc}`} onDone={onBack} />}</>}
+      />
       <div className="grid lg:grid-cols-3 gap-4 mb-4">
         <Card className="lg:col-span-2"><CardContent className="p-5">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
@@ -754,15 +771,14 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <button onClick={onBack} className="text-sm text-blue-600">← Volver</button>
-        {canManage && <div className="flex gap-2"><Button variant="outline" size="sm" onClick={openEdit}>Editar</Button><Button variant="outline" size="sm" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button>{isSuper && <CascadeDelete api={api} tipo="trabajadores" id={id} nombre={`${t.nombre} ${t.apellido}`} onDone={onBack} />}</div>}
-      </div>
-      <Card className="mb-4"><CardContent className="p-5 flex items-center gap-4 flex-wrap">
-        <div className="h-16 w-16 rounded-full bg-blue-600 text-white flex items-center justify-center text-2xl font-bold">{t.nombre?.charAt(0)}</div>
-        <div className="flex-1"><h1 className="text-xl font-bold text-slate-900">{t.nombre} {t.apellido}</h1><p className="text-slate-500 text-sm">RUT {t.rut} · {t.cargo || '—'}</p><p className="text-slate-400 text-sm">{t.empresa}</p></div>
-        <div className="flex gap-2 flex-wrap">{acreditacion.map((a) => <div key={a.mandante_id} className="text-center"><p className="text-xs text-slate-400 mb-1">{a.mandante}</p><SemBadge estado={a.estado} /></div>)}</div>
-      </CardContent></Card>
+      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
+      <DetailHeader
+        icon={<span className="text-xl font-bold">{t.nombre?.charAt(0)}</span>}
+        title={`${t.nombre} ${t.apellido}`}
+        meta={[{ label: 'RUT', value: t.rut }, { label: 'Cargo', value: t.cargo || '—' }, { label: 'Empresa', value: t.empresa }]}
+        actions={canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button>{isSuper && <CascadeDelete api={api} tipo="trabajadores" id={id} nombre={`${t.nombre} ${t.apellido}`} onDone={onBack} />}</>}
+      />
+      {acreditacion.length > 0 && <div className="flex gap-3 flex-wrap mb-4 -mt-2">{acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}</div>}
       <Tabs defaultValue="documentacion">
         <TabsList className="flex-wrap h-auto"><TabsTrigger value="documentacion">Documentación</TabsTrigger><TabsTrigger value="asignaciones">Asignaciones</TabsTrigger><TabsTrigger value="info">Información</TabsTrigger><TabsTrigger value="historial">Historial</TabsTrigger></TabsList>
         <TabsContent value="documentacion">
@@ -885,15 +901,14 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
   const doAsignar = async () => { if (!asig) return; try { await api(`/${tipo}s/asignar`, { method: 'POST', body: JSON.stringify({ recurso_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <button onClick={onBack} className="text-sm text-blue-600">← Volver</button>
-        {isSuper && <CascadeDelete api={api} tipo={`${tipo}s`} id={id} nombre={titulo} onDone={onBack} />}
-      </div>
-      <Card className="mb-4"><CardContent className="p-5 flex items-center gap-4 flex-wrap">
-        <div className="h-14 w-14 rounded-xl bg-blue-600 text-white flex items-center justify-center">{tipo === 'vehiculo' ? <Truck className="h-7 w-7" /> : <Wrench className="h-7 w-7" />}</div>
-        <div className="flex-1"><h1 className="text-xl font-bold text-slate-900">{titulo}</h1><p className="text-slate-500 text-sm">{r.tipo || ''} · {r.marca || ''} {r.modelo || ''} {r.anio || ''}</p><p className="text-slate-400 text-sm">{r.empresa}</p></div>
-        <div className="flex gap-2 flex-wrap">{acreditacion.map((a) => <div key={a.mandante_id} className="text-center"><p className="text-xs text-slate-400 mb-1">{a.mandante}</p><SemBadge estado={a.estado} /></div>)}</div>
-      </CardContent></Card>
+      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
+      <DetailHeader
+        icon={tipo === 'vehiculo' ? <Truck className="h-7 w-7" /> : <Wrench className="h-7 w-7" />}
+        title={titulo}
+        meta={[{ label: 'Tipo', value: r.tipo || '—' }, { label: 'Detalle', value: [r.marca, r.modelo, r.anio].filter(Boolean).join(' ') || '—' }, { label: 'Empresa', value: r.empresa }]}
+        actions={isSuper && <CascadeDelete api={api} tipo={`${tipo}s`} id={id} nombre={titulo} onDone={onBack} />}
+      />
+      {acreditacion.length > 0 && <div className="flex gap-3 flex-wrap mb-4 -mt-2">{acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}</div>}
       <Tabs defaultValue="documentacion">
         <TabsList><TabsTrigger value="documentacion">Documentación</TabsTrigger><TabsTrigger value="asignaciones">Asignaciones</TabsTrigger><TabsTrigger value="info">Información</TabsTrigger></TabsList>
         <TabsContent value="documentacion">
