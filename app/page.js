@@ -433,15 +433,19 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
       .filter((r) => !q || r.nombre?.toLowerCase().includes(q.toLowerCase()) || (r.descripcion || '').toLowerCase().includes(q.toLowerCase()));
     return (
       <div>
-        <button onClick={() => { setSelCat(null); setQ(''); }} className="text-sm text-blue-600 mb-3">← Volver a categorías</button>
-        <div className="mb-4 rounded-lg border-l-4 border-emerald-400 bg-emerald-50/50 p-3 max-w-lg">
-          <p className="text-sm"><span className="text-slate-500">Categoría:</span> <strong>{selCat.nombre}</strong></p>
-          {selCat.descripcion && <p className="text-sm"><span className="text-slate-500">Descripción:</span> {selCat.descripcion}</p>}
+        <button onClick={() => { setSelCat(null); setQ(''); }} className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 mb-4"><ChevronRight className="h-4 w-4 rotate-180" />Volver a categorías</button>
+        <div className="mb-5 rounded-xl border border-emerald-100 bg-gradient-to-r from-emerald-50 to-white p-4 shadow-sm flex items-center gap-3 max-w-2xl">
+          <div className="h-10 w-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center"><FileClock className="h-5 w-5" /></div>
+          <div>
+            <p className="text-base font-semibold text-slate-800">{selCat.nombre}</p>
+            {selCat.descripcion && <p className="text-sm text-slate-500">{selCat.descripcion}</p>}
+          </div>
         </div>
-        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-          <Input className="h-9 w-64" placeholder="Buscar documento…" value={q} onChange={(e) => setQ(e.target.value)} />
-          {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={openNewReq}><Plus className="h-4 w-4 mr-1" />Agregar</Button>}
+        <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
+          <Input className="h-10 w-72 rounded-lg" placeholder="Buscar documento…" value={q} onChange={(e) => setQ(e.target.value)} />
+          {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600 rounded-lg shadow-sm" onClick={openNewReq}><Plus className="h-4 w-4 mr-1" />Agregar</Button>}
         </div>
+        <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
         <Table columns={[
           { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium">{r.nombre}</span> },
           { key: 'descripcion', label: 'Descripción', render: (r) => r.descripcion || '—' },
@@ -455,6 +459,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
             </div>
           ) : null },
         ]} rows={docs} empty="Sin documentos en esta categoría" />
+        </div>
 
         <Dialog open={reqOpen} onOpenChange={setReqOpen}><DialogContent>
           <DialogHeader><DialogTitle>{rf.requisito_id ? 'Editar documento' : 'Agregar documento'}</DialogTitle><DialogDescription>Categoría: {selCat.nombre}</DialogDescription></DialogHeader>
@@ -532,7 +537,7 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
       <PageHead title={mandante.razon_social} sub={`RUT ${mandante.rut} · ${mandante.comuna || ''}, ${mandante.region || ''}`}
         action={canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button></div>} />
       <Tabs defaultValue="resumen">
-        <TabsList className="flex-wrap h-auto"><TabsTrigger value="resumen">Resumen</TabsTrigger><TabsTrigger value="empresas">Empresas</TabsTrigger><TabsTrigger value="gerencias">Gerencias</TabsTrigger><TabsTrigger value="contratos">Contratos</TabsTrigger><TabsTrigger value="trabajadores">Trabajadores</TabsTrigger><TabsTrigger value="estandar">Estándar Documental</TabsTrigger></TabsList>
+        <TabsList className="flex flex-wrap h-auto gap-1 bg-slate-100 p-1 rounded-xl mb-5 w-fit max-w-full">{['resumen','empresas','gerencias','contratos','trabajadores','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-lg px-4 py-1.5 text-sm data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-blue-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
         <TabsContent value="resumen"><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Kpi label="Empresas Holding" value={empresas.length} icon={Building} color="bg-blue-50 text-blue-600" />
           <Kpi label="Contratos" value={contratos.length} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
