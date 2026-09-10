@@ -119,8 +119,8 @@ export async function GET(request, { params }) {
       const empresas = (await query('select e.* from mandante_empresas me join empresas_grupo e on e.empresa_id=me.empresa_id where me.mandante_id=$1 and me.activo=true', [mid])).rows;
       const gerencias = (await query('select * from mandante_gerencias where mandante_id=$1 order by nombre', [mid])).rows;
       const contratos = (await query('select c.*, e.razon_social as empresa, (select count(*)::int from trabajador_asignaciones a where a.contrato_id=c.contrato_id and a.estado=\'activo\') as dotacion from contratos c join empresas_grupo e on e.empresa_id=c.empresa_id where c.mandante_id=$1 and c.deleted_at is null order by c.numero_oc', [mid])).rows;
-      const requisitos = (await query('select r.*, cat.nombre as categoria from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 order by r.tipo_recurso, r.orden', [mid])).rows;
-      const categorias = (await query('select * from categorias_documentales where mandante_id=$1 and activo=true order by orden', [mid])).rows;
+      const requisitos = (await query('select r.*, cat.nombre as categoria from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 and r.activo=true order by r.tipo_recurso, r.orden', [mid])).rows;
+      const categorias = (await query("select c.*, (select count(*)::int from requisitos_documentales r where r.categoria_id=c.categoria_id and r.activo=true) as docs_count from categorias_documentales c where c.mandante_id=$1 and c.activo=true order by c.orden", [mid])).rows;
       const trabajadores = (await query("select distinct t.trabajador_id, t.nombre, t.apellido, t.rut, t.cargo from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.mandante_id=$1 and a.estado='activo'", [mid])).rows;
       return json({ mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores });
     }
@@ -385,16 +385,16 @@ export async function POST(request, { params }) {
 
     if (p[0] === 'requisitos') {
       if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
-      const { mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, dias_alerta } = body;
+      const { mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, transversal, dias_alerta } = body;
       const id = uuid();
-      await query('insert into requisitos_documentales (requisito_id, mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, dias_alerta) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, mandante_id, tipo_recurso || 'trabajador', categoria_id || null, nombre, descripcion || null, obligatorio !== false, !!tiene_vencimiento, dias_alerta || 30]);
+      await query('insert into requisitos_documentales (requisito_id, mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, transversal, dias_alerta) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [id, mandante_id, tipo_recurso || 'trabajador', categoria_id || null, nombre, descripcion || null, obligatorio !== false, !!tiene_vencimiento, !!transversal, dias_alerta || 30]);
       return json({ requisito: (await query('select * from requisitos_documentales where requisito_id=$1', [id])).rows[0] }, 201);
     }
     if (p[0] === 'categorias') {
       if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
-      const { mandante_id, tipo_recurso, nombre } = body;
+      const { mandante_id, tipo_recurso, nombre, descripcion } = body;
       const id = uuid();
-      await query('insert into categorias_documentales (categoria_id, mandante_id, tipo_recurso, nombre) values ($1,$2,$3,$4)', [id, mandante_id, tipo_recurso || 'trabajador', nombre]);
+      await query('insert into categorias_documentales (categoria_id, mandante_id, tipo_recurso, nombre, descripcion) values ($1,$2,$3,$4,$5)', [id, mandante_id, tipo_recurso || 'trabajador', nombre, descripcion || null]);
       return json({ categoria: (await query('select * from categorias_documentales where categoria_id=$1', [id])).rows[0] }, 201);
     }
 

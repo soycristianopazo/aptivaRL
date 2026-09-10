@@ -39,7 +39,7 @@ const clean = (s) => (s || '').replace(/\t/g, ' ').replace(/\s+/g, ' ').trim();
   const idx = (name) => header.indexOf(name);
   const iMand = idx('MANDANTE'), iCat = idx('CATEGORIA'), iDescCat = idx('DESCRIPCION_CATEGORIA'),
     iDoc = idx('DOCUMENTO'), iDescDoc = idx('DESCRIPCION_DOCUMENTO'),
-    iIndef = idx('INDEFINIDO'), iReq = idx('REQUERIDO');
+    iIndef = idx('INDEFINIDO'), iReq = idx('REQUERIDO'), iTrans = idx('TRANSVERSAL');
 
   // Map mandante razon_social -> mandante_id
   const mres = await pool.query('select mandante_id, razon_social from mandantes where deleted_at is null');
@@ -61,33 +61,39 @@ const clean = (s) => (s || '').replace(/\t/g, ' ').replace(/\s+/g, ' ').trim();
     const mandanteId = mandMap.get(mandName.toLowerCase());
     if (!mandanteId) { skippedMand.add(mandName); continue; }
 
-    // Get or create categoria
+    // Get or create categoria (with descripcion)
+    const catDesc = clean(r[iDescCat]) || null;
     const ckey = `${mandanteId}|${catNombre.toLowerCase()}`;
     let catId = catCache.get(ckey);
     if (!catId) {
       const ex = await pool.query('select categoria_id from categorias_documentales where mandante_id=$1 and tipo_recurso=$2 and lower(nombre)=lower($3) limit 1', [mandanteId, 'trabajador', catNombre]);
-      if (ex.rows[0]) { catId = ex.rows[0].categoria_id; }
+      if (ex.rows[0]) { catId = ex.rows[0].categoria_id; await pool.query('update categorias_documentales set descripcion=$1 where categoria_id=$2', [catDesc, catId]); }
       else {
         const ord = catOrden.get(mandanteId) || 0; catOrden.set(mandanteId, ord + 1);
-        const ins = await pool.query('insert into categorias_documentales (mandante_id, tipo_recurso, nombre, orden) values ($1,$2,$3,$4) returning categoria_id', [mandanteId, 'trabajador', catNombre, ord]);
+        const ins = await pool.query('insert into categorias_documentales (mandante_id, tipo_recurso, nombre, descripcion, orden) values ($1,$2,$3,$4,$5) returning categoria_id', [mandanteId, 'trabajador', catNombre, catDesc, ord]);
         catId = ins.rows[0].categoria_id; cats++;
       }
       catCache.set(ckey, catId);
     }
 
-    // Requisito exists?
-    const rex = await pool.query('select requisito_id from requisitos_documentales where mandante_id=$1 and tipo_recurso=$2 and categoria_id=$3 and lower(nombre)=lower($4) limit 1', [mandanteId, 'trabajador', catId, docNombre]);
-    if (rex.rows[0]) { skippedReq++; continue; }
-
     const obligatorio = (r[iReq] || '').trim().toLowerCase() === 'on';
     const indef = (r[iIndef] || '').trim().toLowerCase() === 'on';
+    const transversal = (r[iTrans] || '').trim().toLowerCase() === 'on';
     const tieneVenc = !indef; // INDEFINIDO=on => no vence
     const descripcion = clean(r[iDescDoc]) || null;
+
+    // Requisito exists? update flags; else insert
+    const rex = await pool.query('select requisito_id from requisitos_documentales where mandante_id=$1 and tipo_recurso=$2 and categoria_id=$3 and lower(nombre)=lower($4) limit 1', [mandanteId, 'trabajador', catId, docNombre]);
+    if (rex.rows[0]) {
+      await pool.query('update requisitos_documentales set descripcion=$1, obligatorio=$2, tiene_vencimiento=$3, transversal=$4 where requisito_id=$5', [descripcion, obligatorio, tieneVenc, transversal, rex.rows[0].requisito_id]);
+      skippedReq++; continue;
+    }
+
     const rkey = `${mandanteId}|${catId}`;
     const ord = reqOrden.get(rkey) || 0; reqOrden.set(rkey, ord + 1);
 
-    await pool.query('insert into requisitos_documentales (mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, dias_alerta, orden) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [mandanteId, 'trabajador', catId, docNombre, descripcion, obligatorio, tieneVenc, 30, ord]);
+    await pool.query('insert into requisitos_documentales (mandante_id, tipo_recurso, categoria_id, nombre, descripcion, obligatorio, tiene_vencimiento, transversal, dias_alerta, orden) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [mandanteId, 'trabajador', catId, docNombre, descripcion, obligatorio, tieneVenc, transversal, 30, ord]);
     reqs++;
   }
 

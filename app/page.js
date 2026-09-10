@@ -387,6 +387,103 @@ function Mandantes({ api, openDetail, canManage }) {
   );
 }
 
+function SiNo({ on }) {
+  return on
+    ? <span className="inline-block px-3 py-1 rounded text-xs font-medium bg-emerald-400 text-white">SI</span>
+    : <span className="inline-block px-3 py-1 rounded text-xs font-medium bg-[#a97e6f] text-white">NO</span>;
+}
+
+function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload, mandante }) {
+  const [selCat, setSelCat] = useState(null);
+  const [newCat, setNewCat] = useState('');
+  const [newCatDesc, setNewCatDesc] = useState('');
+  const [catOpen, setCatOpen] = useState(false);
+  const [reqOpen, setReqOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [rf, setRf] = useState({ nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 });
+
+  const fmt = (d) => d ? new Date(d).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+
+  const addCat = async () => { if (!newCat) return; try { await api('/categorias', { method: 'POST', body: JSON.stringify({ mandante_id: id, tipo_recurso: 'trabajador', nombre: newCat, descripcion: newCatDesc || newCat }) }); toast.success('Categoría creada'); setNewCat(''); setNewCatDesc(''); setCatOpen(false); reload(); } catch (e) { toast.error(e.message); } };
+  const delCat = async (cid) => { try { await api(`/categorias/${cid}`, { method: 'DELETE' }); toast.success('Categoría eliminada'); reload(); } catch (e) { toast.error(e.message); } };
+  const saveReq = async () => { try { await api('/requisitos', { method: 'POST', body: JSON.stringify({ ...rf, mandante_id: id, tipo_recurso: 'trabajador', categoria_id: selCat.categoria_id, dias_alerta: Number(rf.dias_alerta) }) }); toast.success('Documento agregado'); setReqOpen(false); setRf({ nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 }); reload(); } catch (e) { toast.error(e.message); } };
+  const delReq = async (rid) => { try { await api(`/requisitos/${rid}`, { method: 'DELETE' }); toast.success('Documento eliminado'); reload(); } catch (e) { toast.error(e.message); } };
+
+  // Level 2: documents of a selected category
+  if (selCat) {
+    const docs = (requisitos || []).filter((r) => r.categoria_id === selCat.categoria_id)
+      .filter((r) => !q || r.nombre?.toLowerCase().includes(q.toLowerCase()) || (r.descripcion || '').toLowerCase().includes(q.toLowerCase()));
+    return (
+      <div>
+        <button onClick={() => { setSelCat(null); setQ(''); }} className="text-sm text-blue-600 mb-3">← Volver a categorías</button>
+        <div className="mb-4 rounded-lg border-l-4 border-emerald-400 bg-emerald-50/50 p-3 max-w-lg">
+          <p className="text-sm"><span className="text-slate-500">Categoría:</span> <strong>{selCat.nombre}</strong></p>
+          {selCat.descripcion && <p className="text-sm"><span className="text-slate-500">Descripción:</span> {selCat.descripcion}</p>}
+        </div>
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+          <Input className="h-9 w-64" placeholder="Buscar documento…" value={q} onChange={(e) => setQ(e.target.value)} />
+          {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={() => setReqOpen(true)}><Plus className="h-4 w-4 mr-1" />Agregar</Button>}
+        </div>
+        <Table columns={[
+          { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium">{r.nombre}</span> },
+          { key: 'descripcion', label: 'Descripción', render: (r) => r.descripcion || '—' },
+          { key: 'obligatorio', label: 'Requerido', render: (r) => <SiNo on={r.obligatorio} /> },
+          { key: 'tiene_vencimiento', label: 'Indefinido', render: (r) => <SiNo on={!r.tiene_vencimiento} /> },
+          { key: 'transversal', label: 'Transversal', render: (r) => <SiNo on={r.transversal} /> },
+          { key: 'x', label: 'Acción', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delReq(r.requisito_id)}>Eliminar</Button> : null },
+        ]} rows={docs} empty="Sin documentos en esta categoría" />
+
+        <Dialog open={reqOpen} onOpenChange={setReqOpen}><DialogContent>
+          <DialogHeader><DialogTitle>Agregar documento</DialogTitle><DialogDescription>Categoría: {selCat.nombre}</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5"><Label>Nombre</Label><Input value={rf.nombre} onChange={(e) => setRf({ ...rf, nombre: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Descripción</Label><Input value={rf.descripcion} onChange={(e) => setRf({ ...rf, descripcion: e.target.value })} /></div>
+            <div className="flex gap-6 flex-wrap">
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rf.obligatorio} onChange={(e) => setRf({ ...rf, obligatorio: e.target.checked })} />Requerido</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!rf.tiene_vencimiento} onChange={(e) => setRf({ ...rf, tiene_vencimiento: !e.target.checked })} />Indefinido</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rf.transversal} onChange={(e) => setRf({ ...rf, transversal: e.target.checked })} />Transversal</label>
+            </div>
+            {rf.tiene_vencimiento && <div className="space-y-1.5"><Label>Días de alerta antes de vencer</Label><Input type="number" value={rf.dias_alerta} onChange={(e) => setRf({ ...rf, dias_alerta: e.target.value })} /></div>}
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setReqOpen(false)}>Cancelar</Button><Button className="bg-emerald-500 hover:bg-emerald-600" onClick={saveReq}>Agregar</Button></DialogFooter>
+        </DialogContent></Dialog>
+      </div>
+    );
+  }
+
+  // Level 1: categories list
+  const cats = (categorias || []).filter((c) => !q || c.nombre?.toLowerCase().includes(q.toLowerCase()) || (c.descripcion || '').toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <Input className="h-9 w-64" placeholder="Buscar categoría…" value={q} onChange={(e) => setQ(e.target.value)} />
+        {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={() => setCatOpen(true)}><Plus className="h-4 w-4 mr-1" />Agregar Categoría</Button>}
+      </div>
+      <Table columns={[
+        { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium">{r.nombre}</span> },
+        { key: 'descripcion', label: 'Descripción', render: (r) => r.descripcion || '—' },
+        { key: 'docs_count', label: 'Documentos', render: (r) => <Badge variant="secondary">{r.docs_count || 0}</Badge> },
+        { key: 'created_at', label: 'Fecha Registro', render: (r) => fmt(r.created_at) },
+        { key: 'x', label: 'Acción', render: (r) => (
+          <div className="flex gap-2">
+            <Button size="sm" className="h-7 bg-blue-500 hover:bg-blue-600" onClick={() => { setSelCat(r); setQ(''); }}>Definir Documentos</Button>
+            {canManage && <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delCat(r.categoria_id)}>Eliminar</Button>}
+          </div>
+        ) },
+      ]} rows={cats} empty="Sin categorías configuradas" />
+
+      <Dialog open={catOpen} onOpenChange={setCatOpen}><DialogContent>
+        <DialogHeader><DialogTitle>Nueva categoría</DialogTitle><DialogDescription>Estándar documental de {mandante.razon_social}</DialogDescription></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5"><Label>Nombre</Label><Input value={newCat} onChange={(e) => setNewCat(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Descripción</Label><Input value={newCatDesc} onChange={(e) => setNewCatDesc(e.target.value)} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setCatOpen(false)}>Cancelar</Button><Button className="bg-emerald-500 hover:bg-emerald-600" onClick={addCat}>Crear</Button></DialogFooter>
+      </DialogContent></Dialog>
+    </div>
+  );
+}
+
 function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
   const [data, reload] = useData(api, `/mandantes/${id}`, [id]);
   const [allEmp] = useData(api, '/empresas');
@@ -394,13 +491,8 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
   const [ef, setEf] = useState({});
   const [addEmp, setAddEmp] = useState('');
   const [newGer, setNewGer] = useState('');
-  const [reqOpen, setReqOpen] = useState(false);
-  const [rf, setRf] = useState({ nombre: '', categoria_id: '', obligatorio: true, tiene_vencimiento: false, dias_alerta: 30, descripcion: '' });
-  const [newCat, setNewCat] = useState('');
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const { mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores } = data;
-  const reqByCat = {};
-  (requisitos || []).forEach((r) => { const k = r.categoria || 'Sin categoría'; (reqByCat[k] = reqByCat[k] || []).push(r); });
   const noAsoc = (allEmp?.empresas || []).filter((e) => !empresas.some((x) => x.empresa_id === e.empresa_id));
 
   const openEdit = () => { setEf({ razon_social: mandante.razon_social, rut: mandante.rut, region: mandante.region, comuna: mandante.comuna, direccion: mandante.direccion }); setEdit(true); };
@@ -409,9 +501,6 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
   const linkEmp = async () => { if (!addEmp) return; try { await api('/mandantes/empresas', { method: 'POST', body: JSON.stringify({ mandante_id: id, empresa_id: addEmp }) }); toast.success('Empresa habilitada'); setAddEmp(''); reload(); } catch (e) { toast.error(e.message); } };
   const unlinkEmp = async (eid) => { try { await api(`/mandantes/${id}/empresas/${eid}`, { method: 'DELETE' }); toast.success('Empresa deshabilitada'); reload(); } catch (e) { toast.error(e.message); } };
   const addGer = async () => { if (!newGer) return; try { await api('/mandantes/gerencias', { method: 'POST', body: JSON.stringify({ mandante_id: id, nombre: newGer }) }); setNewGer(''); reload(); } catch (e) { toast.error(e.message); } };
-  const addCat = async () => { if (!newCat) return; try { await api('/categorias', { method: 'POST', body: JSON.stringify({ mandante_id: id, tipo_recurso: 'trabajador', nombre: newCat }) }); setNewCat(''); reload(); } catch (e) { toast.error(e.message); } };
-  const saveReq = async () => { try { await api('/requisitos', { method: 'POST', body: JSON.stringify({ ...rf, mandante_id: id, tipo_recurso: 'trabajador', dias_alerta: Number(rf.dias_alerta) }) }); toast.success('Requisito creado'); setReqOpen(false); setRf({ nombre: '', categoria_id: '', obligatorio: true, tiene_vencimiento: false, dias_alerta: 30, descripcion: '' }); reload(); } catch (e) { toast.error(e.message); } };
-  const delReq = async (rid) => { try { await api(`/requisitos/${rid}`, { method: 'DELETE' }); toast.success('Requisito eliminado'); reload(); } catch (e) { toast.error(e.message); } };
 
   return (
     <div>
@@ -441,21 +530,7 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
         ]} rows={contratos} /></TabsContent>
         <TabsContent value="trabajadores"><Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={trabajadores} /></TabsContent>
         <TabsContent value="estandar">
-          <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-            <p className="text-sm text-slate-500">Requisitos documentales para <strong>Trabajadores</strong> de este mandante.</p>
-            {canManage && <div className="flex gap-2"><Input className="h-9 w-44" placeholder="Nueva categoría…" value={newCat} onChange={(e) => setNewCat(e.target.value)} /><Button variant="outline" onClick={addCat}>+ Categoría</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setReqOpen(true)}><Plus className="h-4 w-4 mr-1" />Requisito</Button></div>}
-          </div>
-          {Object.entries(reqByCat).map(([cat, reqs]) => (
-            <div key={cat} className="mb-4"><h3 className="font-semibold text-slate-700 mb-2">{cat}</h3>
-              <Table columns={[
-                { key: 'nombre', label: 'Documento' },
-                { key: 'obligatorio', label: 'Obligatorio', render: (r) => r.obligatorio ? <Badge className="bg-blue-100 text-blue-700">Sí</Badge> : <Badge variant="secondary">No</Badge> },
-                { key: 'tiene_vencimiento', label: 'Vence', render: (r) => r.tiene_vencimiento ? `Sí · alerta ${r.dias_alerta}d` : 'No' },
-                { key: 'x', label: '', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delReq(r.requisito_id)}>Eliminar</Button> : null },
-              ]} rows={reqs} />
-            </div>
-          ))}
-          {!requisitos.length && <p className="text-slate-400">Sin requisitos configurados.</p>}
+          <EstandarDocumental id={id} api={api} categorias={categorias} requisitos={requisitos} canManage={canManage} reload={reload} mandante={mandante} />
         </TabsContent>
       </Tabs>
 
@@ -467,20 +542,6 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
           <div className="space-y-1.5"><Label>Comuna</Label><Input value={ef.comuna || ''} onChange={(e) => setEf({ ...ef, comuna: e.target.value })} /></div>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
-      </DialogContent></Dialog>
-
-      <Dialog open={reqOpen} onOpenChange={setReqOpen}><DialogContent>
-        <DialogHeader><DialogTitle>Nuevo requisito documental</DialogTitle><DialogDescription>Para trabajadores de {mandante.razon_social}</DialogDescription></DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5"><Label>Nombre del documento</Label><Input value={rf.nombre} onChange={(e) => setRf({ ...rf, nombre: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label>Categoría</Label><Select value={rf.categoria_id} onValueChange={(v) => setRf({ ...rf, categoria_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona categoría" /></SelectTrigger><SelectContent>{(categorias || []).map((c) => <SelectItem key={c.categoria_id} value={c.categoria_id}>{c.nombre}</SelectItem>)}</SelectContent></Select></div>
-          <div className="flex gap-6">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rf.obligatorio} onChange={(e) => setRf({ ...rf, obligatorio: e.target.checked })} />Obligatorio</label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={rf.tiene_vencimiento} onChange={(e) => setRf({ ...rf, tiene_vencimiento: e.target.checked })} />Tiene vencimiento</label>
-          </div>
-          {rf.tiene_vencimiento && <div className="space-y-1.5"><Label>Días de alerta antes de vencer</Label><Input type="number" value={rf.dias_alerta} onChange={(e) => setRf({ ...rf, dias_alerta: e.target.value })} /></div>}
-        </div>
-        <DialogFooter><Button variant="outline" onClick={() => setReqOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveReq}>Crear</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
