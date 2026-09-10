@@ -1370,19 +1370,19 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
 /* ------------ Trabajadores ------------ */
 function Trabajadores({ api, openDetail, canManage, isSuper }) {
   const [q, setQ] = useState('');
-  const [data, reload] = useData(api, `/trabajadores`);
   const [empresas] = useData(api, '/empresas');
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '' });
-  const search = async () => { try { const d = await api(`/trabajadores?q=${encodeURIComponent(q)}`); reload.__set?.(d); } catch {} };
   const [rows, setRows] = useState(null);
-  useEffect(() => { setRows(data?.trabajadores || null); }, [data]);
-  const doSearch = async () => { const d = await api(`/trabajadores?q=${encodeURIComponent(q)}`); setRows(d.trabajadores); };
-  const save = async () => { try { await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) }); toast.success('Trabajador creado'); setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '' }); reload(); } catch (e) { toast.error(e.message); } };
+  const fetchList = useCallback(async (query) => {
+    try { const d = await api(`/trabajadores${query && query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''}`); setRows(d.trabajadores || []); } catch (e) { toast.error(e.message); }
+  }, [api]);
+  useEffect(() => { const t = setTimeout(() => fetchList(q), 300); return () => clearTimeout(t); }, [q, fetchList]);
+  const save = async () => { try { await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) }); toast.success('Trabajador creado'); setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '' }); fetchList(q); } catch (e) { toast.error(e.message); } };
   return (
     <div>
       <PageHead title="Trabajadores" sub="Ficha única por trabajador (una empresa del Holding)" action={canManage && <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo trabajador</Button>} />
-      <div className="flex gap-2 mb-3 max-w-md"><div className="relative flex-1"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar por nombre, RUT, cargo…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && doSearch()} /></div><Button variant="outline" onClick={doSearch}>Buscar</Button></div>
+      <div className="mb-3 max-w-md"><div className="relative"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar por nombre, RUT, cargo…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
       <Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre} {r.apellido}</span> },
         { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }, { key: 'empresa', label: 'Empresa Holding' },

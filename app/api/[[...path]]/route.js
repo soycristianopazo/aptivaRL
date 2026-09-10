@@ -333,7 +333,14 @@ export async function GET(request, { params }) {
       const args = [];
       if (profile.role_codigo === 'ADMIN_EMPRESA') { args.push(profile.empresa_id); sql += ` and t.empresa_id=$${args.length}`; }
       else if (empresaFilter) { args.push(empresaFilter); sql += ` and t.empresa_id=$${args.length}`; }
-      if (search) { args.push(`%${search}%`); sql += ` and (t.nombre ilike $${args.length} or t.apellido ilike $${args.length} or t.rut ilike $${args.length} or t.cargo ilike $${args.length})`; }
+      if (search) {
+        const tokens = search.trim().split(/\s+/).filter(Boolean);
+        for (const tk of tokens) {
+          args.push(`%${tk}%`); const i1 = args.length;
+          args.push(`%${tk.replace(/[.\-\s]/g, '')}%`); const i2 = args.length;
+          sql += ` and ((t.nombre || ' ' || t.apellido || ' ' || coalesce(t.cargo,'')) ilike $${i1} or replace(replace(replace(t.rut,'.',''),'-',''),' ','') ilike $${i2})`;
+        }
+      }
       sql += ' order by t.apellido, t.nombre limit 500';
       return json({ trabajadores: (await query(sql, args)).rows });
     }
