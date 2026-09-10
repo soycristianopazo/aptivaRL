@@ -542,6 +542,7 @@ export async function DELETE(request, { params }) {
     if (p[0] === 'categorias' && p[1]) { await query('update categorias_documentales set activo=false where categoria_id=$1', [p[1]]); return json({ ok: true }); }
     if (p[0] === 'mandantes' && p[1] && p[2] === 'empresas' && p[3]) { await query('update mandante_empresas set activo=false where mandante_id=$1 and empresa_id=$2', [p[1], p[3]]); return json({ ok: true }); }
     if (p[0] === 'trabajadores' && p[1]) { await query("update trabajadores set deleted_at=now(), estado='inactivo' where trabajador_id=$1", [p[1]]); await audit(profile, 'desactivar_trabajador', 'trabajador', p[1], null); return json({ ok: true }); }
+    if (p[0] === 'mandantes' && p[1]) { await query("update mandantes set deleted_at=now(), activo=false, updated_at=now() where mandante_id=$1", [p[1]]); await audit(profile, 'eliminar_mandante', 'mandante', p[1], null); return json({ ok: true }); }
     return json({ error: 'No encontrado' }, 404);
   } catch (e) { return json({ error: e.message }, 500); }
 }
