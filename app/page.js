@@ -1426,22 +1426,22 @@ function QRDialog({ id, titulo, rut, onClose }) {
   }, [id]);
   const copy = async () => { try { await navigator.clipboard.writeText(url); toast.success('Enlace copiado'); } catch { toast.error('No se pudo copiar'); } };
   return (
-    <Dialog open onOpenChange={onClose}><DialogContent className="max-w-sm">
+    <Dialog open onOpenChange={onClose}><DialogContent className="max-w-sm w-[92vw] overflow-hidden">
       <DialogHeader><DialogTitle>Expediente QR</DialogTitle><DialogDescription>Escanea para validar en terreno · {titulo}</DialogDescription></DialogHeader>
-      <div className="flex flex-col items-center gap-3">
-        <div className="rounded-xl border bg-white p-4 flex items-center justify-center mx-auto">
-          {img ? <img src={img} alt="QR expediente" width={224} height={224} className="block" /> : <div className="h-56 w-56 flex items-center justify-center text-slate-400 text-sm">Generando…</div>}
+      <div className="flex flex-col items-center gap-3 min-w-0">
+        <div className="rounded-xl border bg-white p-4 flex items-center justify-center">
+          {img ? <img src={img} alt="QR expediente" className="block w-full max-w-[220px] h-auto" /> : <div className="h-56 w-56 flex items-center justify-center text-slate-400 text-sm">Generando…</div>}
         </div>
-        <div className="text-center w-full">
+        <div className="text-center w-full min-w-0">
           <p className="text-sm font-medium text-slate-700 truncate">{titulo}</p>
           <p className="text-xs text-slate-400">{rut}</p>
         </div>
-        <div className="w-full flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5">
-          <span className="text-xs text-slate-500 truncate flex-1">{url}</span>
+        <div className="w-full min-w-0 flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5">
+          <span className="text-xs text-slate-500 truncate flex-1 min-w-0">{url}</span>
           <button onClick={copy} className="text-slate-400 hover:text-slate-700 shrink-0"><Copy className="h-4 w-4" /></button>
         </div>
       </div>
-      <DialogFooter className="gap-2">
+      <DialogFooter className="gap-2 flex-wrap sm:justify-center">
         <Button variant="outline" onClick={onClose}>Cerrar</Button>
         {url && <a href={url} target="_blank" rel="noreferrer"><Button variant="outline"><ExternalLink className="h-4 w-4 mr-1" />Abrir</Button></a>}
         {img && <a href={img} download={`QR_${(rut || id)}.png`}><Button className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
