@@ -353,7 +353,38 @@ export async function GET(request, { params }) {
       let acreditados = 0, bloqueados = 0, revision = 0;
       Object.values(perWorst).forEach((v) => { if (v === 'BLOQUEADO') bloqueados++; else if (v === 'EN_REVISION') revision++; else acreditados++; });
       stats.trabajadores_acreditados = acreditados; stats.trabajadores_bloqueados = bloqueados; stats.trabajadores_revision = revision;
-      return json({ stats, acreditacion_por_mandante: porMandante, docs_por_estado });
+
+      // Tendencia de vencimientos: próximos 6 meses (rellena meses en 0)
+      const dwd = manF ? ' and d.mandante_id=$1' : '';
+      const tendencia_vencimientos = (await query(`
+        with meses as (
+          select date_trunc('month', current_date) + (n || ' month')::interval as mes
+          from generate_series(0,5) n
+        )
+        select to_char(meses.mes,'YYYY-MM') as mes, count(d.documento_id)::int c
+        from meses
+        left join documentos d on d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
+          and date_trunc('month', d.fecha_vencimiento)=meses.mes${dwd}
+        group by meses.mes order by meses.mes`, da)).rows;
+
+      // Próximos vencimientos (tabla): vencidos + por vencer, ordenados por urgencia
+      const proximos_vencimientos = (await query(`
+        select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento,
+          coalesce(r.nombre, d.nombre_archivo) as documento,
+          m.razon_social as mandante,
+          (d.fecha_vencimiento - current_date) as dias_restantes,
+          coalesce(nullif(trim(concat(t.nombre,' ',t.apellido)),''), v.patente, q.codigo_interno, '—') as recurso
+        from documentos d
+        left join requisitos_documentales r on r.requisito_id=d.requisito_id
+        left join mandantes m on m.mandante_id=d.mandante_id
+        left join trabajadores t on t.trabajador_id=d.recurso_id and d.recurso_tipo='trabajador'
+        left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
+        left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
+        where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
+          and d.fecha_vencimiento <= current_date + interval '90 days'${dwd}
+        order by d.fecha_vencimiento asc limit 15`, da)).rows;
+
+      return json({ stats, acreditacion_por_mandante: porMandante, docs_por_estado, tendencia_vencimientos, proximos_vencimientos });
     }
 
     return json({ error: 'No encontrado' }, 404);

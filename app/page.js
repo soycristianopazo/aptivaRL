@@ -1,6 +1,10 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip as RTooltip, Legend, AreaChart, Area,
+} from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -355,8 +359,180 @@ function NotificationsBell({ api, onGo }) {
 }
 
 const estadoBar = { aprobado: 'bg-emerald-500', en_revision: 'bg-blue-500', rechazado: 'bg-red-500', vencido: 'bg-red-600', pendiente: 'bg-slate-400' };
+const ACR_COLORS = { ACREDITADO: '#10b981', EN_REVISION: '#f59e0b', BLOQUEADO: '#ef4444' };
+const DOC_COLORS = { aprobado: '#10b981', en_revision: '#3b82f6', rechazado: '#ef4444', vencido: '#dc2626', pendiente: '#94a3b8', faltante: '#cbd5e1' };
+const MESES_ABR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const mesLabel = (m) => { const [y, mo] = String(m || '').split('-'); return mo ? `${MESES_ABR[Number(mo) - 1]} ${String(y).slice(2)}` : m; };
+const docLabel = (e) => String(e || '').replace('_', ' ');
 
-function Dashboard({ api }) {
+function ChartTip({ active, payload, label, unit = '' }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border bg-white shadow-lg px-3 py-2 text-xs">
+      {label != null && <p className="font-semibold text-slate-700 mb-1">{label}</p>}
+      {payload.map((p, i) => (
+        <div key={i} className="flex items-center gap-2 text-slate-600">
+          <span className="h-2 w-2 rounded-full" style={{ background: p.color || p.fill }} />
+          <span className="capitalize">{p.name}</span>
+          <span className="ml-auto font-semibold text-slate-800">{p.value}{unit}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChartCard({ title, desc, icon: Icon, className = '', children, right }) {
+  return (
+    <Card className={`shadow-sm ${className}`}>
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <CardTitle className="text-base flex items-center gap-2">{Icon && <Icon className="h-4 w-4 text-slate-400" />}{title}</CardTitle>
+            {desc && <CardDescription>{desc}</CardDescription>}
+          </div>
+          {right}
+        </div>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
+
+function KpiCard({ label, value, icon: Icon, accent = 'blue', hint }) {
+  const map = {
+    blue: 'from-blue-500/10 to-blue-500/0 text-blue-600 ring-blue-100',
+    indigo: 'from-indigo-500/10 to-indigo-500/0 text-indigo-600 ring-indigo-100',
+    slate: 'from-slate-500/10 to-slate-500/0 text-slate-600 ring-slate-100',
+    emerald: 'from-emerald-500/10 to-emerald-500/0 text-emerald-600 ring-emerald-100',
+    red: 'from-red-500/10 to-red-500/0 text-red-600 ring-red-100',
+    amber: 'from-amber-500/10 to-amber-500/0 text-amber-600 ring-amber-100',
+    orange: 'from-orange-500/10 to-orange-500/0 text-orange-600 ring-orange-100',
+  };
+  const c = map[accent] || map.blue;
+  return (
+    <Card className="shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+      <CardContent className="p-4 flex items-center gap-3">
+        <div className={`h-12 w-12 rounded-xl bg-gradient-to-br ${c} ring-1 flex items-center justify-center shrink-0`}><Icon className="h-5 w-5" /></div>
+        <div className="min-w-0">
+          <div className="text-2xl font-bold text-slate-900 leading-none tabular-nums">{(value ?? 0).toLocaleString('es-CL')}</div>
+          <div className="text-xs text-slate-500 mt-1 truncate">{label}</div>
+          {hint && <div className="text-[11px] text-slate-400">{hint}</div>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DonutAcreditacion({ s }) {
+  const data = [
+    { name: 'Acreditado', key: 'ACREDITADO', value: s.trabajadores_acreditados || 0 },
+    { name: 'En revisión', key: 'EN_REVISION', value: s.trabajadores_revision || 0 },
+    { name: 'Bloqueado', key: 'BLOQUEADO', value: s.trabajadores_bloqueados || 0 },
+  ];
+  const total = data.reduce((a, b) => a + b.value, 0);
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 items-center gap-2">
+      <div className="relative h-[220px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={62} outerRadius={92} paddingAngle={2} stroke="none">
+              {data.map((d) => <Cell key={d.key} fill={ACR_COLORS[d.key]} />)}
+            </Pie>
+            <RTooltip content={<ChartTip />} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-3xl font-bold text-slate-900 tabular-nums">{total.toLocaleString('es-CL')}</span>
+          <span className="text-xs text-slate-400">trabajadores</span>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {data.map((d) => (
+          <div key={d.key} className="flex items-center gap-2 text-sm">
+            <span className="h-3 w-3 rounded-full" style={{ background: ACR_COLORS[d.key] }} />
+            <span className="text-slate-600">{d.name}</span>
+            <span className="ml-auto font-semibold text-slate-800 tabular-nums">{d.value.toLocaleString('es-CL')}</span>
+            <span className="text-xs text-slate-400 w-10 text-right">{total ? Math.round((d.value / total) * 100) : 0}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DocsEstadoChart({ rows }) {
+  const data = (rows || []).map((d) => ({ estado: docLabel(d.estado), raw: d.estado, c: d.c })).sort((a, b) => b.c - a.c);
+  if (!data.length) return <p className="text-sm text-slate-400">Sin documentos</p>;
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(160, data.length * 46)}>
+      <BarChart data={data} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+        <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="#f1f5f9" />
+        <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+        <YAxis type="category" dataKey="estado" width={92} tick={{ fontSize: 12, fill: '#475569' }} axisLine={false} tickLine={false} className="capitalize" />
+        <RTooltip content={<ChartTip />} cursor={{ fill: '#f8fafc' }} />
+        <Bar dataKey="c" name="Documentos" radius={[0, 6, 6, 0]} barSize={22}>
+          {data.map((d, i) => <Cell key={i} fill={DOC_COLORS[d.raw] || '#94a3b8'} />)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function TendenciaChart({ rows }) {
+  const data = (rows || []).map((r) => ({ mes: mesLabel(r.mes), c: r.c }));
+  const empty = data.every((d) => !d.c);
+  return (
+    <div>
+      <ResponsiveContainer width="100%" height={220}>
+        <AreaChart data={data} margin={{ left: -12, right: 12, top: 8, bottom: 4 }}>
+          <defs>
+            <linearGradient id="gradVenc" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#f97316" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="#f97316" stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+          <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={36} />
+          <RTooltip content={<ChartTip />} />
+          <Area type="monotone" dataKey="c" name="Vencen" stroke="#f97316" strokeWidth={2.5} fill="url(#gradVenc)" dot={{ r: 3, fill: '#f97316' }} activeDot={{ r: 5 }} />
+        </AreaChart>
+      </ResponsiveContainer>
+      {empty && <p className="text-center text-xs text-slate-400 -mt-6">Sin vencimientos en los próximos 6 meses</p>}
+    </div>
+  );
+}
+
+function MandanteStackedChart({ acr }) {
+  const data = Object.entries(acr || {}).map(([m, v]) => ({
+    mandante: m.length > 26 ? m.slice(0, 25) + '…' : m,
+    Acreditado: v.ACREDITADO || 0, 'En revisión': v.EN_REVISION || 0, Bloqueado: v.BLOQUEADO || 0,
+  })).sort((a, b) => (b.Acreditado + b['En revisión'] + b.Bloqueado) - (a.Acreditado + a['En revisión'] + a.Bloqueado));
+  if (!data.length) return <p className="text-sm text-slate-400">Sin datos</p>;
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(200, data.length * 34)}>
+      <BarChart data={data} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+        <CartesianGrid horizontal={false} strokeDasharray="3 3" stroke="#f1f5f9" />
+        <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+        <YAxis type="category" dataKey="mandante" width={170} tick={{ fontSize: 11, fill: '#475569' }} axisLine={false} tickLine={false} />
+        <RTooltip content={<ChartTip />} cursor={{ fill: '#f8fafc' }} />
+        <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
+        <Bar dataKey="Acreditado" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} barSize={16} />
+        <Bar dataKey="En revisión" stackId="a" fill="#f59e0b" barSize={16} />
+        <Bar dataKey="Bloqueado" stackId="a" fill="#ef4444" radius={[0, 6, 6, 0]} barSize={16} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function VencBadge({ dias }) {
+  const d = Number(dias);
+  const cls = d < 0 ? 'bg-red-100 text-red-700' : d <= 15 ? 'bg-orange-100 text-orange-700' : d <= 30 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600';
+  const txt = d < 0 ? `Vencido ${Math.abs(d)}d` : `${d}d`;
+  return <Badge className={`${cls} border-0`}>{txt}</Badge>;
+}
+
+function Dashboard({ api, openDetail }) {
   const [empresas] = useData(api, '/empresas');
   const [mandantes] = useData(api, '/mandantes');
   const [fEmp, setFEmp] = useState('all');
@@ -371,9 +547,8 @@ function Dashboard({ api }) {
   }, [api, fEmp, fMan]);
 
   const s = data?.stats || {};
-  const totalAcr = (s.trabajadores_acreditados || 0) + (s.trabajadores_bloqueados || 0) + (s.trabajadores_revision || 0) || 1;
   const docsEstado = data?.docs_por_estado || [];
-  const maxDocs = Math.max(1, ...docsEstado.map((d) => d.c));
+  const proximos = data?.proximos_vencimientos || [];
   const exportar = () => {
     const rows = Object.entries(data?.acreditacion_por_mandante || {}).map(([m, v]) => [m, v.ACREDITADO || 0, v.EN_REVISION || 0, v.BLOQUEADO || 0]);
     csvDownload('acreditacion_por_mandante.csv', ['Mandante', 'Acreditados', 'En revisión', 'Bloqueados'], rows);
@@ -389,42 +564,51 @@ function Dashboard({ api }) {
         {(fEmp !== 'all' || fMan !== 'all') && <Button variant="ghost" onClick={() => { setFEmp('all'); setFMan('all'); }}>Limpiar</Button>}
       </div>
       {!data ? (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{Array.from({ length: 8 }).map((_, i) => <Card key={i}><CardContent className="p-4 h-[76px] animate-pulse bg-slate-50" /></Card>)}</div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{Array.from({ length: 8 }).map((_, i) => <Card key={i}><CardContent className="p-4 h-[76px] animate-pulse bg-slate-50" /></Card>)}</div>
+          <div className="grid lg:grid-cols-2 gap-4">{Array.from({ length: 2 }).map((_, i) => <Card key={i}><CardContent className="h-[260px] animate-pulse bg-slate-50 m-2 rounded" /></Card>)}</div>
+        </div>
       ) : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-            <Kpi label="Mandantes activos" value={s.mandantes} icon={Building2} color="bg-blue-50 text-blue-600" />
-            <Kpi label="Contratos vigentes" value={s.contratos_vigentes} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
-            <Kpi label="Trabajadores" value={s.trabajadores} icon={Users} color="bg-slate-100 text-slate-600" />
-            <Kpi label="Acreditados" value={s.trabajadores_acreditados} icon={CheckCircle2} color="bg-emerald-50 text-emerald-600" />
-            <Kpi label="Bloqueados" value={s.trabajadores_bloqueados} icon={XCircle} color="bg-red-50 text-red-600" />
-            <Kpi label="Docs. por revisar" value={s.docs_pendientes} icon={FileClock} color="bg-amber-50 text-amber-600" />
-            <Kpi label="Docs. por vencer (30d)" value={s.docs_por_vencer} icon={CalendarClock} color="bg-orange-50 text-orange-600" />
-            <Kpi label="Docs. vencidos" value={s.docs_vencidos} icon={AlertTriangle} color="bg-red-50 text-red-600" />
+            <KpiCard label="Mandantes activos" value={s.mandantes} icon={Building2} accent="blue" />
+            <KpiCard label="Contratos vigentes" value={s.contratos_vigentes} icon={FileSignature} accent="indigo" />
+            <KpiCard label="Trabajadores" value={s.trabajadores} icon={Users} accent="slate" />
+            <KpiCard label="Acreditados" value={s.trabajadores_acreditados} icon={CheckCircle2} accent="emerald" />
+            <KpiCard label="Bloqueados" value={s.trabajadores_bloqueados} icon={XCircle} accent="red" />
+            <KpiCard label="Docs. por revisar" value={s.docs_pendientes} icon={FileClock} accent="amber" />
+            <KpiCard label="Docs. por vencer (30d)" value={s.docs_por_vencer} icon={CalendarClock} accent="orange" />
+            <KpiCard label="Docs. vencidos" value={s.docs_vencidos} icon={AlertTriangle} accent="red" />
           </div>
           <div className="grid lg:grid-cols-2 gap-4">
-            <Card><CardHeader><CardTitle className="text-base">Estado de acreditación</CardTitle><CardDescription>Distribución de trabajadores</CardDescription></CardHeader><CardContent className="space-y-3">
-              {[['ACREDITADO', s.trabajadores_acreditados], ['EN_REVISION', s.trabajadores_revision], ['BLOQUEADO', s.trabajadores_bloqueados]].map(([k, v]) => (
-                <div key={k}><div className="flex justify-between text-sm mb-1"><SemBadge estado={k} /><span className="font-medium">{v || 0}</span></div><Progress value={((v || 0) / totalAcr) * 100} className="h-2" /></div>
-              ))}
-            </CardContent></Card>
-            <Card><CardHeader><CardTitle className="text-base flex items-center gap-2"><BarChart3 className="h-4 w-4 text-slate-400" />Documentos por estado</CardTitle></CardHeader><CardContent className="space-y-2">
-              {docsEstado.length === 0 && <p className="text-sm text-slate-400">Sin documentos</p>}
-              {docsEstado.map((d) => (
-                <div key={d.estado}><div className="flex justify-between text-sm mb-1"><span className="capitalize text-slate-600">{String(d.estado).replace('_', ' ')}</span><span className="font-medium">{d.c}</span></div>
-                  <div className="h-2.5 rounded bg-slate-100 overflow-hidden"><div className={`h-full ${estadoBar[d.estado] || 'bg-slate-400'}`} style={{ width: `${(d.c / maxDocs) * 100}%` }} /></div></div>
-              ))}
-            </CardContent></Card>
-            <Card className="lg:col-span-2"><CardHeader><CardTitle className="text-base">Acreditación por mandante</CardTitle></CardHeader><CardContent className="space-y-3">
-              {Object.entries(data?.acreditacion_por_mandante || {}).map(([m, v]) => (
-                <div key={m}><p className="text-sm font-medium text-slate-700 mb-1">{m}</p><div className="flex gap-1 h-3 rounded overflow-hidden">
-                  <div className="bg-emerald-500" style={{ width: `${(v.ACREDITADO || 0) * 20 + 2}%` }} />
-                  <div className="bg-amber-500" style={{ width: `${(v.EN_REVISION || 0) * 20 + 2}%` }} />
-                  <div className="bg-red-500" style={{ width: `${(v.BLOQUEADO || 0) * 20 + 2}%` }} />
-                </div><p className="text-xs text-slate-400 mt-1">🟢 {v.ACREDITADO || 0} · 🟡 {v.EN_REVISION || 0} · 🔴 {v.BLOQUEADO || 0}</p></div>
-              ))}
-              {!Object.keys(data?.acreditacion_por_mandante || {}).length && <p className="text-sm text-slate-400">Sin datos</p>}
-            </CardContent></Card>
+            <ChartCard title="Estado de acreditación" desc="Distribución de trabajadores">
+              <DonutAcreditacion s={s} />
+            </ChartCard>
+            <ChartCard title="Documentos por estado" icon={BarChart3}>
+              <DocsEstadoChart rows={docsEstado} />
+            </ChartCard>
+            <ChartCard title="Tendencia de vencimientos" desc="Documentos que vencen en los próximos 6 meses" icon={CalendarClock}>
+              <TendenciaChart rows={data?.tendencia_vencimientos} />
+            </ChartCard>
+            <ChartCard title="Acreditación por mandante" desc="Trabajadores por estado" icon={Building2}>
+              <MandanteStackedChart acr={data?.acreditacion_por_mandante} />
+            </ChartCard>
+            <ChartCard className="lg:col-span-2" title="Próximos vencimientos" desc="Documentos vencidos o por vencer (90 días), ordenados por urgencia" icon={FileClock}>
+              <Table
+                pageSize={10}
+                empty="Sin vencimientos próximos"
+                onRow={openDetail ? (r) => openDetail(r.recurso_tipo, r.recurso_id) : undefined}
+                columns={[
+                  { key: 'recurso', label: 'Recurso', render: (r) => <span className="font-medium text-slate-800">{r.recurso}</span> },
+                  { key: 'tipo', label: 'Tipo', render: (r) => <Badge className="bg-slate-100 text-slate-600 border-0 capitalize">{r.recurso_tipo}</Badge> },
+                  { key: 'documento', label: 'Documento' },
+                  { key: 'mandante', label: 'Mandante' },
+                  { key: 'fecha_vencimiento', label: 'Vence', render: (r) => fdate(r.fecha_vencimiento) },
+                  { key: 'dias_restantes', label: 'Urgencia', render: (r) => <VencBadge dias={r.dias_restantes} /> },
+                ]}
+                rows={proximos}
+              />
+            </ChartCard>
           </div>
         </>
       )}

@@ -1,548 +1,560 @@
 #!/usr/bin/env python3
 """
-PHASE 8 Backend Testing: RUT validator, Title Case, and deduped empresas
-Test all backend APIs for Aptiva RL platform
+Backend API Testing for Aptiva RL Platform - Dashboard Enhanced Endpoint
+Tests the enhanced GET /api/dashboard endpoint with new tendencia_vencimientos and proximos_vencimientos arrays
 """
 
 import requests
 import json
-import sys
-from typing import Dict, Any, Optional
+from datetime import datetime
 
 # Base URL from .env
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
 
-# Admin credentials
+# Test credentials
 ADMIN_EMAIL = "admin@aptivarl.com"
 ADMIN_PASSWORD = "Aptiva2025!"
 
-# Test results tracking
-test_results = {
-    "passed": 0,
-    "failed": 0,
-    "tests": []
-}
+# Global token storage
+token = None
 
-# Store created trabajador IDs for cleanup
-created_trabajadores = []
-
-def log_test(name: str, passed: bool, details: str = ""):
-    """Log test result"""
+def print_test(name, passed, details=""):
+    """Print test result"""
     status = "✅ PASS" if passed else "❌ FAIL"
     print(f"{status}: {name}")
     if details:
         print(f"  Details: {details}")
-    
-    test_results["tests"].append({
-        "name": name,
-        "passed": passed,
-        "details": details
-    })
-    
-    if passed:
-        test_results["passed"] += 1
-    else:
-        test_results["failed"] += 1
+    print()
 
-def login_admin() -> Optional[str]:
-    """Login as admin and return token"""
+def login():
+    """Login and get token"""
+    global token
+    print("=" * 80)
+    print("AUTHENTICATION")
+    print("=" * 80)
+    
     try:
-        print("\n=== AUTHENTICATION ===")
         response = requests.post(
             f"{BASE_URL}/auth/login",
             json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-            timeout=10
+            timeout=30
         )
         
         if response.status_code == 200:
             data = response.json()
             token = data.get("token")
             profile = data.get("profile", {})
-            log_test("Admin login", True, f"Role: {profile.get('role_codigo')}")
-            return token
-        else:
-            log_test("Admin login", False, f"Status: {response.status_code}, Response: {response.text}")
-            return None
-    except Exception as e:
-        log_test("Admin login", False, f"Exception: {str(e)}")
-        return None
-
-def test_empresas_dedup(token: str):
-    """Test 1: EMPRESAS DEDUP - expect exactly 3 empresas with unique names"""
-    print("\n=== TEST 1: EMPRESAS DEDUPLICATION ===")
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/empresas", headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            log_test("GET /api/empresas status", False, f"Expected 200, got {response.status_code}")
-            return None
-        
-        log_test("GET /api/empresas status", True, "200 OK")
-        
-        data = response.json()
-        empresas = data.get("empresas", [])
-        
-        # Check count
-        count = len(empresas)
-        log_test("Empresas count", count == 3, f"Expected 3, got {count}")
-        
-        # Check for duplicate names
-        names = [e.get("razon_social") for e in empresas]
-        unique_names = set(names)
-        
-        has_duplicates = len(names) != len(unique_names)
-        log_test("No duplicate empresa names", not has_duplicates, 
-                f"Names: {names}, Unique: {list(unique_names)}")
-        
-        if empresas:
-            print(f"  Empresas found: {', '.join(names)}")
-            return empresas[0].get("empresa_id")  # Return first empresa_id for later use
-        
-        return None
-        
-    except Exception as e:
-        log_test("GET /api/empresas", False, f"Exception: {str(e)}")
-        return None
-
-def test_rut_invalid(token: str, empresa_id: str):
-    """Test 2: RUT INVALID - test various invalid RUTs"""
-    print("\n=== TEST 2: RUT VALIDATION (INVALID) ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    invalid_ruts = [
-        ("12345678-9", "DV of 12345678 is 5, not 9"),
-        ("22222222-3", "DV of 22222222 is 2, not 3"),
-        ("abc", "Not a valid RUT format"),
-        ("", "Empty RUT"),
-    ]
-    
-    for rut, reason in invalid_ruts:
-        try:
-            payload = {
-                "empresa_id": empresa_id,
-                "rut": rut,
-                "nombre": "Juan",
-                "apellido": "Perez",
-                "cargo": "Operador"
-            }
-            
-            response = requests.post(
-                f"{BASE_URL}/trabajadores",
-                headers=headers,
-                json=payload,
-                timeout=10
+            print_test(
+                "Login as admin",
+                True,
+                f"Role: {profile.get('role_codigo')}, Email: {profile.get('email')}"
             )
-            
-            if response.status_code == 400:
-                error_msg = response.json().get("error", "")
-                # For empty RUT, "Faltan campos obligatorios" is also acceptable
-                has_rut_error = "RUT" in error_msg or "rut" in error_msg.lower() or "Faltan campos" in error_msg
-                log_test(f"Invalid RUT '{rut}' rejected", has_rut_error, 
-                        f"Status: 400, Error: {error_msg}, Reason: {reason}")
-            else:
-                log_test(f"Invalid RUT '{rut}' rejected", False, 
-                        f"Expected 400, got {response.status_code}, Reason: {reason}")
-                
-        except Exception as e:
-            log_test(f"Invalid RUT '{rut}' test", False, f"Exception: {str(e)}")
-
-def compute_rut_dv(body: str) -> str:
-    """Compute Chilean RUT DV using módulo 11"""
-    suma = 0
-    mul = 2
-    for digit in reversed(body):
-        suma += int(digit) * mul
-        mul = 2 if mul == 7 else mul + 1
-    res = 11 - (suma % 11)
-    if res == 11:
-        return '0'
-    elif res == 10:
-        return 'K'
-    else:
-        return str(res)
-
-def test_rut_valid_title_case(token: str, empresa_id: str):
-    """Test 3: RUT VALID + TITLE CASE - create worker with valid RUT and lowercase names"""
-    print("\n=== TEST 3: VALID RUT + TITLE CASE ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Use a unique valid RUT: 23456789-X (compute DV)
-    rut_body = "23456789"
-    rut_dv = compute_rut_dv(rut_body)
-    valid_rut = f"{rut_body}-{rut_dv}"
-    
-    print(f"  Using valid RUT: {valid_rut} (computed DV: {rut_dv})")
-    
-    try:
-        payload = {
-            "empresa_id": empresa_id,
-            "rut": valid_rut,
-            "nombre": "juan carlos",
-            "apellido": "PEREZ SOTO",
-            "cargo": "operador de grua"
-        }
-        
-        response = requests.post(
-            f"{BASE_URL}/trabajadores",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-        
-        if response.status_code != 201:
-            log_test("Create worker with valid RUT", False, 
-                    f"Expected 201, got {response.status_code}, Response: {response.text}")
-            return None
-        
-        log_test("Create worker with valid RUT", True, "201 Created")
-        
-        data = response.json()
-        trabajador = data.get("trabajador", {})
-        trabajador_id = trabajador.get("trabajador_id")
-        
-        if trabajador_id:
-            created_trabajadores.append(trabajador_id)
-        
-        # Verify Title Case
-        nombre = trabajador.get("nombre")
-        apellido = trabajador.get("apellido")
-        cargo = trabajador.get("cargo")
-        rut_returned = trabajador.get("rut")
-        
-        log_test("Title Case - nombre", nombre == "Juan Carlos", 
-                f"Expected 'Juan Carlos', got '{nombre}'")
-        log_test("Title Case - apellido", apellido == "Perez Soto", 
-                f"Expected 'Perez Soto', got '{apellido}'")
-        log_test("Title Case - cargo", cargo == "Operador De Grua", 
-                f"Expected 'Operador De Grua', got '{cargo}'")
-        
-        # Verify RUT formatting (should be XX.XXX.XXX-D)
-        expected_rut = f"{rut_body[0:2]}.{rut_body[2:5]}.{rut_body[5:8]}-{rut_dv}"
-        log_test("RUT formatting", rut_returned == expected_rut, 
-                f"Expected '{expected_rut}', got '{rut_returned}'")
-        
-        return trabajador_id, valid_rut
-        
-    except Exception as e:
-        log_test("Create worker with valid RUT", False, f"Exception: {str(e)}")
-        return None, None
-
-def test_rut_with_k(token: str, empresa_id: str):
-    """Test 4: RUT with K as DV"""
-    print("\n=== TEST 4: RUT WITH K AS DV ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Use a RUT where DV is K: 12345670-K (computed: suma=122, 122%11=1, 11-1=10=K)
-    rut_body = "12345670"
-    rut_dv = compute_rut_dv(rut_body)
-    valid_rut_k = f"{rut_body}-{rut_dv}"
-    
-    print(f"  Using RUT: {valid_rut_k} (computed DV: {rut_dv})")
-    
-    try:
-        payload = {
-            "empresa_id": empresa_id,
-            "rut": valid_rut_k,
-            "nombre": "Maria",
-            "apellido": "Lopez",
-            "cargo": "Supervisor"
-        }
-        
-        response = requests.post(
-            f"{BASE_URL}/trabajadores",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-        
-        if rut_dv == 'K':
-            # Should be valid
-            if response.status_code == 201:
-                log_test(f"Valid RUT with K '{valid_rut_k}' accepted", True, "201 Created")
-                data = response.json()
-                trabajador_id = data.get("trabajador", {}).get("trabajador_id")
-                if trabajador_id:
-                    created_trabajadores.append(trabajador_id)
-                
-                # Verify RUT formatting
-                rut_returned = data.get("trabajador", {}).get("rut")
-                expected_rut = f"{rut_body[0:2]}.{rut_body[2:5]}.{rut_body[5:8]}-K"
-                log_test("RUT with K formatting", rut_returned == expected_rut, 
-                        f"Expected '{expected_rut}', got '{rut_returned}'")
-            else:
-                log_test(f"Valid RUT with K '{valid_rut_k}' accepted", False, 
-                        f"Expected 201, got {response.status_code}")
+            return True
         else:
-            # Should be invalid
-            if response.status_code == 400:
-                log_test(f"Invalid RUT '{valid_rut_k}' rejected", True, "400 Bad Request")
-            else:
-                log_test(f"Invalid RUT '{valid_rut_k}' rejected", False, 
-                        f"Expected 400, got {response.status_code}")
-                
+            print_test("Login as admin", False, f"Status: {response.status_code}, Response: {response.text}")
+            return False
     except Exception as e:
-        log_test("RUT with K test", False, f"Exception: {str(e)}")
+        print_test("Login as admin", False, f"Exception: {str(e)}")
+        return False
 
-def test_duplicate_rut(token: str, empresa_id: str, existing_rut: str):
-    """Test 5: DUPLICATE RUT - try to create worker with same RUT"""
-    print("\n=== TEST 5: DUPLICATE RUT ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Use the same valid RUT from test 3
-    if not existing_rut:
-        log_test("Duplicate RUT test", False, "No existing RUT to test")
-        return
-    
-    print(f"  Attempting to create duplicate with RUT: {existing_rut}")
+def get_headers():
+    """Get authorization headers"""
+    return {"Authorization": f"Bearer {token}"}
+
+def test_dashboard_no_filters():
+    """Test GET /api/dashboard with no filters"""
+    print("=" * 80)
+    print("TEST 1: Dashboard with no filters")
+    print("=" * 80)
     
     try:
-        payload = {
-            "empresa_id": empresa_id,
-            "rut": existing_rut,
-            "nombre": "Pedro",
-            "apellido": "Gonzalez",
-            "cargo": "Tecnico"
-        }
-        
-        response = requests.post(
-            f"{BASE_URL}/trabajadores",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-        
-        if response.status_code == 409:
-            error_msg = response.json().get("error", "")
-            log_test("Duplicate RUT rejected", True, f"Status: 409, Error: {error_msg}")
-        else:
-            log_test("Duplicate RUT rejected", False, 
-                    f"Expected 409, got {response.status_code}, Response: {response.text}")
-            
-    except Exception as e:
-        log_test("Duplicate RUT test", False, f"Exception: {str(e)}")
-
-def test_title_case_on_edit(token: str, trabajador_id: str):
-    """Test 6: TITLE CASE on edit - PUT with lowercase names"""
-    print("\n=== TEST 6: TITLE CASE ON EDIT ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    if not trabajador_id:
-        log_test("Title Case on edit", False, "No trabajador_id available")
-        return
-    
-    try:
-        payload = {
-            "nombre": "maría josé",
-            "cargo": "jefe de turno"
-        }
-        
-        response = requests.put(
-            f"{BASE_URL}/trabajadores/{trabajador_id}",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
+        response = requests.get(f"{BASE_URL}/dashboard", headers=get_headers(), timeout=30)
         
         if response.status_code != 200:
-            log_test("PUT /api/trabajadores/:id status", False, 
-                    f"Expected 200, got {response.status_code}, Response: {response.text}")
+            print_test("Dashboard no filters - Status 200", False, f"Got {response.status_code}: {response.text}")
+            return None
+        
+        print_test("Dashboard no filters - Status 200", True)
+        
+        data = response.json()
+        
+        # Check existing fields
+        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
+        missing_keys = [k for k in required_keys if k not in data]
+        
+        if missing_keys:
+            print_test("Dashboard response has all required keys", False, f"Missing: {missing_keys}")
+            return None
+        
+        print_test("Dashboard response has all required keys", True, f"Keys: {list(data.keys())}")
+        
+        # Check stats object
+        stats = data.get("stats", {})
+        required_stats = [
+            "mandantes", "contratos_vigentes", "trabajadores", "vehiculos", "equipos",
+            "docs_pendientes", "docs_por_vencer", "docs_vencidos",
+            "trabajadores_acreditados", "trabajadores_bloqueados", "trabajadores_revision"
+        ]
+        missing_stats = [k for k in required_stats if k not in stats]
+        
+        if missing_stats:
+            print_test("Stats object has all required fields", False, f"Missing: {missing_stats}")
+        else:
+            print_test("Stats object has all required fields", True, f"Stats: {json.dumps(stats, indent=2)}")
+        
+        # Check acreditacion_por_mandante
+        acred = data.get("acreditacion_por_mandante", {})
+        if isinstance(acred, dict):
+            print_test("acreditacion_por_mandante is object/map", True, f"Mandantes: {len(acred)}")
+        else:
+            print_test("acreditacion_por_mandante is object/map", False, f"Got type: {type(acred)}")
+        
+        # Check docs_por_estado
+        docs_estado = data.get("docs_por_estado", [])
+        if isinstance(docs_estado, list):
+            if len(docs_estado) > 0:
+                sample = docs_estado[0]
+                has_estado = "estado" in sample
+                has_c = "c" in sample
+                print_test(
+                    "docs_por_estado is array of {estado, c}",
+                    has_estado and has_c,
+                    f"Length: {len(docs_estado)}, Sample: {sample}"
+                )
+            else:
+                print_test("docs_por_estado is array of {estado, c}", True, "Empty array (no documents)")
+        else:
+            print_test("docs_por_estado is array", False, f"Got type: {type(docs_estado)}")
+        
+        # NEW: Check tendencia_vencimientos
+        tendencia = data.get("tendencia_vencimientos", [])
+        if not isinstance(tendencia, list):
+            print_test("tendencia_vencimientos is array", False, f"Got type: {type(tendencia)}")
+        elif len(tendencia) != 6:
+            print_test("tendencia_vencimientos has exactly 6 months", False, f"Got {len(tendencia)} months: {tendencia}")
+        else:
+            print_test("tendencia_vencimientos has exactly 6 months", True)
+            
+            # Check structure of each month
+            all_valid = True
+            has_zeros = False
+            for i, month in enumerate(tendencia):
+                if not isinstance(month, dict):
+                    print_test(f"tendencia_vencimientos[{i}] is object", False, f"Got type: {type(month)}")
+                    all_valid = False
+                    continue
+                
+                if "mes" not in month or "c" not in month:
+                    print_test(f"tendencia_vencimientos[{i}] has mes and c", False, f"Got keys: {list(month.keys())}")
+                    all_valid = False
+                    continue
+                
+                # Check mes format YYYY-MM
+                mes = month.get("mes")
+                try:
+                    datetime.strptime(mes, "%Y-%m")
+                    mes_valid = True
+                except:
+                    mes_valid = False
+                
+                if not mes_valid:
+                    print_test(f"tendencia_vencimientos[{i}] mes format YYYY-MM", False, f"Got: {mes}")
+                    all_valid = False
+                
+                # Check c is integer
+                c = month.get("c")
+                if not isinstance(c, int):
+                    print_test(f"tendencia_vencimientos[{i}] c is integer", False, f"Got type: {type(c)}, value: {c}")
+                    all_valid = False
+                
+                if c == 0:
+                    has_zeros = True
+            
+            if all_valid:
+                print_test("tendencia_vencimientos structure valid", True, f"All 6 months have correct structure")
+                print(f"  Tendencia: {json.dumps(tendencia, indent=2)}")
+            
+            # Check if months are in ascending order
+            meses = [m.get("mes") for m in tendencia]
+            sorted_meses = sorted(meses)
+            if meses == sorted_meses:
+                print_test("tendencia_vencimientos months in ascending order", True, f"Months: {meses}")
+            else:
+                print_test("tendencia_vencimientos months in ascending order", False, f"Got: {meses}, Expected: {sorted_meses}")
+            
+            # Note about zeros
+            if has_zeros:
+                print_test("tendencia_vencimientos includes months with c=0", True, "Months with zero expirations are present")
+            else:
+                print("  ℹ️  Note: No months with c=0 found (all months have expirations)")
+        
+        # NEW: Check proximos_vencimientos
+        proximos = data.get("proximos_vencimientos", [])
+        if not isinstance(proximos, list):
+            print_test("proximos_vencimientos is array", False, f"Got type: {type(proximos)}")
+        else:
+            print_test("proximos_vencimientos is array", True, f"Length: {len(proximos)}")
+            
+            if len(proximos) > 15:
+                print_test("proximos_vencimientos length <= 15", False, f"Got {len(proximos)} items")
+            else:
+                print_test("proximos_vencimientos length <= 15", True)
+            
+            if len(proximos) > 0:
+                # Check structure of each item
+                required_fields = [
+                    "documento_id", "recurso_tipo", "recurso_id", "fecha_vencimiento",
+                    "documento", "mandante", "dias_restantes", "recurso"
+                ]
+                
+                all_valid = True
+                all_within_90_days = True
+                all_aprobado = True
+                all_recurso_non_empty = True
+                all_dias_int = True
+                
+                for i, item in enumerate(proximos):
+                    if not isinstance(item, dict):
+                        print_test(f"proximos_vencimientos[{i}] is object", False, f"Got type: {type(item)}")
+                        all_valid = False
+                        continue
+                    
+                    missing = [f for f in required_fields if f not in item]
+                    if missing:
+                        print_test(f"proximos_vencimientos[{i}] has all fields", False, f"Missing: {missing}")
+                        all_valid = False
+                        continue
+                    
+                    # Check recurso is non-empty string
+                    recurso = item.get("recurso")
+                    if not isinstance(recurso, str) or recurso.strip() == "" or recurso == "—":
+                        print_test(f"proximos_vencimientos[{i}] recurso is non-empty string", False, f"Got: '{recurso}'")
+                        all_recurso_non_empty = False
+                    
+                    # Check dias_restantes is integer
+                    dias = item.get("dias_restantes")
+                    if not isinstance(dias, int):
+                        print_test(f"proximos_vencimientos[{i}] dias_restantes is integer", False, f"Got type: {type(dias)}, value: {dias}")
+                        all_dias_int = False
+                    
+                    # Check dias_restantes <= 90
+                    if isinstance(dias, int) and dias > 90:
+                        print_test(f"proximos_vencimientos[{i}] dias_restantes <= 90", False, f"Got: {dias}")
+                        all_within_90_days = False
+                
+                if all_valid:
+                    print_test("proximos_vencimientos structure valid", True, f"All {len(proximos)} items have correct structure")
+                    print(f"  Sample (first 3): {json.dumps(proximos[:3], indent=2, default=str)}")
+                
+                if all_recurso_non_empty:
+                    print_test("proximos_vencimientos all recurso non-empty", True)
+                
+                if all_dias_int:
+                    print_test("proximos_vencimientos all dias_restantes are integers", True)
+                
+                if all_within_90_days:
+                    print_test("proximos_vencimientos all dias_restantes <= 90", True)
+                
+                # Check if sorted by fecha_vencimiento ascending
+                fechas = [item.get("fecha_vencimiento") for item in proximos]
+                sorted_fechas = sorted(fechas)
+                if fechas == sorted_fechas:
+                    print_test("proximos_vencimientos sorted by fecha_vencimiento asc", True)
+                else:
+                    print_test("proximos_vencimientos sorted by fecha_vencimiento asc", False, f"Not sorted correctly")
+            else:
+                print("  ℹ️  Note: No proximos_vencimientos found (no documents expiring within 90 days)")
+        
+        return data
+        
+    except Exception as e:
+        print_test("Dashboard no filters", False, f"Exception: {str(e)}")
+        return None
+
+def test_dashboard_with_mandante_filter():
+    """Test GET /api/dashboard?mandante_id=X"""
+    print("=" * 80)
+    print("TEST 2: Dashboard with mandante_id filter")
+    print("=" * 80)
+    
+    try:
+        # First get a real mandante_id
+        response = requests.get(f"{BASE_URL}/mandantes", headers=get_headers(), timeout=30)
+        if response.status_code != 200:
+            print_test("Get mandantes list", False, f"Status: {response.status_code}")
             return
         
-        log_test("PUT /api/trabajadores/:id status", True, "200 OK")
+        mandantes = response.json().get("mandantes", [])
+        if not mandantes:
+            print_test("Get mandantes list", False, "No mandantes found")
+            return
+        
+        # Find a mandante that has documents
+        mandante_id = None
+        mandante_name = None
+        
+        for m in mandantes:
+            # Check if this mandante has documents
+            check_response = requests.get(
+                f"{BASE_URL}/dashboard?mandante_id={m['mandante_id']}",
+                headers=get_headers(),
+                timeout=30
+            )
+            if check_response.status_code == 200:
+                check_data = check_response.json()
+                docs_estado = check_data.get("docs_por_estado", [])
+                total_docs = sum(d.get("c", 0) for d in docs_estado)
+                if total_docs > 0:
+                    mandante_id = m['mandante_id']
+                    mandante_name = m['razon_social']
+                    break
+        
+        if not mandante_id:
+            # Just use the first mandante
+            mandante_id = mandantes[0]['mandante_id']
+            mandante_name = mandantes[0]['razon_social']
+        
+        print_test("Get mandante_id for testing", True, f"Using: {mandante_name} ({mandante_id})")
+        
+        # Test dashboard with mandante filter
+        response = requests.get(
+            f"{BASE_URL}/dashboard?mandante_id={mandante_id}",
+            headers=get_headers(),
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print_test("Dashboard with mandante_id - Status 200", False, f"Got {response.status_code}: {response.text}")
+            return
+        
+        print_test("Dashboard with mandante_id - Status 200", True)
         
         data = response.json()
-        trabajador = data.get("trabajador", {})
         
-        nombre = trabajador.get("nombre")
-        cargo = trabajador.get("cargo")
+        # Check response is well-formed
+        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
+        missing_keys = [k for k in required_keys if k not in data]
         
-        log_test("Title Case on edit - nombre", nombre == "María José", 
-                f"Expected 'María José', got '{nombre}'")
-        log_test("Title Case on edit - cargo", cargo == "Jefe De Turno", 
-                f"Expected 'Jefe De Turno', got '{cargo}'")
-        
-    except Exception as e:
-        log_test("Title Case on edit", False, f"Exception: {str(e)}")
-
-def test_regression(token: str):
-    """Test 7: Regression tests"""
-    print("\n=== TEST 7: REGRESSION TESTS ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Health check
-    try:
-        response = requests.get(f"{BASE_URL}/health", timeout=10)
-        log_test("GET /api/health", response.status_code == 200, 
-                f"Status: {response.status_code}")
-    except Exception as e:
-        log_test("GET /api/health", False, f"Exception: {str(e)}")
-    
-    # Login 4 roles
-    roles = [
-        ("admin@aptivarl.com", "Aptiva2025!", "SUPER_ADMIN_HOLDING"),
-        ("empresa@aptivarl.com", "Aptiva2025!", "ADMIN_EMPRESA"),
-        ("revisor@aptivarl.com", "Aptiva2025!", "REVISOR"),
-        ("mandante@aptivarl.com", "Aptiva2025!", "USUARIO_MANDANTE"),
-    ]
-    
-    for email, password, expected_role in roles:
-        try:
-            response = requests.post(
-                f"{BASE_URL}/auth/login",
-                json={"email": email, "password": password},
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                role = data.get("profile", {}).get("role_codigo")
-                log_test(f"Login {email}", role == expected_role, 
-                        f"Expected role '{expected_role}', got '{role}'")
-            else:
-                log_test(f"Login {email}", False, f"Status: {response.status_code}")
-        except Exception as e:
-            log_test(f"Login {email}", False, f"Exception: {str(e)}")
-    
-    # GET /api/mandantes count
-    try:
-        response = requests.get(f"{BASE_URL}/mandantes", headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            mandantes = data.get("mandantes", [])
-            count = len(mandantes)
-            log_test("GET /api/mandantes count", count >= 14, 
-                    f"Expected >= 14, got {count}")
+        if missing_keys:
+            print_test("Dashboard response well-formed", False, f"Missing keys: {missing_keys}")
         else:
-            log_test("GET /api/mandantes", False, f"Status: {response.status_code}")
-    except Exception as e:
-        log_test("GET /api/mandantes", False, f"Exception: {str(e)}")
-    
-    # GET /api/trabajadores - check Title Case on existing workers
-    try:
-        response = requests.get(f"{BASE_URL}/trabajadores", headers=headers, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            trabajadores = data.get("trabajadores", [])
-            count = len(trabajadores)
-            log_test("GET /api/trabajadores count", count >= 320, 
-                    f"Expected >= 320, got {count}")
-            
-            # Spot check a few workers for Title Case (not ALL CAPS)
-            if trabajadores:
-                sample_size = min(5, len(trabajadores))
-                all_title_case = True
-                for i in range(sample_size):
-                    t = trabajadores[i]
-                    nombre = t.get("nombre", "")
-                    apellido = t.get("apellido", "")
-                    
-                    # Check if not ALL CAPS (Title Case should have lowercase letters)
-                    if nombre == nombre.upper() or apellido == apellido.upper():
-                        all_title_case = False
-                        print(f"  Found ALL CAPS: {nombre} {apellido}")
-                        break
-                
-                log_test("Trabajadores have Title Case names", all_title_case, 
-                        f"Spot checked {sample_size} workers")
+            print_test("Dashboard response well-formed", True, "All keys present")
+        
+        # Check tendencia_vencimientos still 6 months
+        tendencia = data.get("tendencia_vencimientos", [])
+        if len(tendencia) == 6:
+            print_test("tendencia_vencimientos still 6 months with filter", True)
         else:
-            log_test("GET /api/trabajadores", False, f"Status: {response.status_code}")
-    except Exception as e:
-        log_test("GET /api/trabajadores", False, f"Exception: {str(e)}")
-
-def cleanup_trabajadores(token: str):
-    """Test 8: CLEANUP - delete created trabajadores"""
-    print("\n=== TEST 8: CLEANUP ===")
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    if not created_trabajadores:
-        print("  No trabajadores to clean up")
-        return
-    
-    print(f"  Cleaning up {len(created_trabajadores)} trabajadores...")
-    
-    for trabajador_id in created_trabajadores:
-        try:
-            response = requests.delete(
-                f"{BASE_URL}/trabajadores/{trabajador_id}",
-                headers=headers,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                log_test(f"DELETE trabajador {trabajador_id[:8]}...", True, "200 OK")
+            print_test("tendencia_vencimientos still 6 months with filter", False, f"Got {len(tendencia)} months")
+        
+        # Check proximos_vencimientos filtered by mandante
+        proximos = data.get("proximos_vencimientos", [])
+        if len(proximos) > 0:
+            all_match_mandante = all(item.get("mandante") == mandante_name for item in proximos)
+            if all_match_mandante:
+                print_test("proximos_vencimientos filtered by mandante", True, f"All {len(proximos)} items match mandante")
             else:
-                log_test(f"DELETE trabajador {trabajador_id[:8]}...", False, 
-                        f"Status: {response.status_code}")
-        except Exception as e:
-            log_test(f"DELETE trabajador {trabajador_id[:8]}...", False, 
-                    f"Exception: {str(e)}")
+                mismatches = [item.get("mandante") for item in proximos if item.get("mandante") != mandante_name]
+                print_test("proximos_vencimientos filtered by mandante", False, f"Found mismatches: {mismatches}")
+        else:
+            print("  ℹ️  Note: No proximos_vencimientos for this mandante")
+        
+        print(f"  Stats: {json.dumps(data.get('stats'), indent=2)}")
+        
+    except Exception as e:
+        print_test("Dashboard with mandante_id filter", False, f"Exception: {str(e)}")
 
-def print_summary():
-    """Print test summary"""
-    print("\n" + "="*80)
-    print("TEST SUMMARY")
-    print("="*80)
-    print(f"Total tests: {test_results['passed'] + test_results['failed']}")
-    print(f"Passed: {test_results['passed']} ✅")
-    print(f"Failed: {test_results['failed']} ❌")
-    print("="*80)
+def test_dashboard_with_empresa_filter():
+    """Test GET /api/dashboard?empresa_id=X"""
+    print("=" * 80)
+    print("TEST 3: Dashboard with empresa_id filter")
+    print("=" * 80)
     
-    if test_results['failed'] > 0:
-        print("\nFailed tests:")
-        for test in test_results['tests']:
-            if not test['passed']:
-                print(f"  ❌ {test['name']}")
-                if test['details']:
-                    print(f"     {test['details']}")
+    try:
+        # First get a real empresa_id
+        response = requests.get(f"{BASE_URL}/empresas", headers=get_headers(), timeout=30)
+        if response.status_code != 200:
+            print_test("Get empresas list", False, f"Status: {response.status_code}")
+            return
+        
+        empresas = response.json().get("empresas", [])
+        if not empresas:
+            print_test("Get empresas list", False, "No empresas found")
+            return
+        
+        empresa_id = empresas[0]['empresa_id']
+        empresa_name = empresas[0]['razon_social']
+        
+        print_test("Get empresa_id for testing", True, f"Using: {empresa_name} ({empresa_id})")
+        
+        # Test dashboard with empresa filter
+        response = requests.get(
+            f"{BASE_URL}/dashboard?empresa_id={empresa_id}",
+            headers=get_headers(),
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print_test("Dashboard with empresa_id - Status 200", False, f"Got {response.status_code}: {response.text}")
+            return
+        
+        print_test("Dashboard with empresa_id - Status 200", True)
+        
+        data = response.json()
+        
+        # Check response is well-formed
+        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
+        missing_keys = [k for k in required_keys if k not in data]
+        
+        if missing_keys:
+            print_test("Dashboard response well-formed", False, f"Missing keys: {missing_keys}")
+        else:
+            print_test("Dashboard response well-formed", True, "All keys present")
+        
+        print(f"  Stats: {json.dumps(data.get('stats'), indent=2)}")
+        
+    except Exception as e:
+        print_test("Dashboard with empresa_id filter", False, f"Exception: {str(e)}")
+
+def test_dashboard_with_combined_filters():
+    """Test GET /api/dashboard?empresa_id=X&mandante_id=Y"""
+    print("=" * 80)
+    print("TEST 4: Dashboard with combined filters")
+    print("=" * 80)
+    
+    try:
+        # Get empresa_id
+        response = requests.get(f"{BASE_URL}/empresas", headers=get_headers(), timeout=30)
+        if response.status_code != 200:
+            print_test("Get empresas list", False, f"Status: {response.status_code}")
+            return
+        
+        empresas = response.json().get("empresas", [])
+        if not empresas:
+            print_test("Get empresas list", False, "No empresas found")
+            return
+        
+        empresa_id = empresas[0]['empresa_id']
+        
+        # Get mandante_id
+        response = requests.get(f"{BASE_URL}/mandantes", headers=get_headers(), timeout=30)
+        if response.status_code != 200:
+            print_test("Get mandantes list", False, f"Status: {response.status_code}")
+            return
+        
+        mandantes = response.json().get("mandantes", [])
+        if not mandantes:
+            print_test("Get mandantes list", False, "No mandantes found")
+            return
+        
+        mandante_id = mandantes[0]['mandante_id']
+        
+        print_test("Get empresa_id and mandante_id for testing", True, f"empresa_id: {empresa_id}, mandante_id: {mandante_id}")
+        
+        # Test dashboard with combined filters
+        response = requests.get(
+            f"{BASE_URL}/dashboard?empresa_id={empresa_id}&mandante_id={mandante_id}",
+            headers=get_headers(),
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            print_test("Dashboard with combined filters - Status 200", False, f"Got {response.status_code}: {response.text}")
+            return
+        
+        print_test("Dashboard with combined filters - Status 200", True)
+        
+        data = response.json()
+        
+        # Check response is well-formed
+        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
+        missing_keys = [k for k in required_keys if k not in data]
+        
+        if missing_keys:
+            print_test("Dashboard response well-formed and coherent", False, f"Missing keys: {missing_keys}")
+        else:
+            print_test("Dashboard response well-formed and coherent", True, "All keys present")
+        
+        print(f"  Stats: {json.dumps(data.get('stats'), indent=2)}")
+        
+    except Exception as e:
+        print_test("Dashboard with combined filters", False, f"Exception: {str(e)}")
+
+def test_regression():
+    """Test that existing fields are still intact"""
+    print("=" * 80)
+    print("TEST 5: Regression - Existing fields intact")
+    print("=" * 80)
+    
+    try:
+        response = requests.get(f"{BASE_URL}/dashboard", headers=get_headers(), timeout=30)
+        
+        if response.status_code != 200:
+            print_test("Dashboard regression - Status 200", False, f"Got {response.status_code}")
+            return
+        
+        data = response.json()
+        
+        # Check stats
+        stats = data.get("stats", {})
+        required_stats = [
+            "mandantes", "contratos_vigentes", "trabajadores", "vehiculos", "equipos",
+            "docs_pendientes", "docs_por_vencer", "docs_vencidos",
+            "trabajadores_acreditados", "trabajadores_bloqueados", "trabajadores_revision"
+        ]
+        
+        all_present = all(k in stats for k in required_stats)
+        if all_present:
+            print_test("Regression: stats fields intact", True, f"All {len(required_stats)} fields present")
+        else:
+            missing = [k for k in required_stats if k not in stats]
+            print_test("Regression: stats fields intact", False, f"Missing: {missing}")
+        
+        # Check acreditacion_por_mandante
+        acred = data.get("acreditacion_por_mandante")
+        if isinstance(acred, dict):
+            print_test("Regression: acreditacion_por_mandante intact", True, f"Type: dict, Keys: {len(acred)}")
+        else:
+            print_test("Regression: acreditacion_por_mandante intact", False, f"Type: {type(acred)}")
+        
+        # Check docs_por_estado
+        docs_estado = data.get("docs_por_estado")
+        if isinstance(docs_estado, list):
+            print_test("Regression: docs_por_estado intact", True, f"Type: list, Length: {len(docs_estado)}")
+        else:
+            print_test("Regression: docs_por_estado intact", False, f"Type: {type(docs_estado)}")
+        
+    except Exception as e:
+        print_test("Regression tests", False, f"Exception: {str(e)}")
 
 def main():
-    """Main test execution"""
-    print("="*80)
-    print("PHASE 8 BACKEND TESTING: RUT Validator + Title Case + Deduped Empresas")
-    print("="*80)
+    """Main test runner"""
+    print("\n")
+    print("=" * 80)
+    print("APTIVA RL BACKEND TESTING - ENHANCED DASHBOARD ENDPOINT")
+    print("=" * 80)
+    print(f"Base URL: {BASE_URL}")
+    print(f"Testing as: {ADMIN_EMAIL}")
+    print("=" * 80)
+    print("\n")
     
     # Login
-    token = login_admin()
-    if not token:
-        print("\n❌ CRITICAL: Failed to login as admin. Cannot proceed with tests.")
-        sys.exit(1)
+    if not login():
+        print("\n❌ LOGIN FAILED - Cannot proceed with tests")
+        return
     
-    # Test 1: Empresas dedup
-    empresa_id = test_empresas_dedup(token)
-    if not empresa_id:
-        print("\n⚠️  WARNING: No empresa_id available. Some tests may be skipped.")
-        empresa_id = "dummy-id"  # Continue with dummy ID
+    # Run tests
+    test_dashboard_no_filters()
+    test_dashboard_with_mandante_filter()
+    test_dashboard_with_empresa_filter()
+    test_dashboard_with_combined_filters()
+    test_regression()
     
-    # Test 2: Invalid RUTs
-    test_rut_invalid(token, empresa_id)
-    
-    # Test 3: Valid RUT + Title Case
-    trabajador_id, created_rut = test_rut_valid_title_case(token, empresa_id)
-    
-    # Test 4: RUT with K
-    test_rut_with_k(token, empresa_id)
-    
-    # Test 5: Duplicate RUT
-    test_duplicate_rut(token, empresa_id, created_rut)
-    
-    # Test 6: Title Case on edit
-    test_title_case_on_edit(token, trabajador_id)
-    
-    # Test 7: Regression
-    test_regression(token)
-    
-    # Test 8: Cleanup
-    cleanup_trabajadores(token)
-    
-    # Print summary
-    print_summary()
-    
-    # Exit with appropriate code
-    if test_results['failed'] > 0:
-        sys.exit(1)
-    else:
-        sys.exit(0)
+    print("\n")
+    print("=" * 80)
+    print("TESTING COMPLETE")
+    print("=" * 80)
+    print("\n")
 
 if __name__ == "__main__":
     main()
