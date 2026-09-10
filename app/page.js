@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Fragment } from 'react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip as RTooltip, Legend, AreaChart, Area,
@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
-  CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
+  CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, ChevronDown, Upload,
   CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus,
 } from 'lucide-react';
 
@@ -1709,21 +1709,83 @@ function Desvinculaciones({ api }) {
     return () => { alive = false; clearTimeout(t); };
   }, [api, q]);
   const verArchivo = async (r) => { try { const { url } = await api(`/desvinculaciones/${r.desvinculacion_id}/url`); window.open(url, '_blank'); } catch (e) { toast.error(e.message); } };
+  const [page, setPage] = useState(1);
+  const [open, setOpen] = useState(null);
+  const pageSize = 12;
+  const all = rows || [];
+  const totalPages = Math.max(1, Math.ceil(all.length / pageSize));
+  const cur = Math.min(page, totalPages);
+  const start = (cur - 1) * pageSize;
+  const pageRows = all.slice(start, start + pageSize);
+  useEffect(() => { setPage(1); setOpen(null); }, [q, rows]);
+  const cleanOC = (s) => (s || '').replace(/^\s*(Contrato|OC|PO|N°)\s+/i, '').trim();
   return (
     <div>
       <PageHead title="Personal Finiquitado" sub="Histórico de desvinculaciones (finiquitos y anexos de traslado)"
         action={<Button variant="outline" onClick={() => csvDownload('personal_finiquitado.csv', ['Empresa', 'Contrato', 'RUT', 'Nombre', 'Cargo', 'Causal', 'Tipo', 'Fecha'], (rows || []).map((r) => [r.empresa_nombre || '', r.contrato_numero || '', r.rut || '', r.nombre || '', r.cargo || '', r.causal || '', r.tipo, fdatetime(r.created_at)]))} disabled={!rows}><Download className="h-4 w-4 mr-1" />Exportar</Button>} />
       <div className="mb-3 max-w-sm"><div className="relative"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar por nombre, RUT, contrato, causal…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
-      <Table pageSize={15} empty="Sin desvinculaciones registradas" columns={[
-        { key: 'empresa_nombre', label: 'Empresa', render: (r) => <span className="block max-w-[150px] truncate text-slate-600" title={r.empresa_nombre}>{r.empresa_nombre}</span> },
-        { key: 'contrato_numero', label: 'Contrato', render: (r) => <span className="tabular-nums" title={r.contrato_numero}>{(r.contrato_numero || '').replace(/^\s*(Contrato|OC|PO|N°)\s+/i, '')}</span> },
-        { key: 'rut', label: 'RUT', render: (r) => <span className="tabular-nums">{r.rut}</span> },
-        { key: 'nombre', label: 'Nombre', render: (r) => <span className="block max-w-[200px] truncate font-medium text-slate-800" title={r.nombre}>{r.nombre}</span> },
-        { key: 'cargo', label: 'Cargo', render: (r) => <span className="block max-w-[130px] truncate text-slate-600" title={r.cargo}>{r.cargo}</span> },
-        { key: 'causal', label: 'Causal', render: (r) => <div className="flex items-center gap-1 max-w-[260px]" title={r.causal}>{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-blue-700 border-0 shrink-0">Traslado</Badge> : null}<span className="truncate text-xs text-slate-600">{r.causal}</span></div> },
-        { key: 'archivo', label: '', render: (r) => <Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => verArchivo(r)}><Eye className="h-3.5 w-3.5 mr-1" />VER</Button> },
-        { key: 'created_at', label: 'Fecha', render: (r) => <span className="text-slate-500 tabular-nums whitespace-nowrap">{fdatetime(r.created_at)}</span> },
-      ]} rows={rows} />
+      <div className="bg-white rounded-lg border overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-500">
+            <tr>
+              <th className="w-8" />
+              <th className="text-left font-medium px-3 py-2.5 whitespace-nowrap">RUT</th>
+              <th className="text-left font-medium px-3 py-2.5">Nombre</th>
+              <th className="text-left font-medium px-3 py-2.5">Cargo</th>
+              <th className="text-left font-medium px-3 py-2.5">Causal</th>
+              <th className="text-left font-medium px-3 py-2.5 whitespace-nowrap">Archivo</th>
+              <th className="text-left font-medium px-3 py-2.5 whitespace-nowrap">Fecha</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows === null && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Cargando…</td></tr>}
+            {rows !== null && all.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-slate-400">Sin desvinculaciones registradas</td></tr>}
+            {pageRows.map((r) => {
+              const isOpen = open === r.desvinculacion_id;
+              return (
+                <Fragment key={r.desvinculacion_id}>
+                  <tr className="hover:bg-slate-50 cursor-pointer align-top" onClick={() => setOpen(isOpen ? null : r.desvinculacion_id)}>
+                    <td className="pl-3 py-3 text-slate-400">{isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
+                    <td className="px-3 py-3 whitespace-nowrap tabular-nums text-slate-600">{r.rut}</td>
+                    <td className="px-3 py-3 font-medium text-slate-800">{r.nombre}</td>
+                    <td className="px-3 py-3 text-slate-600">{r.cargo}</td>
+                    <td className="px-3 py-3 text-slate-600"><div className="flex items-start gap-1">{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-blue-700 border-0 shrink-0">Traslado</Badge> : null}<span>{r.causal}</span></div></td>
+                    <td className="px-3 py-3"><Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={(e) => { e.stopPropagation(); verArchivo(r); }}><Eye className="h-3.5 w-3.5 mr-1" />VER</Button></td>
+                    <td className="px-3 py-3 whitespace-nowrap tabular-nums text-slate-500">{fdatetime(r.created_at)}</td>
+                  </tr>
+                  {isOpen && (
+                    <tr className="bg-slate-50/70">
+                      <td />
+                      <td colSpan={6} className="px-3 pb-4 pt-1">
+                        <div className="rounded-lg border bg-white p-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Origen de la desvinculación</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div><p className="text-xs text-slate-400">Empresa</p><p className="text-sm text-slate-800">{r.empresa_nombre || '—'}</p></div>
+                            <div><p className="text-xs text-slate-400">Mandante</p><p className="text-sm text-slate-800">{r.mandante_nombre || '—'}</p></div>
+                            <div><p className="text-xs text-slate-400">Contrato</p><p className="text-sm text-slate-800 tabular-nums">{cleanOC(r.contrato_numero) || '—'}</p></div>
+                            <div><p className="text-xs text-slate-400">Tipo</p><p className="text-sm text-slate-800">{r.tipo === 'anexo_traslado' ? 'Anexo de traslado' : 'Finiquito'}</p></div>
+                            <div className="sm:col-span-2 lg:col-span-4"><p className="text-xs text-slate-400">Archivo</p><p className="text-sm text-slate-800 break-all">{r.nombre_archivo || '—'}</p></div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+        {all.length > pageSize && (
+          <div className="flex items-center justify-between px-4 py-2.5 border-t bg-slate-50 text-sm">
+            <span className="text-slate-500">Mostrando {start + 1}–{Math.min(start + pageSize, all.length)} de {all.length}</span>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" className="h-7" disabled={cur <= 1} onClick={() => setPage(cur - 1)}>Anterior</Button>
+              <span className="text-slate-600">{cur} / {totalPages}</span>
+              <Button size="sm" variant="outline" className="h-7" disabled={cur >= totalPages} onClick={() => setPage(cur + 1)}>Siguiente</Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
