@@ -501,7 +501,7 @@ export async function POST(request, { params }) {
         await audit(profile, 'asignar_trabajador', 'trabajador', trabajador_id, { contrato_id, mandante_id: c.mandante_id });
         return json({ asignacion: (await query('select * from trabajador_asignaciones where asignacion_id=$1', [id])).rows[0] }, 201);
       } catch (e) {
-        if (/uq_trab_mandante_activo/.test(e.message)) return json({ error: 'El trabajador ya tiene un contrato activo con este mandante' }, 409);
+        if (/uq_trab_contrato_activo/.test(e.message)) return json({ error: 'El trabajador ya está asignado a este contrato' }, 409);
         throw e;
       }
     }

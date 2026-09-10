@@ -22,6 +22,26 @@ const LOGO = '/logo-aptiva.png';
 const YEAR = new Date().getFullYear();
 const API = '/api';
 
+// Fechas: formato DD-MM-AAAA (fechas tipo date sin desfase de zona) y fecha/hora en horario de Chile
+const fdate = (d) => {
+  if (!d) return '—';
+  const s = String(d).slice(0, 10);
+  const parts = s.split('-');
+  if (parts.length === 3) return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  return s;
+};
+const fdatetime = (d) => {
+  if (!d) return '—';
+  try {
+    return new Date(d).toLocaleString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch { return String(d); }
+};
+const fdateCL = (d) => {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleDateString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return fdate(d); }
+};
+
+
 const roleLabel = { SUPER_ADMIN_HOLDING: 'Super Admin Holding', ADMIN_EMPRESA: 'Admin Empresa', USUARIO_MANDANTE: 'Usuario Mandante', REVISOR: 'Revisor Documental' };
 
 const semaforo = {
@@ -473,7 +493,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
   const [q, setQ] = useState('');
   const [rf, setRf] = useState({ requisito_id: null, nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 });
 
-  const fmt = (d) => d ? new Date(d).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+  const fmt = (d) => fdateCL(d);
 
   const openNewCat = () => { setCf({ categoria_id: null, nombre: '', descripcion: '' }); setCatOpen(true); };
   const openEditCat = (c) => { setCf({ categoria_id: c.categoria_id, nombre: c.nombre, descripcion: c.descripcion || '' }); setCatOpen(true); };
@@ -668,15 +688,32 @@ function Contratos({ api, openDetail, canManage }) {
     </div>
   );
 }
-function ContratoDetail({ api, id, onBack, canManage, isSuper }) {
+function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
   const [data, reload] = useData(api, `/contratos/${id}`, [id]);
+  const [trabajadores] = useData(api, '/trabajadores');
   const [edit, setEdit] = useState(false);
   const [ef, setEf] = useState({});
+  const [asignOpen, setAsignOpen] = useState(false);
+  const [asig, setAsig] = useState('');
+  const [crearOpen, setCrearOpen] = useState(false);
+  const [nf, setNf] = useState({ rut: '', nombre: '', apellido: '', cargo: '', genero: '', telefono: '', region: '', comuna: '' });
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const c = data.contrato; const pct = c.limite_contingente ? Math.min(100, (c.dotacion / c.limite_contingente) * 100) : 0;
   const dias = c.fecha_termino ? Math.round((new Date(c.fecha_termino) - new Date()) / 86400000) : null;
+  const asignadosIds = new Set((data.trabajadores || []).map((t) => t.trabajador_id));
+  const disponibles = (trabajadores?.trabajadores || []).filter((t) => t.empresa_id === c.empresa_id && !asignadosIds.has(t.trabajador_id));
   const openEdit = () => { setEf({ numero_oc: c.numero_oc, limite_contingente: c.limite_contingente, estado: c.estado, observaciones: c.observaciones || '', fecha_inicio: c.fecha_inicio?.slice(0, 10) || '', fecha_termino: c.fecha_termino?.slice(0, 10) || '' }); setEdit(true); };
   const save = async () => { try { await api(`/contratos/${id}`, { method: 'PUT', body: JSON.stringify({ ...ef, limite_contingente: Number(ef.limite_contingente) }) }); toast.success('Contrato actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
+  const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: asig, contrato_id: id }) }); toast.success('Trabajador asignado'); setAsignOpen(false); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
+  const doCrear = async () => {
+    if (!nf.rut || !nf.nombre || !nf.apellido) { toast.error('RUT, nombre y apellido son obligatorios'); return; }
+    try {
+      const res = await api('/trabajadores', { method: 'POST', body: JSON.stringify({ ...nf, empresa_id: c.empresa_id }) });
+      const tid = res.trabajador?.trabajador_id;
+      if (tid) await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: tid, contrato_id: id }) });
+      toast.success('Trabajador creado y asignado'); setCrearOpen(false); setNf({ rut: '', nombre: '', apellido: '', cargo: '', genero: '', telefono: '', region: '', comuna: '' }); reload();
+    } catch (e) { toast.error(e.message); }
+  };
   return (
     <div>
       <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
@@ -691,8 +728,8 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper }) {
         <Card className="lg:col-span-2"><CardContent className="p-5">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
             <div><p className="text-slate-400">Gerencia</p><p className="font-medium">{c.gerencia || '—'}</p></div>
-            <div><p className="text-slate-400">Inicio</p><p className="font-medium">{c.fecha_inicio?.slice(0, 10) || '—'}</p></div>
-            <div><p className="text-slate-400">Término</p><p className="font-medium">{c.fecha_termino?.slice(0, 10) || '—'}</p></div>
+            <div><p className="text-slate-400">Inicio</p><p className="font-medium">{fdate(c.fecha_inicio)}</p></div>
+            <div><p className="text-slate-400">Término</p><p className="font-medium">{fdate(c.fecha_termino)}</p></div>
             <div><p className="text-slate-400">Días restantes</p><p className="font-medium">{dias ?? '—'}</p></div>
             <div><p className="text-slate-400">Estado</p><Badge className="bg-emerald-100 text-emerald-700">{c.estado}</Badge></div>
           </div>
@@ -703,8 +740,34 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper }) {
           {c.dotacion >= c.limite_contingente && <p className="text-xs text-red-600 mt-2 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />Límite de contingente alcanzado</p>}
         </CardContent></Card>
       </div>
-      <h3 className="font-semibold text-slate-700 mb-2">Trabajadores asignados</h3>
-      <Table columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={data.trabajadores} />
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        <h3 className="font-semibold text-slate-700">Trabajadores asignados</h3>
+        {canManage && <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setAsignOpen(true)}><Plus className="h-4 w-4 mr-1" />Asignar trabajador</Button>
+          <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => setCrearOpen(true)}><Plus className="h-4 w-4 mr-1" />Crear trabajador</Button>
+        </div>}
+      </div>
+      <Table columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={data.trabajadores} onRow={(r) => openDetail && openDetail('trabajador', r.trabajador_id)} />
+
+      <Dialog open={asignOpen} onOpenChange={setAsignOpen}><DialogContent>
+        <DialogHeader><DialogTitle>Asignar trabajador al contrato</DialogTitle><DialogDescription>Solo trabajadores de {c.empresa}. Un trabajador puede estar en varios contratos.</DialogDescription></DialogHeader>
+        <div className="space-y-1.5"><Label>Trabajador</Label>
+          <Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Selecciona un trabajador…" /></SelectTrigger>
+            <SelectContent>{disponibles.length === 0 ? <div className="px-3 py-2 text-sm text-slate-400">No hay trabajadores disponibles de esta empresa</div> : disponibles.map((t) => <SelectItem key={t.trabajador_id} value={t.trabajador_id}>{t.nombre} {t.apellido} · {t.rut}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setAsignOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" disabled={!asig} onClick={doAsignar}>Asignar</Button></DialogFooter>
+      </DialogContent></Dialog>
+
+      <Dialog open={crearOpen} onOpenChange={setCrearOpen}><DialogContent>
+        <DialogHeader><DialogTitle>Crear trabajador y asignar</DialogTitle><DialogDescription>Se creará en {c.empresa} y se asignará a este contrato.</DialogDescription></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={nf.rut} onChange={(e) => setNf({ ...nf, rut: e.target.value })} /></div><div className="space-y-1.5"><Label>Cargo</Label><Input value={nf.cargo} onChange={(e) => setNf({ ...nf, cargo: e.target.value })} /></div></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={nf.nombre} onChange={(e) => setNf({ ...nf, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={nf.apellido} onChange={(e) => setNf({ ...nf, apellido: e.target.value })} /></div></div>
+          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Teléfono</Label><Input value={nf.telefono} onChange={(e) => setNf({ ...nf, telefono: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={nf.comuna} onChange={(e) => setNf({ ...nf, comuna: e.target.value })} /></div></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setCrearOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={doCrear}>Crear y asignar</Button></DialogFooter>
+      </DialogContent></Dialog>
       <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
         <DialogHeader><DialogTitle>Editar contrato</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -790,7 +853,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
                   <div key={d.requisito_id} className="flex items-center justify-between py-2 gap-2">
                     <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
                     <div className="flex items-center gap-2">
-                      {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {String(d.fecha_vencimiento).slice(0, 10)}</span>}
+                      {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
                       <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
                       {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => setUpload({ requisito: d, mandante_id: a.mandante_id })}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
                     </div>
@@ -807,7 +870,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
         <TabsContent value="info"><Card><CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           {[['RUT', t.rut], ['Nombre', `${t.nombre} ${t.apellido}`], ['Cargo', t.cargo], ['Género', t.genero], ['Región', t.region], ['Comuna', t.comuna], ['Teléfono', t.telefono], ['Empresa', t.empresa]].map(([k, v]) => <div key={k}><p className="text-slate-400">{k}</p><p className="font-medium">{v || '—'}</p></div>)}
         </CardContent></Card></TabsContent>
-        <TabsContent value="historial"><Table columns={[{ key: 'created_at', label: 'Fecha', render: (r) => new Date(r.created_at).toLocaleString('es-CL') }, { key: 'accion', label: 'Acción' }, { key: 'usuario', label: 'Usuario' }]} rows={historial} empty="Sin eventos" /></TabsContent>
+        <TabsContent value="historial"><Table columns={[{ key: 'created_at', label: 'Fecha', render: (r) => fdatetime(r.created_at) }, { key: 'accion', label: 'Acción' }, { key: 'usuario', label: 'Usuario' }]} rows={historial} empty="Sin eventos" /></TabsContent>
       </Tabs>
       <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
         <DialogHeader><DialogTitle>Editar trabajador</DialogTitle></DialogHeader>
@@ -920,7 +983,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
                   <div key={d.requisito_id} className="flex items-center justify-between py-2 gap-2">
                     <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
                     <div className="flex items-center gap-2">
-                      {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {String(d.fecha_vencimiento).slice(0, 10)}</span>}
+                      {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
                       <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
                       {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => setUpload({ requisito: d, mandante_id: a.mandante_id })}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
                     </div>
@@ -957,7 +1020,7 @@ function Revision({ api, profile }) {
         { key: 'requisito', label: 'Documento', render: (r) => <span className="font-medium">{r.requisito || r.nombre_archivo}</span> },
         { key: 'trab', label: 'Trabajador', render: (r) => `${r.trab_nombre || ''} ${r.trab_apellido || ''}` },
         { key: 'mandante', label: 'Mandante' },
-        { key: 'fecha_subida', label: 'Cargado', render: (r) => new Date(r.fecha_subida).toLocaleDateString('es-CL') },
+        { key: 'fecha_subida', label: 'Cargado', render: (r) => fdateCL(r.fecha_subida) },
         { key: 'acc', label: 'Acciones', render: (r) => canReview ? <div className="flex gap-2"><Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700" onClick={() => act(r.documento_id, 'aprobado')}><CheckCircle2 className="h-3.5 w-3.5 mr-1" />Aprobar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200" onClick={() => { setRej(r); setObs(''); }}><XCircle className="h-3.5 w-3.5 mr-1" />Rechazar</Button></div> : <span className="text-xs text-slate-400">Sin permiso</span> },
       ]} rows={data?.documentos} empty="No hay documentos pendientes" />
       <Dialog open={!!rej} onOpenChange={() => setRej(null)}><DialogContent>
@@ -976,12 +1039,12 @@ function Vencimientos({ api }) {
   const load = async (d) => { setDias(d); const r = await api(`/vencimientos?dias=${d}`); setRows(r.documentos); };
   return (
     <div>
-      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-blue-600' : ''} onClick={() => load(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Trabajador', 'Mandante', 'Vence', 'Dias'], (rows || []).map((r) => [r.requisito || '', `${r.trab_nombre || ''} ${r.trab_apellido || ''}`, r.mandante || '', String(r.fecha_vencimiento).slice(0, 10), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
+      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-blue-600' : ''} onClick={() => load(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Trabajador', 'Mandante', 'Vence', 'Dias'], (rows || []).map((r) => [r.requisito || '', `${r.trab_nombre || ''} ${r.trab_apellido || ''}`, r.mandante || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
       <Table columns={[
         { key: 'requisito', label: 'Documento' },
         { key: 'trab', label: 'Trabajador', render: (r) => `${r.trab_nombre || ''} ${r.trab_apellido || ''}` },
         { key: 'mandante', label: 'Mandante' },
-        { key: 'fecha_vencimiento', label: 'Vence', render: (r) => String(r.fecha_vencimiento).slice(0, 10) },
+        { key: 'fecha_vencimiento', label: 'Vence', render: (r) => fdate(r.fecha_vencimiento) },
         { key: 'dias_restantes', label: 'Días', render: (r) => <Badge className={r.dias_restantes < 0 ? 'bg-red-100 text-red-700' : r.dias_restantes <= 15 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100'}>{r.dias_restantes < 0 ? 'Vencido' : `${r.dias_restantes} días`}</Badge> },
       ]} rows={rows} empty="Sin vencimientos en el rango" />
     </div>
@@ -1042,7 +1105,7 @@ function Auditoria({ api }) {
     <div>
       <PageHead title="Auditoría" sub="Trazabilidad de operaciones importantes" />
       <Table columns={[
-        { key: 'created_at', label: 'Fecha', render: (r) => new Date(r.created_at).toLocaleString('es-CL') },
+        { key: 'created_at', label: 'Fecha', render: (r) => fdatetime(r.created_at) },
         { key: 'usuario', label: 'Usuario' }, { key: 'accion', label: 'Acción', render: (r) => <Badge variant="secondary">{r.accion}</Badge> },
         { key: 'entidad', label: 'Entidad' },
       ]} rows={data?.eventos} empty="Sin eventos" />
