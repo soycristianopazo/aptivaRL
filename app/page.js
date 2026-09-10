@@ -1721,7 +1721,7 @@ function Desvinculaciones({ api }) {
         { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre}</span> },
         { key: 'cargo', label: 'Cargo' },
         { key: 'causal', label: 'Causal', render: (r) => <span className="text-xs">{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-blue-700 border-0 mr-1">Traslado</Badge> : null}{r.causal}</span> },
-        { key: 'archivo', label: 'Archivo', render: (r) => <Button size="sm" variant="outline" className="h-7" onClick={() => verArchivo(r)}><Download className="h-3.5 w-3.5 mr-1" />Archivo</Button> },
+        { key: 'archivo', label: 'Archivo', render: (r) => <Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => verArchivo(r)}><Eye className="h-3.5 w-3.5 mr-1" />VER</Button> },
         { key: 'created_at', label: 'Fecha registro', render: (r) => fdatetime(r.created_at) },
       ]} rows={rows} />
     </div>
