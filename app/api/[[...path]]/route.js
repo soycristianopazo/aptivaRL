@@ -520,11 +520,18 @@ export async function PUT(request, { params }) {
       return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [p[1]])).rows[0] });
     }
     if (p[0] === 'requisitos' && p[1]) {
-      const { cols, vals, i } = build(['nombre', 'descripcion', 'obligatorio', 'tiene_vencimiento', 'dias_alerta', 'orden', 'activo', 'categoria_id']);
+      const { cols, vals, i } = build(['nombre', 'descripcion', 'obligatorio', 'tiene_vencimiento', 'transversal', 'dias_alerta', 'orden', 'activo', 'categoria_id']);
       if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
       vals.push(p[1]);
       await query(`update requisitos_documentales set ${cols.join(', ')}, updated_at=now() where requisito_id=$${i}`, vals);
       return json({ requisito: (await query('select * from requisitos_documentales where requisito_id=$1', [p[1]])).rows[0] });
+    }
+    if (p[0] === 'categorias' && p[1]) {
+      const { cols, vals, i } = build(['nombre', 'descripcion', 'orden', 'activo']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      await query(`update categorias_documentales set ${cols.join(', ')} where categoria_id=$${i}`, vals);
+      return json({ categoria: (await query('select * from categorias_documentales where categoria_id=$1', [p[1]])).rows[0] });
     }
     return json({ error: 'No encontrado' }, 404);
   } catch (e) { return json({ error: e.message }, 500); }

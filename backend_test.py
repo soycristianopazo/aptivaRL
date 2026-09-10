@@ -1137,7 +1137,344 @@ def test_notificaciones():
     return log_test("Get notificaciones", True, f"vencidos={len(data['vencidos'])}, por_vencer={len(data['por_vencer'])}, pendientes_revision={data['pendientes_revision']}, total={data['total']}")
 
 # ============================================================================
-# TEST 13: Regression Tests (Phase 4)
+# TEST 13: PHASE 5 - Edit Categorias & Requisitos (including transversal)
+# ============================================================================
+
+test_categoria_id = None
+test_requisito_id = None
+
+def test_phase5_get_mandante_with_categorias_requisitos():
+    """Test 13a: GET /api/mandantes/:id -> returns categorias and requisitos arrays"""
+    global test_categoria_id, test_requisito_id
+    print("\n=== Test 13a: PHASE 5 - Get Mandante with Categorias & Requisitos ===")
+    
+    if not seeded_mandante_id:
+        return log_test("Get mandante with categorias/requisitos", False, "No mandante ID available")
+    
+    resp = make_request("GET", f"/mandantes/{seeded_mandante_id}", token=tokens["admin"])
+    
+    if not resp:
+        return log_test("Get mandante with categorias/requisitos", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Get mandante with categorias/requisitos", False, f"Expected 200, got {resp.status_code}")
+    
+    data = resp.json()
+    
+    # Verify categorias array exists
+    if "categorias" not in data:
+        return log_test("Get mandante with categorias/requisitos", False, "Missing categorias field")
+    
+    categorias = data["categorias"]
+    if not isinstance(categorias, list):
+        return log_test("Get mandante with categorias/requisitos", False, f"categorias should be array, got {type(categorias)}")
+    
+    # Verify requisitos array exists
+    if "requisitos" not in data:
+        return log_test("Get mandante with categorias/requisitos", False, "Missing requisitos field")
+    
+    requisitos = data["requisitos"]
+    if not isinstance(requisitos, list):
+        return log_test("Get mandante with categorias/requisitos", False, f"requisitos should be array, got {type(requisitos)}")
+    
+    # Store IDs for later tests
+    if categorias:
+        test_categoria_id = categorias[0]["categoria_id"]
+    if requisitos:
+        test_requisito_id = requisitos[0]["requisito_id"]
+    
+    # Verify categoria structure
+    if categorias:
+        cat = categorias[0]
+        required_cat_fields = ["categoria_id", "nombre", "descripcion", "docs_count"]
+        missing_cat = [f for f in required_cat_fields if f not in cat]
+        if missing_cat:
+            return log_test("Get mandante with categorias/requisitos", False, f"Categoria missing fields: {missing_cat}")
+    
+    # Verify requisito structure
+    if requisitos:
+        req = requisitos[0]
+        required_req_fields = ["requisito_id", "categoria_id", "nombre", "descripcion", "obligatorio", "tiene_vencimiento", "transversal", "dias_alerta"]
+        missing_req = [f for f in required_req_fields if f not in req]
+        if missing_req:
+            return log_test("Get mandante with categorias/requisitos", False, f"Requisito missing fields: {missing_req}")
+    
+    return log_test("Get mandante with categorias/requisitos", True, f"Found {len(categorias)} categorias and {len(requisitos)} requisitos")
+
+def test_phase5_edit_categoria():
+    """Test 13b: PUT /api/categorias/:id as admin -> 200 and updates nombre/descripcion"""
+    print("\n=== Test 13b: PHASE 5 - Edit Categoria (admin) ===")
+    
+    if not test_categoria_id:
+        return log_test("Edit categoria", False, "No categoria ID available")
+    
+    # Update categoria
+    resp = make_request("PUT", f"/categorias/{test_categoria_id}", token=tokens["admin"], data={
+        "nombre": "Cat Editada QA",
+        "descripcion": "Desc editada QA"
+    })
+    
+    if not resp:
+        return log_test("Edit categoria", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Edit categoria", False, f"Expected 200, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    if "categoria" not in data:
+        return log_test("Edit categoria", False, f"Missing categoria field: {data}")
+    
+    categoria = data["categoria"]
+    if categoria.get("nombre") != "Cat Editada QA" or categoria.get("descripcion") != "Desc editada QA":
+        return log_test("Edit categoria", False, f"Values not updated correctly: nombre={categoria.get('nombre')}, descripcion={categoria.get('descripcion')}")
+    
+    return log_test("Edit categoria", True, f"Updated: nombre={categoria['nombre']}, descripcion={categoria['descripcion']}")
+
+def test_phase5_verify_categoria_edit():
+    """Test 13c: GET /api/mandantes/:id -> verify categoria changes persisted"""
+    print("\n=== Test 13c: PHASE 5 - Verify Categoria Edit Persisted ===")
+    
+    if not seeded_mandante_id or not test_categoria_id:
+        return log_test("Verify categoria edit", False, "No mandante or categoria ID available")
+    
+    resp = make_request("GET", f"/mandantes/{seeded_mandante_id}", token=tokens["admin"])
+    
+    if not resp:
+        return log_test("Verify categoria edit", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Verify categoria edit", False, f"Expected 200, got {resp.status_code}")
+    
+    data = resp.json()
+    categorias = data.get("categorias", [])
+    
+    # Find the edited categoria
+    edited_cat = None
+    for cat in categorias:
+        if cat["categoria_id"] == test_categoria_id:
+            edited_cat = cat
+            break
+    
+    if not edited_cat:
+        return log_test("Verify categoria edit", False, f"Edited categoria not found in mandante detail")
+    
+    if edited_cat.get("nombre") != "Cat Editada QA" or edited_cat.get("descripcion") != "Desc editada QA":
+        return log_test("Verify categoria edit", False, f"Changes not persisted: nombre={edited_cat.get('nombre')}, descripcion={edited_cat.get('descripcion')}")
+    
+    return log_test("Verify categoria edit", True, f"Changes persisted: nombre={edited_cat['nombre']}, descripcion={edited_cat['descripcion']}")
+
+def test_phase5_edit_requisito():
+    """Test 13d: PUT /api/requisitos/:id as admin -> 200 and updates fields including transversal"""
+    print("\n=== Test 13d: PHASE 5 - Edit Requisito (admin) ===")
+    
+    if not test_requisito_id:
+        return log_test("Edit requisito", False, "No requisito ID available")
+    
+    # Update requisito
+    resp = make_request("PUT", f"/requisitos/{test_requisito_id}", token=tokens["admin"], data={
+        "obligatorio": False,
+        "tiene_vencimiento": False,
+        "transversal": True,
+        "descripcion": "Doc editado QA"
+    })
+    
+    if not resp:
+        return log_test("Edit requisito", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Edit requisito", False, f"Expected 200, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    if "requisito" not in data:
+        return log_test("Edit requisito", False, f"Missing requisito field: {data}")
+    
+    requisito = data["requisito"]
+    if requisito.get("obligatorio") != False or requisito.get("tiene_vencimiento") != False or requisito.get("transversal") != True or requisito.get("descripcion") != "Doc editado QA":
+        return log_test("Edit requisito", False, f"Values not updated correctly: obligatorio={requisito.get('obligatorio')}, tiene_vencimiento={requisito.get('tiene_vencimiento')}, transversal={requisito.get('transversal')}, descripcion={requisito.get('descripcion')}")
+    
+    return log_test("Edit requisito", True, f"Updated: obligatorio={requisito['obligatorio']}, tiene_vencimiento={requisito['tiene_vencimiento']}, transversal={requisito['transversal']}, descripcion={requisito['descripcion']}")
+
+def test_phase5_verify_requisito_edit():
+    """Test 13e: GET /api/mandantes/:id -> verify requisito changes persisted"""
+    print("\n=== Test 13e: PHASE 5 - Verify Requisito Edit Persisted ===")
+    
+    if not seeded_mandante_id or not test_requisito_id:
+        return log_test("Verify requisito edit", False, "No mandante or requisito ID available")
+    
+    resp = make_request("GET", f"/mandantes/{seeded_mandante_id}", token=tokens["admin"])
+    
+    if not resp:
+        return log_test("Verify requisito edit", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Verify requisito edit", False, f"Expected 200, got {resp.status_code}")
+    
+    data = resp.json()
+    requisitos = data.get("requisitos", [])
+    
+    # Find the edited requisito
+    edited_req = None
+    for req in requisitos:
+        if req["requisito_id"] == test_requisito_id:
+            edited_req = req
+            break
+    
+    if not edited_req:
+        return log_test("Verify requisito edit", False, f"Edited requisito not found in mandante detail")
+    
+    if edited_req.get("obligatorio") != False or edited_req.get("tiene_vencimiento") != False or edited_req.get("transversal") != True or edited_req.get("descripcion") != "Doc editado QA":
+        return log_test("Verify requisito edit", False, f"Changes not persisted: obligatorio={edited_req.get('obligatorio')}, tiene_vencimiento={edited_req.get('tiene_vencimiento')}, transversal={edited_req.get('transversal')}, descripcion={edited_req.get('descripcion')}")
+    
+    return log_test("Verify requisito edit", True, f"Changes persisted: obligatorio={edited_req['obligatorio']}, tiene_vencimiento={edited_req['tiene_vencimiento']}, transversal={edited_req['transversal']}, descripcion={edited_req['descripcion']}")
+
+def test_phase5_edit_categoria_as_mandante():
+    """Test 13f: PUT /api/categorias/:id as mandante (USUARIO_MANDANTE) -> 403"""
+    print("\n=== Test 13f: PHASE 5 - Edit Categoria (mandante - should fail) ===")
+    
+    if not test_categoria_id:
+        return log_test("Edit categoria (mandante)", False, "No categoria ID available")
+    
+    resp = make_request("PUT", f"/categorias/{test_categoria_id}", token=tokens["mandante"], data={
+        "nombre": "Unauthorized Edit"
+    })
+    
+    if not resp:
+        return log_test("Edit categoria (mandante)", False, "Request failed")
+    
+    if resp.status_code == 403:
+        return log_test("Edit categoria (mandante)", True, "Correctly rejected with 403")
+    else:
+        return log_test("Edit categoria (mandante)", False, f"Expected 403, got {resp.status_code}")
+
+def test_phase5_edit_requisito_as_mandante():
+    """Test 13g: PUT /api/requisitos/:id as mandante (USUARIO_MANDANTE) -> 403"""
+    print("\n=== Test 13g: PHASE 5 - Edit Requisito (mandante - should fail) ===")
+    
+    if not test_requisito_id:
+        return log_test("Edit requisito (mandante)", False, "No requisito ID available")
+    
+    resp = make_request("PUT", f"/requisitos/{test_requisito_id}", token=tokens["mandante"], data={
+        "descripcion": "Unauthorized Edit"
+    })
+    
+    if not resp:
+        return log_test("Edit requisito (mandante)", False, "Request failed")
+    
+    if resp.status_code == 403:
+        return log_test("Edit requisito (mandante)", True, "Correctly rejected with 403")
+    else:
+        return log_test("Edit requisito (mandante)", False, f"Expected 403, got {resp.status_code}")
+
+def test_phase5_regression_create_categoria():
+    """Test 13h: POST /api/categorias (admin) -> 201 (regression)"""
+    global test_categoria_id
+    print("\n=== Test 13h: PHASE 5 Regression - Create Categoria ===")
+    
+    if not seeded_mandante_id:
+        return log_test("Regression create categoria", False, "No mandante ID available")
+    
+    resp = make_request("POST", "/categorias", token=tokens["admin"], data={
+        "mandante_id": seeded_mandante_id,
+        "tipo_recurso": "trabajador",
+        "nombre": "QA Cat",
+        "descripcion": "QA"
+    })
+    
+    if not resp:
+        return log_test("Regression create categoria", False, "Request failed")
+    
+    if resp.status_code != 201:
+        return log_test("Regression create categoria", False, f"Expected 201, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    if "categoria" in data and "categoria_id" in data["categoria"]:
+        # Store the newly created categoria_id for use in edit tests
+        if not test_categoria_id:
+            test_categoria_id = data["categoria"]["categoria_id"]
+        return log_test("Regression create categoria", True, f"Created: {data['categoria']['nombre']}, ID: {data['categoria']['categoria_id']}")
+    else:
+        return log_test("Regression create categoria", False, f"Unexpected response: {data}")
+
+def test_phase5_regression_create_requisito():
+    """Test 13i: POST /api/requisitos (admin) -> 201 (regression)"""
+    global test_requisito_id
+    print("\n=== Test 13i: PHASE 5 Regression - Create Requisito ===")
+    
+    if not seeded_mandante_id:
+        return log_test("Regression create requisito", False, "No mandante ID available")
+    
+    # Use test_categoria_id if available, otherwise use None (requisito can be created without categoria)
+    resp = make_request("POST", "/requisitos", token=tokens["admin"], data={
+        "mandante_id": seeded_mandante_id,
+        "tipo_recurso": "trabajador",
+        "categoria_id": test_categoria_id,
+        "nombre": "QA Doc",
+        "obligatorio": True,
+        "tiene_vencimiento": True,
+        "transversal": False,
+        "dias_alerta": 30
+    })
+    
+    if not resp:
+        return log_test("Regression create requisito", False, "Request failed")
+    
+    if resp.status_code != 201:
+        return log_test("Regression create requisito", False, f"Expected 201, got {resp.status_code}: {resp.text}")
+    
+    data = resp.json()
+    if "requisito" in data and "requisito_id" in data["requisito"]:
+        # Store the newly created requisito_id for use in edit tests
+        if not test_requisito_id:
+            test_requisito_id = data["requisito"]["requisito_id"]
+        return log_test("Regression create requisito", True, f"Created: {data['requisito']['nombre']}, ID: {data['requisito']['requisito_id']}")
+    else:
+        return log_test("Regression create requisito", False, f"Unexpected response: {data}")
+
+def test_phase5_regression_health():
+    """Test 13j: GET /api/health -> 200 (regression)"""
+    print("\n=== Test 13j: PHASE 5 Regression - Health Check ===")
+    resp = make_request("GET", "/health")
+    
+    if not resp:
+        return log_test("Regression health", False, "Request failed")
+    
+    if resp.status_code != 200:
+        return log_test("Regression health", False, f"Expected 200, got {resp.status_code}")
+    
+    data = resp.json()
+    if data.get("ok") == True:
+        return log_test("Regression health", True, f"Response: {data}")
+    else:
+        return log_test("Regression health", False, f"Unexpected response: {data}")
+
+def test_phase5_regression_login_all_roles():
+    """Test 13k: Login all 4 roles still works (regression)"""
+    print("\n=== Test 13k: PHASE 5 Regression - Login All Roles ===")
+    all_passed = True
+    
+    for user_key, user_data in USERS.items():
+        resp = make_request("POST", "/auth/login", data={
+            "email": user_data["email"],
+            "password": user_data["password"]
+        })
+        
+        if not resp or resp.status_code != 200:
+            log_test(f"Regression login {user_key}", False, f"Login failed")
+            all_passed = False
+            continue
+        
+        data = resp.json()
+        if "token" not in data or "profile" not in data:
+            log_test(f"Regression login {user_key}", False, f"Missing token or profile")
+            all_passed = False
+            continue
+        
+        log_test(f"Regression login {user_key}", True, f"Role: {data['profile']['role_codigo']}")
+    
+    return all_passed
+
+# ============================================================================
+# TEST 14: Regression Tests (Phase 4)
 # ============================================================================
 
 def test_regression_login_all_roles():
@@ -1391,7 +1728,24 @@ def main():
     # Test 12: Notificaciones (Phase 4)
     results.append(test_notificaciones())
     
-    # Test 13: Regression Tests (Phase 4)
+    # Test 13: PHASE 5 - Edit Categorias & Requisitos
+    results.append(test_phase5_get_mandante_with_categorias_requisitos())
+    # Create categoria and requisito first (regression tests that also set up data for edit tests)
+    results.append(test_phase5_regression_create_categoria())
+    results.append(test_phase5_regression_create_requisito())
+    # Now test editing
+    results.append(test_phase5_edit_categoria())
+    results.append(test_phase5_verify_categoria_edit())
+    results.append(test_phase5_edit_requisito())
+    results.append(test_phase5_verify_requisito_edit())
+    # Test authorization
+    results.append(test_phase5_edit_categoria_as_mandante())
+    results.append(test_phase5_edit_requisito_as_mandante())
+    # Other regression tests
+    results.append(test_phase5_regression_health())
+    results.append(test_phase5_regression_login_all_roles())
+    
+    # Test 14: Regression Tests (Phase 4)
     results.append(test_regression_login_all_roles())
     results.append(test_regression_mandantes())
     results.append(test_regression_trabajadores())

@@ -395,18 +395,36 @@ function SiNo({ on }) {
 
 function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload, mandante }) {
   const [selCat, setSelCat] = useState(null);
-  const [newCat, setNewCat] = useState('');
-  const [newCatDesc, setNewCatDesc] = useState('');
   const [catOpen, setCatOpen] = useState(false);
+  const [cf, setCf] = useState({ categoria_id: null, nombre: '', descripcion: '' });
   const [reqOpen, setReqOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [rf, setRf] = useState({ nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 });
+  const [rf, setRf] = useState({ requisito_id: null, nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 });
 
   const fmt = (d) => d ? new Date(d).toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
 
-  const addCat = async () => { if (!newCat) return; try { await api('/categorias', { method: 'POST', body: JSON.stringify({ mandante_id: id, tipo_recurso: 'trabajador', nombre: newCat, descripcion: newCatDesc || newCat }) }); toast.success('Categoría creada'); setNewCat(''); setNewCatDesc(''); setCatOpen(false); reload(); } catch (e) { toast.error(e.message); } };
+  const openNewCat = () => { setCf({ categoria_id: null, nombre: '', descripcion: '' }); setCatOpen(true); };
+  const openEditCat = (c) => { setCf({ categoria_id: c.categoria_id, nombre: c.nombre, descripcion: c.descripcion || '' }); setCatOpen(true); };
+  const saveCat = async () => {
+    if (!cf.nombre) return;
+    try {
+      if (cf.categoria_id) { await api(`/categorias/${cf.categoria_id}`, { method: 'PUT', body: JSON.stringify({ nombre: cf.nombre, descripcion: cf.descripcion }) }); toast.success('Categoría actualizada'); }
+      else { await api('/categorias', { method: 'POST', body: JSON.stringify({ mandante_id: id, tipo_recurso: 'trabajador', nombre: cf.nombre, descripcion: cf.descripcion || cf.nombre }) }); toast.success('Categoría creada'); }
+      setCatOpen(false); reload();
+    } catch (e) { toast.error(e.message); }
+  };
   const delCat = async (cid) => { try { await api(`/categorias/${cid}`, { method: 'DELETE' }); toast.success('Categoría eliminada'); reload(); } catch (e) { toast.error(e.message); } };
-  const saveReq = async () => { try { await api('/requisitos', { method: 'POST', body: JSON.stringify({ ...rf, mandante_id: id, tipo_recurso: 'trabajador', categoria_id: selCat.categoria_id, dias_alerta: Number(rf.dias_alerta) }) }); toast.success('Documento agregado'); setReqOpen(false); setRf({ nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 }); reload(); } catch (e) { toast.error(e.message); } };
+
+  const openNewReq = () => { setRf({ requisito_id: null, nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 }); setReqOpen(true); };
+  const openEditReq = (r) => { setRf({ requisito_id: r.requisito_id, nombre: r.nombre, descripcion: r.descripcion || '', obligatorio: r.obligatorio, tiene_vencimiento: r.tiene_vencimiento, transversal: r.transversal, dias_alerta: r.dias_alerta || 30 }); setReqOpen(true); };
+  const saveReq = async () => {
+    try {
+      const payload = { nombre: rf.nombre, descripcion: rf.descripcion, obligatorio: rf.obligatorio, tiene_vencimiento: rf.tiene_vencimiento, transversal: rf.transversal, dias_alerta: Number(rf.dias_alerta) };
+      if (rf.requisito_id) { await api(`/requisitos/${rf.requisito_id}`, { method: 'PUT', body: JSON.stringify(payload) }); toast.success('Documento actualizado'); }
+      else { await api('/requisitos', { method: 'POST', body: JSON.stringify({ ...payload, mandante_id: id, tipo_recurso: 'trabajador', categoria_id: selCat.categoria_id }) }); toast.success('Documento agregado'); }
+      setReqOpen(false); reload();
+    } catch (e) { toast.error(e.message); }
+  };
   const delReq = async (rid) => { try { await api(`/requisitos/${rid}`, { method: 'DELETE' }); toast.success('Documento eliminado'); reload(); } catch (e) { toast.error(e.message); } };
 
   // Level 2: documents of a selected category
@@ -422,7 +440,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
         </div>
         <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <Input className="h-9 w-64" placeholder="Buscar documento…" value={q} onChange={(e) => setQ(e.target.value)} />
-          {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={() => setReqOpen(true)}><Plus className="h-4 w-4 mr-1" />Agregar</Button>}
+          {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={openNewReq}><Plus className="h-4 w-4 mr-1" />Agregar</Button>}
         </div>
         <Table columns={[
           { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium">{r.nombre}</span> },
@@ -430,11 +448,16 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
           { key: 'obligatorio', label: 'Requerido', render: (r) => <SiNo on={r.obligatorio} /> },
           { key: 'tiene_vencimiento', label: 'Indefinido', render: (r) => <SiNo on={!r.tiene_vencimiento} /> },
           { key: 'transversal', label: 'Transversal', render: (r) => <SiNo on={r.transversal} /> },
-          { key: 'x', label: 'Acción', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delReq(r.requisito_id)}>Eliminar</Button> : null },
+          { key: 'x', label: 'Acción', render: (r) => canManage ? (
+            <div className="flex gap-1">
+              <Button size="sm" className="h-7 bg-amber-400 hover:bg-amber-500 text-white" onClick={() => openEditReq(r)}>Editar</Button>
+              <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delReq(r.requisito_id)}>Eliminar</Button>
+            </div>
+          ) : null },
         ]} rows={docs} empty="Sin documentos en esta categoría" />
 
         <Dialog open={reqOpen} onOpenChange={setReqOpen}><DialogContent>
-          <DialogHeader><DialogTitle>Agregar documento</DialogTitle><DialogDescription>Categoría: {selCat.nombre}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>{rf.requisito_id ? 'Editar documento' : 'Agregar documento'}</DialogTitle><DialogDescription>Categoría: {selCat.nombre}</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5"><Label>Nombre</Label><Input value={rf.nombre} onChange={(e) => setRf({ ...rf, nombre: e.target.value })} /></div>
             <div className="space-y-1.5"><Label>Descripción</Label><Input value={rf.descripcion} onChange={(e) => setRf({ ...rf, descripcion: e.target.value })} /></div>
@@ -445,7 +468,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
             </div>
             {rf.tiene_vencimiento && <div className="space-y-1.5"><Label>Días de alerta antes de vencer</Label><Input type="number" value={rf.dias_alerta} onChange={(e) => setRf({ ...rf, dias_alerta: e.target.value })} /></div>}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setReqOpen(false)}>Cancelar</Button><Button className="bg-emerald-500 hover:bg-emerald-600" onClick={saveReq}>Agregar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setReqOpen(false)}>Cancelar</Button><Button className="bg-emerald-500 hover:bg-emerald-600" onClick={saveReq}>{rf.requisito_id ? 'Guardar' : 'Agregar'}</Button></DialogFooter>
         </DialogContent></Dialog>
       </div>
     );
@@ -457,7 +480,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
     <div>
       <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <Input className="h-9 w-64" placeholder="Buscar categoría…" value={q} onChange={(e) => setQ(e.target.value)} />
-        {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={() => setCatOpen(true)}><Plus className="h-4 w-4 mr-1" />Agregar Categoría</Button>}
+        {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={openNewCat}><Plus className="h-4 w-4 mr-1" />Agregar Categoría</Button>}
       </div>
       <Table columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium">{r.nombre}</span> },
@@ -467,18 +490,19 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
         { key: 'x', label: 'Acción', render: (r) => (
           <div className="flex gap-2">
             <Button size="sm" className="h-7 bg-blue-500 hover:bg-blue-600" onClick={() => { setSelCat(r); setQ(''); }}>Definir Documentos</Button>
+            {canManage && <Button size="sm" className="h-7 bg-amber-400 hover:bg-amber-500 text-white" onClick={() => openEditCat(r)}>Editar</Button>}
             {canManage && <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delCat(r.categoria_id)}>Eliminar</Button>}
           </div>
         ) },
       ]} rows={cats} empty="Sin categorías configuradas" />
 
       <Dialog open={catOpen} onOpenChange={setCatOpen}><DialogContent>
-        <DialogHeader><DialogTitle>Nueva categoría</DialogTitle><DialogDescription>Estándar documental de {mandante.razon_social}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{cf.categoria_id ? 'Editar categoría' : 'Nueva categoría'}</DialogTitle><DialogDescription>Estándar documental de {mandante.razon_social}</DialogDescription></DialogHeader>
         <div className="space-y-3">
-          <div className="space-y-1.5"><Label>Nombre</Label><Input value={newCat} onChange={(e) => setNewCat(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Descripción</Label><Input value={newCatDesc} onChange={(e) => setNewCatDesc(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Nombre</Label><Input value={cf.nombre} onChange={(e) => setCf({ ...cf, nombre: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Descripción</Label><Input value={cf.descripcion} onChange={(e) => setCf({ ...cf, descripcion: e.target.value })} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setCatOpen(false)}>Cancelar</Button><Button className="bg-emerald-500 hover:bg-emerald-600" onClick={addCat}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setCatOpen(false)}>Cancelar</Button><Button className="bg-emerald-500 hover:bg-emerald-600" onClick={saveCat}>{cf.categoria_id ? 'Guardar' : 'Crear'}</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
