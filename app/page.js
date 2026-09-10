@@ -1715,14 +1715,14 @@ function Desvinculaciones({ api }) {
         action={<Button variant="outline" onClick={() => csvDownload('personal_finiquitado.csv', ['Empresa', 'Contrato', 'RUT', 'Nombre', 'Cargo', 'Causal', 'Tipo', 'Fecha'], (rows || []).map((r) => [r.empresa_nombre || '', r.contrato_numero || '', r.rut || '', r.nombre || '', r.cargo || '', r.causal || '', r.tipo, fdatetime(r.created_at)]))} disabled={!rows}><Download className="h-4 w-4 mr-1" />Exportar</Button>} />
       <div className="mb-3 max-w-sm"><div className="relative"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar por nombre, RUT, contrato, causal…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
       <Table pageSize={15} empty="Sin desvinculaciones registradas" columns={[
-        { key: 'empresa_nombre', label: 'Empresa' },
-        { key: 'contrato_numero', label: 'Contrato' },
-        { key: 'rut', label: 'RUT' },
-        { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre}</span> },
-        { key: 'cargo', label: 'Cargo' },
-        { key: 'causal', label: 'Causal', render: (r) => <span className="text-xs">{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-blue-700 border-0 mr-1">Traslado</Badge> : null}{r.causal}</span> },
-        { key: 'archivo', label: 'Archivo', render: (r) => <Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => verArchivo(r)}><Eye className="h-3.5 w-3.5 mr-1" />VER</Button> },
-        { key: 'created_at', label: 'Fecha registro', render: (r) => fdatetime(r.created_at) },
+        { key: 'empresa_nombre', label: 'Empresa', render: (r) => <span className="block max-w-[150px] truncate text-slate-600" title={r.empresa_nombre}>{r.empresa_nombre}</span> },
+        { key: 'contrato_numero', label: 'Contrato', render: (r) => <span className="tabular-nums" title={r.contrato_numero}>{(r.contrato_numero || '').replace(/^\s*(Contrato|OC|PO|N°)\s+/i, '')}</span> },
+        { key: 'rut', label: 'RUT', render: (r) => <span className="tabular-nums">{r.rut}</span> },
+        { key: 'nombre', label: 'Nombre', render: (r) => <span className="block max-w-[200px] truncate font-medium text-slate-800" title={r.nombre}>{r.nombre}</span> },
+        { key: 'cargo', label: 'Cargo', render: (r) => <span className="block max-w-[130px] truncate text-slate-600" title={r.cargo}>{r.cargo}</span> },
+        { key: 'causal', label: 'Causal', render: (r) => <div className="flex items-center gap-1 max-w-[260px]" title={r.causal}>{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-blue-700 border-0 shrink-0">Traslado</Badge> : null}<span className="truncate text-xs text-slate-600">{r.causal}</span></div> },
+        { key: 'archivo', label: '', render: (r) => <Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => verArchivo(r)}><Eye className="h-3.5 w-3.5 mr-1" />VER</Button> },
+        { key: 'created_at', label: 'Fecha', render: (r) => <span className="text-slate-500 tabular-nums whitespace-nowrap">{fdatetime(r.created_at)}</span> },
       ]} rows={rows} />
     </div>
   );
