@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy,
 } from 'lucide-react';
 
 const LOGO = '/logo-aptiva.png';
@@ -1353,6 +1353,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const [contratos] = useData(api, '/contratos');
   const [upload, setUpload] = useState(null);
   const [edit, setEdit] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const [ef, setEf] = useState({});
   const [asig, setAsig] = useState('');
   if (!data) return <p className="text-slate-400">Cargando…</p>;
@@ -1369,7 +1370,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
         icon={<span className="text-xl font-bold">{t.nombre?.charAt(0)}</span>}
         title={`${t.nombre} ${t.apellido}`}
         meta={[{ label: 'RUT', value: t.rut }, { label: 'Cargo', value: t.cargo || '—' }, { label: 'Empresa', value: t.empresa }]}
-        actions={canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button>{isSuper && <CascadeDelete api={api} tipo="trabajadores" id={id} nombre={`${t.nombre} ${t.apellido}`} onDone={onBack} />}</>}
+        actions={<><Button variant="outline" onClick={() => setQrOpen(true)}><QrCode className="h-4 w-4 mr-1" />QR</Button>{canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button>{isSuper && <CascadeDelete api={api} tipo="trabajadores" id={id} nombre={`${t.nombre} ${t.apellido}`} onDone={onBack} />}</>}</>}
       />
       {acreditacion.length > 0 && <div className="flex gap-3 flex-wrap mb-4 -mt-2">{acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}</div>}
       <Tabs defaultValue="documentacion">
@@ -1402,9 +1403,53 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
         <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
       {upload && <UploadDialog api={api} recurso_tipo="trabajador" recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
+      {qrOpen && <QRDialog id={id} titulo={`${t.nombre} ${t.apellido}`} rut={t.rut} onClose={() => setQrOpen(false)} />}
     </div>
   );
 }
+
+function QRDialog({ id, titulo, rut, onClose }) {
+  const [img, setImg] = useState(null);
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    let alive = true;
+    const u = `${window.location.origin}/validar/${id}`;
+    setUrl(u);
+    (async () => {
+      try {
+        const QR = (await import('qrcode')).default;
+        const dataUrl = await QR.toDataURL(u, { width: 320, margin: 2, color: { dark: '#0f172a', light: '#ffffff' } });
+        if (alive) setImg(dataUrl);
+      } catch (e) { /* ignore */ }
+    })();
+    return () => { alive = false; };
+  }, [id]);
+  const copy = async () => { try { await navigator.clipboard.writeText(url); toast.success('Enlace copiado'); } catch { toast.error('No se pudo copiar'); } };
+  return (
+    <Dialog open onOpenChange={onClose}><DialogContent className="max-w-sm">
+      <DialogHeader><DialogTitle>Expediente QR</DialogTitle><DialogDescription>Escanea para validar en terreno · {titulo}</DialogDescription></DialogHeader>
+      <div className="flex flex-col items-center gap-3">
+        <div className="rounded-xl border bg-white p-3">
+          {img ? <img src={img} alt="QR expediente" className="h-56 w-56" /> : <div className="h-56 w-56 flex items-center justify-center text-slate-400 text-sm">Generando…</div>}
+        </div>
+        <div className="text-center">
+          <p className="text-sm font-medium text-slate-700">{titulo}</p>
+          <p className="text-xs text-slate-400">{rut}</p>
+        </div>
+        <div className="w-full flex items-center gap-2 bg-slate-50 border rounded-lg px-2 py-1.5">
+          <span className="text-xs text-slate-500 truncate flex-1">{url}</span>
+          <button onClick={copy} className="text-slate-400 hover:text-slate-700 shrink-0"><Copy className="h-4 w-4" /></button>
+        </div>
+      </div>
+      <DialogFooter className="gap-2">
+        <Button variant="outline" onClick={onClose}>Cerrar</Button>
+        {url && <a href={url} target="_blank" rel="noreferrer"><Button variant="outline"><ExternalLink className="h-4 w-4 mr-1" />Abrir</Button></a>}
+        {img && <a href={img} download={`QR_${(rut || id)}.png`}><Button className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
+      </DialogFooter>
+    </DialogContent></Dialog>
+  );
+}
+
 
 function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, onClose, onDone }) {
   const [file, setFile] = useState(null);
@@ -1539,22 +1584,82 @@ function Revision({ api, profile }) {
     </div>
   );
 }
+function VencKpi({ label, value, accent, icon: Icon }) {
+  const map = {
+    red: 'from-red-500/10 to-red-500/0 text-red-600 ring-red-100',
+    orange: 'from-orange-500/10 to-orange-500/0 text-orange-600 ring-orange-100',
+    amber: 'from-amber-500/10 to-amber-500/0 text-amber-600 ring-amber-100',
+    slate: 'from-slate-500/10 to-slate-500/0 text-slate-600 ring-slate-100',
+  };
+  return (
+    <Card className="shadow-sm">
+      <CardContent className="p-4 flex items-center gap-3">
+        <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${map[accent]} ring-1 flex items-center justify-center shrink-0`}><Icon className="h-5 w-5" /></div>
+        <div><div className="text-2xl font-bold text-slate-900 tabular-nums">{(value || 0).toLocaleString('es-CL')}</div><div className="text-xs text-slate-500">{label}</div></div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const VENC_TIPO_LABEL = { trabajador: 'Trabajador', vehiculo: 'Vehículo', equipo: 'Equipo' };
+
 function Vencimientos({ api }) {
   const [dias, setDias] = useState(30);
-  const [data, reload] = useData(api, `/vencimientos?dias=30`);
   const [rows, setRows] = useState(null);
-  useEffect(() => { setRows(data?.documentos || null); }, [data]);
-  const load = async (d) => { setDias(d); const r = await api(`/vencimientos?dias=${d}`); setRows(r.documentos); };
+  const [fEmp, setFEmp] = useState('all');
+  const [fMan, setFMan] = useState('all');
+  const [fTipo, setFTipo] = useState('all');
+  const [q, setQ] = useState('');
+  const [empresas] = useData(api, '/empresas');
+  const [mandantes] = useData(api, '/mandantes');
+  useEffect(() => {
+    let alive = true; setRows(null);
+    api(`/vencimientos?dias=${dias}`).then((r) => { if (alive) setRows(r.documentos || []); }).catch((e) => toast.error(e.message));
+    return () => { alive = false; };
+  }, [api, dias]);
+
+  const filtered = (rows || []).filter((r) =>
+    (fEmp === 'all' || r.empresa_id === fEmp) &&
+    (fMan === 'all' || r.mandante === (mandantes?.mandantes || []).find((m) => m.mandante_id === fMan)?.razon_social) &&
+    (fTipo === 'all' || r.recurso_tipo === fTipo) &&
+    (!q.trim() || `${r.recurso || ''} ${r.requisito || ''}`.toLowerCase().includes(q.trim().toLowerCase()))
+  );
+  const kpis = {
+    vencidos: filtered.filter((r) => r.dias_restantes < 0).length,
+    semana: filtered.filter((r) => r.dias_restantes >= 0 && r.dias_restantes <= 7).length,
+    treinta: filtered.filter((r) => r.dias_restantes >= 0 && r.dias_restantes <= 30).length,
+    total: filtered.length,
+  };
+  const hasFilters = fEmp !== 'all' || fMan !== 'all' || fTipo !== 'all' || q.trim();
+
   return (
     <div>
-      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-blue-600' : ''} onClick={() => load(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Trabajador', 'Mandante', 'Vence', 'Dias'], (rows || []).map((r) => [r.requisito || '', `${r.trab_nombre || ''} ${r.trab_apellido || ''}`, r.mandante || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
+      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center flex-wrap">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-blue-600' : ''} onClick={() => setDias(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Recurso', 'Tipo', 'Mandante', 'Empresa', 'Vence', 'Dias'], filtered.map((r) => [r.requisito || '', r.recurso || '', VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo, r.mandante || '', r.empresa || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <VencKpi label="Vencidos" value={kpis.vencidos} accent="red" icon={AlertTriangle} />
+        <VencKpi label="Vence ≤ 7 días" value={kpis.semana} accent="orange" icon={Clock} />
+        <VencKpi label="Vence ≤ 30 días" value={kpis.treinta} accent="amber" icon={CalendarClock} />
+        <VencKpi label={`Total en rango (${dias}d)`} value={kpis.total} accent="slate" icon={FileClock} />
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-4">
+        <div className="relative flex-1 min-w-[220px] max-w-sm"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar recurso o documento…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <Select value={fTipo} onValueChange={setFTipo}><SelectTrigger className="w-44"><SelectValue placeholder="Tipo" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los tipos</SelectItem><SelectItem value="trabajador">Trabajadores</SelectItem><SelectItem value="vehiculo">Vehículos</SelectItem><SelectItem value="equipo">Equipos</SelectItem></SelectContent></Select>
+        <Select value={fEmp} onValueChange={setFEmp}><SelectTrigger className="w-52"><SelectValue placeholder="Empresa" /></SelectTrigger><SelectContent><SelectItem value="all">Todas las empresas</SelectItem>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select>
+        <Select value={fMan} onValueChange={setFMan}><SelectTrigger className="w-52"><SelectValue placeholder="Mandante" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los mandantes</SelectItem>{(mandantes?.mandantes || []).map((m) => <SelectItem key={m.mandante_id} value={m.mandante_id}>{m.razon_social}</SelectItem>)}</SelectContent></Select>
+        {hasFilters && <Button variant="ghost" onClick={() => { setFEmp('all'); setFMan('all'); setFTipo('all'); setQ(''); }}>Limpiar</Button>}
+      </div>
+
       <Table columns={[
         { key: 'requisito', label: 'Documento' },
-        { key: 'trab', label: 'Trabajador', render: (r) => `${r.trab_nombre || ''} ${r.trab_apellido || ''}` },
+        { key: 'recurso', label: 'Recurso', render: (r) => <span className="font-medium text-slate-800">{r.recurso}</span> },
+        { key: 'tipo', label: 'Tipo', render: (r) => <Badge className="bg-slate-100 text-slate-600 border-0">{VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo}</Badge> },
         { key: 'mandante', label: 'Mandante' },
+        { key: 'empresa', label: 'Empresa' },
         { key: 'fecha_vencimiento', label: 'Vence', render: (r) => fdate(r.fecha_vencimiento) },
-        { key: 'dias_restantes', label: 'Días', render: (r) => <Badge className={r.dias_restantes < 0 ? 'bg-red-100 text-red-700' : r.dias_restantes <= 15 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100'}>{r.dias_restantes < 0 ? 'Vencido' : `${r.dias_restantes} días`}</Badge> },
-      ]} rows={rows} empty="Sin vencimientos en el rango" />
+        { key: 'dias_restantes', label: 'Días', render: (r) => <Badge className={r.dias_restantes < 0 ? 'bg-red-100 text-red-700' : r.dias_restantes <= 7 ? 'bg-orange-100 text-orange-700' : r.dias_restantes <= 15 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100'}>{r.dias_restantes < 0 ? `Vencido ${Math.abs(r.dias_restantes)}d` : `${r.dias_restantes} días`}</Badge> },
+      ]} rows={rows === null ? null : filtered} empty="Sin vencimientos en el rango" />
     </div>
   );
 }

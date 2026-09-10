@@ -171,6 +171,29 @@ export async function GET(request, { params }) {
     const { searchParams } = new URL(request.url);
     if (p.length === 0 || p[0] === 'health') return json({ ok: true, service: 'aptiva-rl' });
 
+    // Endpoint público (sin auth) para validación por QR en terreno. Solo trabajadores, datos resumidos.
+    if (p[0] === 'public' && p[1] === 'expediente' && p[2]) {
+      const t = (await query('select t.nombre, t.apellido, t.rut, t.cargo, t.estado, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.trabajador_id=$1 and t.deleted_at is null', [p[2]])).rows[0];
+      if (!t) return json({ error: 'No encontrado' }, 404);
+      const acreditacion = await acreditacionTrabajador(p[2]);
+      let tot = 0, ok = 0; const now = new Date();
+      const docSummary = { aprobado: 0, por_vencer: 0, vencido: 0, en_revision: 0, rechazado: 0, faltante: 0 };
+      const perMandante = [];
+      acreditacion.forEach((a) => {
+        tot += a.docs_total || 0; ok += a.docs_ok || 0;
+        perMandante.push({ mandante: a.mandante, contrato: a.contrato, estado: a.estado, ok: a.docs_ok || 0, total: a.docs_total || 0, pct: a.docs_total ? Math.round((a.docs_ok / a.docs_total) * 100) : 100 });
+        (a.detalle || []).forEach((d) => {
+          let st = d.estado;
+          if (st === 'aprobado' && d.fecha_vencimiento) { const dd = Math.ceil((new Date(d.fecha_vencimiento) - now) / 86400000); if (dd < 0) st = 'vencido'; else if (dd <= 30) st = 'por_vencer'; }
+          if (st === 'pendiente') st = 'en_revision';
+          if (docSummary[st] !== undefined) docSummary[st]++;
+        });
+      });
+      const pctTotal = tot ? Math.round((ok / tot) * 100) : 100;
+      const estadoGlobal = perMandante.some((m) => m.estado === 'BLOQUEADO') ? 'BLOQUEADO' : perMandante.some((m) => m.estado === 'EN_REVISION') ? 'EN_REVISION' : 'ACREDITADO';
+      return json({ nombre: t.nombre, apellido: t.apellido, rut: t.rut, cargo: t.cargo, empresa: t.empresa, estadoGlobal, pctTotal, docSummary, perMandante });
+    }
+
     const profile = await getProfile(request);
     if (!profile) return json({ error: 'No autorizado' }, 401);
 
@@ -313,13 +336,37 @@ export async function GET(request, { params }) {
 
     if (p[0] === 'vencimientos') {
       const dias = Number(searchParams.get('dias') || 30);
-      const r = await query(`select d.*, r.nombre as requisito, t.nombre as trab_nombre, t.apellido as trab_apellido, m.razon_social as mandante,
-        (d.fecha_vencimiento - current_date) as dias_restantes from documentos d
+      const args = [dias];
+      let sql = `select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento,
+        coalesce(r.nombre, d.nombre_archivo) as requisito,
+        m.razon_social as mandante,
+        (d.fecha_vencimiento - current_date) as dias_restantes,
+        coalesce(nullif(trim(concat(t.nombre,' ',t.apellido)),''), v.patente, q.codigo_interno, '—') as recurso,
+        coalesce(t.empresa_id, v.empresa_id, q.empresa_id) as empresa_id,
+        coalesce(et.razon_social, ev.razon_social, eq.razon_social) as empresa
+        from documentos d
         left join requisitos_documentales r on r.requisito_id=d.requisito_id
-        left join trabajadores t on t.trabajador_id=d.recurso_id
         left join mandantes m on m.mandante_id=d.mandante_id
+        left join trabajadores t on t.trabajador_id=d.recurso_id and d.recurso_tipo='trabajador'
+        left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
+        left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
+        left join empresas_grupo et on et.empresa_id=t.empresa_id
+        left join empresas_grupo ev on ev.empresa_id=v.empresa_id
+        left join empresas_grupo eq on eq.empresa_id=q.empresa_id
         where d.fecha_vencimiento is not null and d.deleted_at is null and d.estado='aprobado'
-        and d.fecha_vencimiento <= current_date + ($1 || ' days')::interval order by d.fecha_vencimiento`, [dias]);
+        and d.fecha_vencimiento <= current_date + ($1 || ' days')::interval`;
+      // Filtros por rol
+      let empF = searchParams.get('empresa_id');
+      if (profile.role_codigo === 'ADMIN_EMPRESA') empF = profile.empresa_id;
+      if (profile.role_codigo === 'USUARIO_MANDANTE') { args.push(profile.mandante_id); sql += ` and d.mandante_id=$${args.length}`; }
+      else { const manF = searchParams.get('mandante_id'); if (manF) { args.push(manF); sql += ` and d.mandante_id=$${args.length}`; } }
+      if (empF) { args.push(empF); sql += ` and coalesce(t.empresa_id, v.empresa_id, q.empresa_id)=$${args.length}`; }
+      const tipo = searchParams.get('tipo');
+      if (tipo && ['trabajador', 'vehiculo', 'equipo'].includes(tipo)) { args.push(tipo); sql += ` and d.recurso_tipo=$${args.length}`; }
+      const qq = (searchParams.get('q') || '').trim();
+      if (qq.length >= 2) { args.push(`%${qq}%`); const n = args.length; sql += ` and (coalesce(r.nombre, d.nombre_archivo) ilike $${n} or trim(concat(t.nombre,' ',t.apellido)) ilike $${n} or v.patente ilike $${n} or q.codigo_interno ilike $${n})`; }
+      sql += ' order by d.fecha_vencimiento';
+      const r = await query(sql, args);
       return json({ documentos: r.rows });
     }
 
