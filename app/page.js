@@ -138,12 +138,6 @@ function Login({ onLogin }) {
               <div className="space-y-1.5"><Label>Contraseña</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={(e) => e.key === 'Enter' && submit()} /></div>
               <Button className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading} onClick={submit}>{loading ? 'Ingresando…' : 'Ingresar'}</Button>
             </div>
-            <div className="mt-6 rounded-lg bg-slate-50 border p-3 text-xs text-slate-600 space-y-1">
-              <p className="font-semibold text-slate-700">Cuentas demo (contraseña: Aptiva2025!)</p>
-              <p>admin@aptivarl.com · Super Admin</p>
-              <p>empresa@aptivarl.com · Admin Empresa</p>
-              <p>revisor@aptivarl.com · Revisor · mandante@aptivarl.com · Mandante</p>
-            </div>
           </div>
         </div>
         <div className="text-center text-xs text-slate-400">© DoSoft {YEAR}</div>
