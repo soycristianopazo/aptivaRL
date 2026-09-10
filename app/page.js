@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus,
 } from 'lucide-react';
 
 const LOGO = '/logo-aptiva.png';
@@ -150,7 +150,7 @@ const NAV = [
   { group: '', items: [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }] },
   { group: 'Operación', items: [{ id: 'mandantes', label: 'Mandantes', icon: Building2 }, { id: 'contratos', label: 'Contratos', icon: FileSignature }] },
   { group: 'Recursos', items: [{ id: 'trabajadores', label: 'Trabajadores', icon: Users }, { id: 'vehiculos', label: 'Vehículos', icon: Truck }, { id: 'equipos', label: 'Equipos', icon: Wrench }] },
-  { group: 'Acreditación', items: [{ id: 'revision', label: 'Pendientes de Revisión', icon: FileClock }, { id: 'vencimientos', label: 'Vencimientos', icon: CalendarClock }] },
+  { group: 'Acreditación', items: [{ id: 'revision', label: 'Pendientes de Revisión', icon: FileClock }, { id: 'vencimientos', label: 'Vencimientos', icon: CalendarClock }, { id: 'desvinculaciones', label: 'Personal Finiquitado', icon: UserMinus }] },
   { group: 'Administración', items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings, super: true }, { id: 'auditoria', label: 'Auditoría', icon: History }] },
 ];
 
@@ -228,6 +228,7 @@ function Shell({ token, profile, onLogout }) {
           {!detail && view === 'equipos' && <SimpleResource {...ctx} kind="equipos" />}
           {!detail && view === 'revision' && <Revision {...ctx} />}
           {!detail && view === 'vencimientos' && <Vencimientos {...ctx} />}
+          {!detail && view === 'desvinculaciones' && <Desvinculaciones {...ctx} />}
           {!detail && view === 'empresas' && <Empresas {...ctx} />}
           {!detail && view === 'usuarios' && <Usuarios {...ctx} />}
           {!detail && view === 'mantenedores' && isSuper && <Mantenedores {...ctx} />}
@@ -1361,6 +1362,58 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
   );
 }
 
+const CAUSALES = [
+  'ARTÍCULO 159 - N°1 MUTUO ACUERDO DE LAS PARTES',
+  'ARTÍCULO 159 - N°2 RENUNCIA DEL TRABAJADOR',
+  'ARTÍCULO 159 - N°3 MUERTE DEL TRABAJADOR',
+  'ARTÍCULO 159 - N°4 VENCIMIENTO DEL PLAZO CONVENIDO EN EL CONTRATO',
+  'ARTÍCULO 159 - N°5 CONCLUSIÓN DEL TRABAJO O SERVICIO QUE DIO ORIGEN AL CONTRATO',
+  'ARTÍCULO 159 - N°6 CASO FORTUITO O FUERZA MAYOR',
+  'ARTÍCULO 160 - N°1 CONDUCTAS INDEBIDAS DE CARÁCTER GRAVE',
+  'ARTÍCULO 160 - N°2 NEGOCIACIONES QUE EJECUTE EL TRABAJADOR DENTRO DEL GIRO DEL NEGOCIO',
+  'ARTÍCULO 160 - N°3 NO CONCURRENCIA DEL TRABAJADOR A SUS LABORES SIN CAUSA JUSTIFICADA',
+  'ARTÍCULO 160 - N°4 ABANDONO DEL TRABAJO POR PARTE DEL TRABAJADOR',
+  'ARTÍCULO 160 - N°5 ACTOS, OMISIONES O IMPRUDENCIAS TEMERARIAS',
+  'ARTÍCULO 160 - N°6 PERJUICIO MATERIAL CAUSADO INTENCIONALMENTE',
+  'ARTÍCULO 160 - N°7 INCUMPLIMIENTO GRAVE DE LAS OBLIGACIONES QUE IMPONE EL CONTRATO',
+  'ARTÍCULO 161 - N°1 NECESIDADES DE LA EMPRESA',
+  'ARTÍCULO 163 BIS',
+  'ANEXO DE TRASLADO',
+  'ART. 161 INCISO 2: DESAHUCIO DEL EMPLEADOR',
+];
+
+function DesvincularDialog({ api, trabajadorId, asignacion, onClose, onDone }) {
+  const [causal, setCausal] = useState('');
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const esTraslado = causal === 'ANEXO DE TRASLADO';
+  const submit = async () => {
+    if (!causal) { toast.error('Selecciona una causal'); return; }
+    if (!file) { toast.error('Adjunta el archivo'); return; }
+    if (file.size > 2 * 1024 * 1024) { toast.error('El archivo no puede superar los 2 MB'); return; }
+    setLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file); fd.append('asignacion_id', asignacion.asignacion_id);
+      fd.append('causal', causal); fd.append('tipo', esTraslado ? 'anexo_traslado' : 'finiquito');
+      await api(`/trabajadores/${trabajadorId}/desvincular`, { method: 'POST', body: fd });
+      toast.success('Trabajador desvinculado del contrato'); onDone();
+    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+  return (
+    <Dialog open onOpenChange={onClose}><DialogContent className="max-w-md">
+      <DialogHeader><DialogTitle>Desvincular trabajador</DialogTitle><DialogDescription>Contrato {asignacion.numero_oc} · {asignacion.mandante}. Se liberará de este contrato y quedará registrado en el histórico.</DialogDescription></DialogHeader>
+      <div className="space-y-3">
+        <div className="space-y-1.5"><Label>Causal / Tipo</Label>
+          <Select value={causal} onValueChange={setCausal}><SelectTrigger><SelectValue placeholder="Selecciona causal" /></SelectTrigger><SelectContent className="max-h-72">{CAUSALES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select>
+        </div>
+        <div className="space-y-1.5"><Label>{esTraslado ? 'Archivo Anexo de Traslado' : 'Archivo Finiquito'}</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} /><p className="text-xs text-slate-400">El archivo no puede superar los 2 MB.</p></div>
+      </div>
+      <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-amber-500 hover:bg-amber-600" disabled={loading} onClick={submit}>{loading ? 'Procesando…' : 'Desvincular'}</Button></DialogFooter>
+    </DialogContent></Dialog>
+  );
+}
+
 function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const [data, reload] = useData(api, `/trabajadores/${id}`, [id]);
   const [contratos] = useData(api, '/contratos');
@@ -1369,6 +1422,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const [qrOpen, setQrOpen] = useState(false);
   const [ef, setEf] = useState({});
   const [asig, setAsig] = useState('');
+  const [desvincular, setDesvincular] = useState(null);
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const { trabajador: t, asignaciones, acreditacion, historial } = data;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === t.empresa_id);
@@ -1398,7 +1452,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
         </TabsContent>
         <TabsContent value="asignaciones">
           {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={doAsignar}>Asignar</Button></div>}
-          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{r.estado}</Badge> }]} rows={asignaciones} />
+          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => (canManage && r.estado === 'activo') ? <div className="flex justify-end"><Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button></div> : null }]} rows={asignaciones} />
         </TabsContent>
         <TabsContent value="info"><Card><CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           {[['RUT', t.rut], ['Nombre', `${t.nombre} ${t.apellido}`], ['Cargo', t.cargo], ['Género', t.genero], ['Región', t.region], ['Comuna', t.comuna], ['Teléfono', t.telefono], ['Empresa', t.empresa]].map(([k, v]) => <div key={k}><p className="text-slate-400">{k}</p><p className="font-medium">{v || '—'}</p></div>)}
@@ -1417,6 +1471,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
       </DialogContent></Dialog>
       {upload && <UploadDialog api={api} recurso_tipo="trabajador" recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
       {qrOpen && <QRDialog id={id} titulo={`${t.nombre} ${t.apellido}`} rut={t.rut} onClose={() => setQrOpen(false)} />}
+      {desvincular && <DesvincularDialog api={api} trabajadorId={id} asignacion={desvincular} onClose={() => setDesvincular(null)} onDone={() => { setDesvincular(null); reload(); }} />}
     </div>
   );
 }
@@ -1644,6 +1699,34 @@ function VencKpi({ label, value, accent, icon: Icon }) {
 }
 
 const VENC_TIPO_LABEL = { trabajador: 'Trabajador', vehiculo: 'Vehículo', equipo: 'Equipo', contrato: 'Contrato' };
+
+function Desvinculaciones({ api }) {
+  const [q, setQ] = useState('');
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let alive = true; setRows(null);
+    const t = setTimeout(() => { api(`/desvinculaciones${q.trim().length >= 2 ? `?q=${encodeURIComponent(q.trim())}` : ''}`).then((d) => { if (alive) setRows(d.desvinculaciones || []); }).catch((e) => toast.error(e.message)); }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [api, q]);
+  const verArchivo = async (r) => { try { const { url } = await api(`/desvinculaciones/${r.desvinculacion_id}/url`); window.open(url, '_blank'); } catch (e) { toast.error(e.message); } };
+  return (
+    <div>
+      <PageHead title="Personal Finiquitado" sub="Histórico de desvinculaciones (finiquitos y anexos de traslado)"
+        action={<Button variant="outline" onClick={() => csvDownload('personal_finiquitado.csv', ['Empresa', 'Contrato', 'RUT', 'Nombre', 'Cargo', 'Causal', 'Tipo', 'Fecha'], (rows || []).map((r) => [r.empresa_nombre || '', r.contrato_numero || '', r.rut || '', r.nombre || '', r.cargo || '', r.causal || '', r.tipo, fdatetime(r.created_at)]))} disabled={!rows}><Download className="h-4 w-4 mr-1" />Exportar</Button>} />
+      <div className="mb-3 max-w-sm"><div className="relative"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar por nombre, RUT, contrato, causal…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
+      <Table pageSize={15} empty="Sin desvinculaciones registradas" columns={[
+        { key: 'empresa_nombre', label: 'Empresa' },
+        { key: 'contrato_numero', label: 'Contrato' },
+        { key: 'rut', label: 'RUT' },
+        { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre}</span> },
+        { key: 'cargo', label: 'Cargo' },
+        { key: 'causal', label: 'Causal', render: (r) => <span className="text-xs">{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-blue-700 border-0 mr-1">Traslado</Badge> : null}{r.causal}</span> },
+        { key: 'archivo', label: 'Archivo', render: (r) => <Button size="sm" variant="outline" className="h-7" onClick={() => verArchivo(r)}><Download className="h-3.5 w-3.5 mr-1" />Archivo</Button> },
+        { key: 'created_at', label: 'Fecha registro', render: (r) => fdatetime(r.created_at) },
+      ]} rows={rows} />
+    </div>
+  );
+}
 
 function Vencimientos({ api }) {
   const [dias, setDias] = useState(30);

@@ -230,6 +230,21 @@ export async function GET(request, { params }) {
     if (p[0] === 'tipos-vehiculo') return json({ tipos: (await query('select id, nombre from tipos_vehiculo order by nombre')).rows });
     if (p[0] === 'marcas-vehiculo') return json({ marcas: (await query('select id, nombre from marcas_vehiculo order by nombre')).rows });
 
+    if (p[0] === 'desvinculaciones' && p[1] && p[2] === 'url') {
+      const d = (await query('select bucket, path from desvinculaciones where desvinculacion_id=$1', [p[1]])).rows[0];
+      if (!d?.path) return json({ error: 'Sin archivo' }, 404);
+      return json({ url: await storageSignedUrl(d.path, 900) });
+    }
+    if (p[0] === 'desvinculaciones') {
+      const qq = (searchParams.get('q') || '').trim();
+      const args = []; let sql = 'select * from desvinculaciones where 1=1';
+      if (profile.role_codigo === 'ADMIN_EMPRESA') { args.push(profile.empresa_id); sql += ` and empresa_id=$${args.length}`; }
+      if (profile.role_codigo === 'USUARIO_MANDANTE') { args.push(profile.mandante_id); sql += ` and mandante_id=$${args.length}`; }
+      if (qq.length >= 2) { args.push(`%${qq}%`); const n = args.length; sql += ` and (nombre ilike $${n} or rut ilike $${n} or contrato_numero ilike $${n} or causal ilike $${n} or empresa_nombre ilike $${n})`; }
+      sql += ' order by created_at desc limit 1000';
+      return json({ desvinculaciones: (await query(sql, args)).rows });
+    }
+
     if (p[0] === 'empresas') {
       const r = await query('select e.*, (select count(*)::int from trabajadores t where t.empresa_id=e.empresa_id and t.deleted_at is null) as trabajadores_count from empresas_grupo e where e.deleted_at is null order by e.razon_social');
       return json({ empresas: r.rows });
@@ -517,6 +532,36 @@ export async function POST(request, { params }) {
       } catch (e) {
         return json({ error: 'Credenciales inválidas' }, 401);
       }
+    }
+
+    // Desvinculación de trabajador (multipart: finiquito / anexo de traslado)
+    if (p[0] === 'trabajadores' && p[1] && p[2] === 'desvincular') {
+      const profile = await getProfile(request);
+      if (!profile) return json({ error: 'No autorizado' }, 401);
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const form = await request.formData();
+      const file = form.get('file');
+      if (!(file instanceof File)) return json({ error: 'Archivo requerido' }, 400);
+      if (file.size > 2 * 1024 * 1024) return json({ error: 'El archivo no puede superar los 2 MB' }, 400);
+      const asignacion_id = form.get('asignacion_id');
+      const causal = form.get('causal') || null;
+      const tipo = form.get('tipo') || 'finiquito';
+      if (!asignacion_id) return json({ error: 'Asignación requerida' }, 400);
+      const asig = (await query('select * from trabajador_asignaciones where asignacion_id=$1', [asignacion_id])).rows[0];
+      if (!asig) return json({ error: 'Asignación no encontrada' }, 404);
+      const t = (await query('select nombre, apellido, rut, cargo from trabajadores where trabajador_id=$1', [p[1]])).rows[0] || {};
+      const ct = (await query('select c.numero_oc, e.razon_social as empresa, m.razon_social as mandante from contratos c join empresas_grupo e on e.empresa_id=c.empresa_id join mandantes m on m.mandante_id=c.mandante_id where c.contrato_id=$1', [asig.contrato_id])).rows[0] || {};
+      const safe = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `desvinculacion/${p[1]}/${uuid()}-${safe}`;
+      const bytes = Buffer.from(await file.arrayBuffer());
+      await storageUpload({ path, bytes, contentType: file.type });
+      const id = uuid();
+      await query(`insert into desvinculaciones (desvinculacion_id, trabajador_id, asignacion_id, contrato_id, empresa_id, mandante_id, rut, nombre, cargo, contrato_numero, empresa_nombre, mandante_nombre, tipo, causal, bucket, path, nombre_archivo, mime, tamano, creado_por)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+        [id, p[1], asignacion_id, asig.contrato_id, asig.empresa_id, asig.mandante_id, t.rut || null, `${t.nombre || ''} ${t.apellido || ''}`.trim(), t.cargo || null, ct.numero_oc || null, ct.empresa || null, ct.mandante || null, tipo, causal, BUCKET, path, file.name, file.type, file.size, profile.auth_user_id]);
+      await query("update trabajador_asignaciones set estado='inactivo', fecha_desasignacion=now() where asignacion_id=$1", [asignacion_id]);
+      await audit(profile, 'desvincular_trabajador', 'trabajador', p[1], { asignacion_id, causal, tipo });
+      return json({ ok: true, desvinculacion_id: id }, 201);
     }
 
     // multipart upload handled separately (documentos/upload uses formData)
