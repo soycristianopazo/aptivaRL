@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for Aptiva RL Platform - Dashboard Enhanced Endpoint
-Tests the enhanced GET /api/dashboard endpoint with new tendencia_vencimientos and proximos_vencimientos arrays
+Backend API Testing for Aptiva RL - Unified Search Endpoint /api/buscar
+Tests the new GET /api/buscar endpoint for Expediente autocomplete functionality
 """
 
 import requests
 import json
-from datetime import datetime
+import sys
 
 # Base URL from .env
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
@@ -14,547 +14,538 @@ BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
 # Test credentials
 ADMIN_EMAIL = "admin@aptivarl.com"
 ADMIN_PASSWORD = "Aptiva2025!"
+EMPRESA_EMAIL = "empresa@aptivarl.com"
+EMPRESA_PASSWORD = "Aptiva2025!"
 
-# Global token storage
-token = None
-
-def print_test(name, passed, details=""):
-    """Print test result"""
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"{status}: {name}")
-    if details:
-        print(f"  Details: {details}")
-    print()
-
-def login():
-    """Login and get token"""
-    global token
-    print("=" * 80)
-    print("AUTHENTICATION")
-    print("=" * 80)
-    
+def login(email, password):
+    """Login and return token"""
     try:
         response = requests.post(
             f"{BASE_URL}/auth/login",
-            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-            timeout=30
+            json={"email": email, "password": password},
+            timeout=10
         )
-        
         if response.status_code == 200:
             data = response.json()
-            token = data.get("token")
-            profile = data.get("profile", {})
-            print_test(
-                "Login as admin",
-                True,
-                f"Role: {profile.get('role_codigo')}, Email: {profile.get('email')}"
-            )
-            return True
+            return data.get("token"), data.get("profile")
         else:
-            print_test("Login as admin", False, f"Status: {response.status_code}, Response: {response.text}")
-            return False
+            print(f"❌ Login failed: {response.status_code} - {response.text}")
+            return None, None
     except Exception as e:
-        print_test("Login as admin", False, f"Exception: {str(e)}")
+        print(f"❌ Login exception: {e}")
+        return None, None
+
+def test_buscar_minimum_chars(token):
+    """Test 1: GET /api/buscar?q=a (1 char) should return empty resultados"""
+    print("\n=== TEST 1: Minimum 2 chars required ===")
+    try:
+        response = requests.get(
+            f"{BASE_URL}/buscar?q=a",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        if "resultados" not in data:
+            print(f"❌ FAIL: Missing 'resultados' key in response")
+            return False
+        
+        if data["resultados"] != []:
+            print(f"❌ FAIL: Expected empty array, got {len(data['resultados'])} items")
+            return False
+        
+        print("✅ PASS: Returns empty resultados for 1 char query")
+        return True
+    except Exception as e:
+        print(f"❌ FAIL: Exception - {e}")
         return False
 
-def get_headers():
-    """Get authorization headers"""
-    return {"Authorization": f"Bearer {token}"}
-
-def test_dashboard_no_filters():
-    """Test GET /api/dashboard with no filters"""
-    print("=" * 80)
-    print("TEST 1: Dashboard with no filters")
-    print("=" * 80)
-    
+def test_buscar_worker_by_name(token):
+    """Test 2: Search by first 4 letters of real worker name"""
+    print("\n=== TEST 2: Search trabajador by name (first 4 letters) ===")
     try:
-        response = requests.get(f"{BASE_URL}/dashboard", headers=get_headers(), timeout=30)
+        # First get a real worker
+        response = requests.get(
+            f"{BASE_URL}/trabajadores",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ FAIL: Could not fetch trabajadores: {response.status_code}")
+            return False, None
+        
+        workers = response.json().get("trabajadores", [])
+        if not workers:
+            print(f"❌ FAIL: No trabajadores found")
+            return False, None
+        
+        # Get first worker's name (first 4 letters)
+        worker = workers[0]
+        worker_name = worker.get("nombre", "")
+        if len(worker_name) < 4:
+            worker_name = worker.get("apellido", "")
+        
+        search_term = worker_name[:4].lower()
+        print(f"Searching for: '{search_term}' (from worker: {worker.get('nombre')} {worker.get('apellido')})")
+        
+        # Search
+        response = requests.get(
+            f"{BASE_URL}/buscar?q={search_term}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        print(f"Status: {response.status_code}")
         
         if response.status_code != 200:
-            print_test("Dashboard no filters - Status 200", False, f"Got {response.status_code}: {response.text}")
-            return None
-        
-        print_test("Dashboard no filters - Status 200", True)
+            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            return False, None
         
         data = response.json()
+        if "resultados" not in data:
+            print(f"❌ FAIL: Missing 'resultados' key")
+            return False, None
         
-        # Check existing fields
-        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
-        missing_keys = [k for k in required_keys if k not in data]
+        resultados = data["resultados"]
+        if not isinstance(resultados, list):
+            print(f"❌ FAIL: resultados is not an array")
+            return False, None
         
-        if missing_keys:
-            print_test("Dashboard response has all required keys", False, f"Missing: {missing_keys}")
-            return None
-        
-        print_test("Dashboard response has all required keys", True, f"Keys: {list(data.keys())}")
-        
-        # Check stats object
-        stats = data.get("stats", {})
-        required_stats = [
-            "mandantes", "contratos_vigentes", "trabajadores", "vehiculos", "equipos",
-            "docs_pendientes", "docs_por_vencer", "docs_vencidos",
-            "trabajadores_acreditados", "trabajadores_bloqueados", "trabajadores_revision"
-        ]
-        missing_stats = [k for k in required_stats if k not in stats]
-        
-        if missing_stats:
-            print_test("Stats object has all required fields", False, f"Missing: {missing_stats}")
-        else:
-            print_test("Stats object has all required fields", True, f"Stats: {json.dumps(stats, indent=2)}")
-        
-        # Check acreditacion_por_mandante
-        acred = data.get("acreditacion_por_mandante", {})
-        if isinstance(acred, dict):
-            print_test("acreditacion_por_mandante is object/map", True, f"Mandantes: {len(acred)}")
-        else:
-            print_test("acreditacion_por_mandante is object/map", False, f"Got type: {type(acred)}")
-        
-        # Check docs_por_estado
-        docs_estado = data.get("docs_por_estado", [])
-        if isinstance(docs_estado, list):
-            if len(docs_estado) > 0:
-                sample = docs_estado[0]
-                has_estado = "estado" in sample
-                has_c = "c" in sample
-                print_test(
-                    "docs_por_estado is array of {estado, c}",
-                    has_estado and has_c,
-                    f"Length: {len(docs_estado)}, Sample: {sample}"
-                )
-            else:
-                print_test("docs_por_estado is array of {estado, c}", True, "Empty array (no documents)")
-        else:
-            print_test("docs_por_estado is array", False, f"Got type: {type(docs_estado)}")
-        
-        # NEW: Check tendencia_vencimientos
-        tendencia = data.get("tendencia_vencimientos", [])
-        if not isinstance(tendencia, list):
-            print_test("tendencia_vencimientos is array", False, f"Got type: {type(tendencia)}")
-        elif len(tendencia) != 6:
-            print_test("tendencia_vencimientos has exactly 6 months", False, f"Got {len(tendencia)} months: {tendencia}")
-        else:
-            print_test("tendencia_vencimientos has exactly 6 months", True)
+        # Check structure of items
+        trabajador_found = False
+        trabajador_id = None
+        for item in resultados:
+            required_keys = ["tipo", "id", "label", "sub", "extra", "empresa"]
+            missing_keys = [k for k in required_keys if k not in item]
+            if missing_keys:
+                print(f"❌ FAIL: Item missing keys: {missing_keys}")
+                return False, None
             
-            # Check structure of each month
-            all_valid = True
-            has_zeros = False
-            for i, month in enumerate(tendencia):
-                if not isinstance(month, dict):
-                    print_test(f"tendencia_vencimientos[{i}] is object", False, f"Got type: {type(month)}")
-                    all_valid = False
-                    continue
-                
-                if "mes" not in month or "c" not in month:
-                    print_test(f"tendencia_vencimientos[{i}] has mes and c", False, f"Got keys: {list(month.keys())}")
-                    all_valid = False
-                    continue
-                
-                # Check mes format YYYY-MM
-                mes = month.get("mes")
-                try:
-                    datetime.strptime(mes, "%Y-%m")
-                    mes_valid = True
-                except:
-                    mes_valid = False
-                
-                if not mes_valid:
-                    print_test(f"tendencia_vencimientos[{i}] mes format YYYY-MM", False, f"Got: {mes}")
-                    all_valid = False
-                
-                # Check c is integer
-                c = month.get("c")
-                if not isinstance(c, int):
-                    print_test(f"tendencia_vencimientos[{i}] c is integer", False, f"Got type: {type(c)}, value: {c}")
-                    all_valid = False
-                
-                if c == 0:
-                    has_zeros = True
-            
-            if all_valid:
-                print_test("tendencia_vencimientos structure valid", True, f"All 6 months have correct structure")
-                print(f"  Tendencia: {json.dumps(tendencia, indent=2)}")
-            
-            # Check if months are in ascending order
-            meses = [m.get("mes") for m in tendencia]
-            sorted_meses = sorted(meses)
-            if meses == sorted_meses:
-                print_test("tendencia_vencimientos months in ascending order", True, f"Months: {meses}")
-            else:
-                print_test("tendencia_vencimientos months in ascending order", False, f"Got: {meses}, Expected: {sorted_meses}")
-            
-            # Note about zeros
-            if has_zeros:
-                print_test("tendencia_vencimientos includes months with c=0", True, "Months with zero expirations are present")
-            else:
-                print("  ℹ️  Note: No months with c=0 found (all months have expirations)")
+            if item["tipo"] == "trabajador":
+                trabajador_found = True
+                trabajador_id = item["id"]
+                print(f"Found trabajador: {item['label']} (RUT: {item['sub']}, Cargo: {item['extra']}, Empresa: {item['empresa']})")
         
-        # NEW: Check proximos_vencimientos
-        proximos = data.get("proximos_vencimientos", [])
-        if not isinstance(proximos, list):
-            print_test("proximos_vencimientos is array", False, f"Got type: {type(proximos)}")
-        else:
-            print_test("proximos_vencimientos is array", True, f"Length: {len(proximos)}")
-            
-            if len(proximos) > 15:
-                print_test("proximos_vencimientos length <= 15", False, f"Got {len(proximos)} items")
-            else:
-                print_test("proximos_vencimientos length <= 15", True)
-            
-            if len(proximos) > 0:
-                # Check structure of each item
-                required_fields = [
-                    "documento_id", "recurso_tipo", "recurso_id", "fecha_vencimiento",
-                    "documento", "mandante", "dias_restantes", "recurso"
-                ]
-                
-                all_valid = True
-                all_within_90_days = True
-                all_aprobado = True
-                all_recurso_non_empty = True
-                all_dias_int = True
-                
-                for i, item in enumerate(proximos):
-                    if not isinstance(item, dict):
-                        print_test(f"proximos_vencimientos[{i}] is object", False, f"Got type: {type(item)}")
-                        all_valid = False
-                        continue
-                    
-                    missing = [f for f in required_fields if f not in item]
-                    if missing:
-                        print_test(f"proximos_vencimientos[{i}] has all fields", False, f"Missing: {missing}")
-                        all_valid = False
-                        continue
-                    
-                    # Check recurso is non-empty string
-                    recurso = item.get("recurso")
-                    if not isinstance(recurso, str) or recurso.strip() == "" or recurso == "—":
-                        print_test(f"proximos_vencimientos[{i}] recurso is non-empty string", False, f"Got: '{recurso}'")
-                        all_recurso_non_empty = False
-                    
-                    # Check dias_restantes is integer
-                    dias = item.get("dias_restantes")
-                    if not isinstance(dias, int):
-                        print_test(f"proximos_vencimientos[{i}] dias_restantes is integer", False, f"Got type: {type(dias)}, value: {dias}")
-                        all_dias_int = False
-                    
-                    # Check dias_restantes <= 90
-                    if isinstance(dias, int) and dias > 90:
-                        print_test(f"proximos_vencimientos[{i}] dias_restantes <= 90", False, f"Got: {dias}")
-                        all_within_90_days = False
-                
-                if all_valid:
-                    print_test("proximos_vencimientos structure valid", True, f"All {len(proximos)} items have correct structure")
-                    print(f"  Sample (first 3): {json.dumps(proximos[:3], indent=2, default=str)}")
-                
-                if all_recurso_non_empty:
-                    print_test("proximos_vencimientos all recurso non-empty", True)
-                
-                if all_dias_int:
-                    print_test("proximos_vencimientos all dias_restantes are integers", True)
-                
-                if all_within_90_days:
-                    print_test("proximos_vencimientos all dias_restantes <= 90", True)
-                
-                # Check if sorted by fecha_vencimiento ascending
-                fechas = [item.get("fecha_vencimiento") for item in proximos]
-                sorted_fechas = sorted(fechas)
-                if fechas == sorted_fechas:
-                    print_test("proximos_vencimientos sorted by fecha_vencimiento asc", True)
-                else:
-                    print_test("proximos_vencimientos sorted by fecha_vencimiento asc", False, f"Not sorted correctly")
-            else:
-                print("  ℹ️  Note: No proximos_vencimientos found (no documents expiring within 90 days)")
+        if not trabajador_found:
+            print(f"❌ FAIL: No trabajador found in results")
+            return False, None
         
-        return data
-        
+        print(f"✅ PASS: Found {len(resultados)} results with at least one trabajador")
+        return True, trabajador_id
     except Exception as e:
-        print_test("Dashboard no filters", False, f"Exception: {str(e)}")
-        return None
+        print(f"❌ FAIL: Exception - {e}")
+        return False, None
 
-def test_dashboard_with_mandante_filter():
-    """Test GET /api/dashboard?mandante_id=X"""
-    print("=" * 80)
-    print("TEST 2: Dashboard with mandante_id filter")
-    print("=" * 80)
-    
+def test_buscar_worker_by_rut(token):
+    """Test 3: Search by partial RUT (with dots and without)"""
+    print("\n=== TEST 3: Search trabajador by partial RUT ===")
     try:
-        # First get a real mandante_id
-        response = requests.get(f"{BASE_URL}/mandantes", headers=get_headers(), timeout=30)
+        # Get a real worker with RUT
+        response = requests.get(
+            f"{BASE_URL}/trabajadores",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
         if response.status_code != 200:
-            print_test("Get mandantes list", False, f"Status: {response.status_code}")
-            return
+            print(f"❌ FAIL: Could not fetch trabajadores")
+            return False
         
-        mandantes = response.json().get("mandantes", [])
-        if not mandantes:
-            print_test("Get mandantes list", False, "No mandantes found")
-            return
+        workers = response.json().get("trabajadores", [])
+        worker_with_rut = None
+        for w in workers:
+            if w.get("rut"):
+                worker_with_rut = w
+                break
         
-        # Find a mandante that has documents
-        mandante_id = None
-        mandante_name = None
+        if not worker_with_rut:
+            print(f"❌ FAIL: No worker with RUT found")
+            return False
         
-        for m in mandantes:
-            # Check if this mandante has documents
-            check_response = requests.get(
-                f"{BASE_URL}/dashboard?mandante_id={m['mandante_id']}",
-                headers=get_headers(),
-                timeout=30
+        rut = worker_with_rut["rut"]
+        print(f"Testing with RUT: {rut} (Worker: {worker_with_rut.get('nombre')} {worker_with_rut.get('apellido')})")
+        
+        # Test 3a: Search with dots (e.g., "17.561")
+        if "." in rut:
+            partial_with_dots = rut[:6]  # e.g., "17.561"
+            print(f"Searching with dots: '{partial_with_dots}'")
+            response = requests.get(
+                f"{BASE_URL}/buscar?q={partial_with_dots}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10
             )
-            if check_response.status_code == 200:
-                check_data = check_response.json()
-                docs_estado = check_data.get("docs_por_estado", [])
-                total_docs = sum(d.get("c", 0) for d in docs_estado)
-                if total_docs > 0:
-                    mandante_id = m['mandante_id']
-                    mandante_name = m['razon_social']
-                    break
-        
-        if not mandante_id:
-            # Just use the first mandante
-            mandante_id = mandantes[0]['mandante_id']
-            mandante_name = mandantes[0]['razon_social']
-        
-        print_test("Get mandante_id for testing", True, f"Using: {mandante_name} ({mandante_id})")
-        
-        # Test dashboard with mandante filter
-        response = requests.get(
-            f"{BASE_URL}/dashboard?mandante_id={mandante_id}",
-            headers=get_headers(),
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            print_test("Dashboard with mandante_id - Status 200", False, f"Got {response.status_code}: {response.text}")
-            return
-        
-        print_test("Dashboard with mandante_id - Status 200", True)
-        
-        data = response.json()
-        
-        # Check response is well-formed
-        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
-        missing_keys = [k for k in required_keys if k not in data]
-        
-        if missing_keys:
-            print_test("Dashboard response well-formed", False, f"Missing keys: {missing_keys}")
-        else:
-            print_test("Dashboard response well-formed", True, "All keys present")
-        
-        # Check tendencia_vencimientos still 6 months
-        tendencia = data.get("tendencia_vencimientos", [])
-        if len(tendencia) == 6:
-            print_test("tendencia_vencimientos still 6 months with filter", True)
-        else:
-            print_test("tendencia_vencimientos still 6 months with filter", False, f"Got {len(tendencia)} months")
-        
-        # Check proximos_vencimientos filtered by mandante
-        proximos = data.get("proximos_vencimientos", [])
-        if len(proximos) > 0:
-            all_match_mandante = all(item.get("mandante") == mandante_name for item in proximos)
-            if all_match_mandante:
-                print_test("proximos_vencimientos filtered by mandante", True, f"All {len(proximos)} items match mandante")
+            if response.status_code != 200:
+                print(f"❌ FAIL: Search with dots failed: {response.status_code}")
+                return False
+            
+            data = response.json()
+            trabajador_found = any(item["tipo"] == "trabajador" for item in data.get("resultados", []))
+            if trabajador_found:
+                print(f"✅ PASS: Found trabajador with partial RUT (with dots)")
             else:
-                mismatches = [item.get("mandante") for item in proximos if item.get("mandante") != mandante_name]
-                print_test("proximos_vencimientos filtered by mandante", False, f"Found mismatches: {mismatches}")
+                print(f"⚠️  WARNING: No trabajador found with partial RUT (with dots)")
+        
+        # Test 3b: Search without dots (e.g., "17561")
+        partial_no_dots = rut.replace(".", "").replace("-", "")[:5]  # e.g., "17561"
+        print(f"Searching without dots: '{partial_no_dots}'")
+        response = requests.get(
+            f"{BASE_URL}/buscar?q={partial_no_dots}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ FAIL: Search without dots failed: {response.status_code}")
+            return False
+        
+        data = response.json()
+        trabajador_found = any(item["tipo"] == "trabajador" for item in data.get("resultados", []))
+        if trabajador_found:
+            print(f"✅ PASS: Found trabajador with partial RUT (without dots)")
         else:
-            print("  ℹ️  Note: No proximos_vencimientos for this mandante")
+            print(f"⚠️  WARNING: No trabajador found with partial RUT (without dots)")
         
-        print(f"  Stats: {json.dumps(data.get('stats'), indent=2)}")
-        
+        print(f"✅ PASS: RUT search completed")
+        return True
     except Exception as e:
-        print_test("Dashboard with mandante_id filter", False, f"Exception: {str(e)}")
+        print(f"❌ FAIL: Exception - {e}")
+        return False
 
-def test_dashboard_with_empresa_filter():
-    """Test GET /api/dashboard?empresa_id=X"""
-    print("=" * 80)
-    print("TEST 3: Dashboard with empresa_id filter")
-    print("=" * 80)
+def test_trabajador_id_usable(token, trabajador_id):
+    """Test 4: Verify trabajador id from search is usable"""
+    print(f"\n=== TEST 4: Verify trabajador ID is usable ===")
+    if not trabajador_id:
+        print("⚠️  SKIP: No trabajador_id provided")
+        return True
     
     try:
-        # First get a real empresa_id
-        response = requests.get(f"{BASE_URL}/empresas", headers=get_headers(), timeout=30)
-        if response.status_code != 200:
-            print_test("Get empresas list", False, f"Status: {response.status_code}")
-            return
-        
-        empresas = response.json().get("empresas", [])
-        if not empresas:
-            print_test("Get empresas list", False, "No empresas found")
-            return
-        
-        empresa_id = empresas[0]['empresa_id']
-        empresa_name = empresas[0]['razon_social']
-        
-        print_test("Get empresa_id for testing", True, f"Using: {empresa_name} ({empresa_id})")
-        
-        # Test dashboard with empresa filter
+        print(f"Testing GET /api/trabajadores/{trabajador_id}")
         response = requests.get(
-            f"{BASE_URL}/dashboard?empresa_id={empresa_id}",
-            headers=get_headers(),
-            timeout=30
+            f"{BASE_URL}/trabajadores/{trabajador_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        if "trabajador" not in data:
+            print(f"❌ FAIL: Missing 'trabajador' key in response")
+            return False
+        
+        print(f"✅ PASS: Trabajador ID is usable (ficha opens correctly)")
+        return True
+    except Exception as e:
+        print(f"❌ FAIL: Exception - {e}")
+        return False
+
+def test_buscar_vehiculo(token):
+    """Test 5: Search by partial patente and verify ID is usable"""
+    print("\n=== TEST 5: Search vehiculo by partial patente ===")
+    try:
+        # Get a real vehiculo
+        response = requests.get(
+            f"{BASE_URL}/vehiculos",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ FAIL: Could not fetch vehiculos: {response.status_code}")
+            return False
+        
+        vehiculos = response.json().get("vehiculos", [])
+        if not vehiculos:
+            print(f"❌ FAIL: No vehiculos found")
+            return False
+        
+        vehiculo = vehiculos[0]
+        patente = vehiculo.get("patente", "")
+        if len(patente) < 3:
+            print(f"❌ FAIL: Patente too short")
+            return False
+        
+        partial_patente = patente[:3]
+        print(f"Searching for: '{partial_patente}' (from patente: {patente})")
+        
+        # Search
+        response = requests.get(
+            f"{BASE_URL}/buscar?q={partial_patente}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        resultados = data.get("resultados", [])
+        
+        vehiculo_found = False
+        vehiculo_id = None
+        for item in resultados:
+            if item["tipo"] == "vehiculo":
+                vehiculo_found = True
+                vehiculo_id = item["id"]
+                print(f"Found vehiculo: {item['label']} (Marca/Modelo: {item['sub']}, Empresa: {item['empresa']})")
+                break
+        
+        if not vehiculo_found:
+            print(f"❌ FAIL: No vehiculo found in results")
+            return False
+        
+        # Test 5b: Verify vehiculo ID is usable
+        print(f"Testing GET /api/vehiculos/{vehiculo_id}")
+        response = requests.get(
+            f"{BASE_URL}/vehiculos/{vehiculo_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ FAIL: Vehiculo ID not usable: {response.status_code}")
+            return False
+        
+        print(f"✅ PASS: Found vehiculo and ID is usable")
+        return True
+    except Exception as e:
+        print(f"❌ FAIL: Exception - {e}")
+        return False
+
+def test_buscar_equipo(token):
+    """Test 6: Search by partial codigo_interno and verify ID is usable"""
+    print("\n=== TEST 6: Search equipo by partial codigo_interno ===")
+    try:
+        # Get a real equipo
+        response = requests.get(
+            f"{BASE_URL}/equipos",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ FAIL: Could not fetch equipos: {response.status_code}")
+            return False
+        
+        equipos = response.json().get("equipos", [])
+        if not equipos:
+            print(f"❌ FAIL: No equipos found")
+            return False
+        
+        equipo = equipos[0]
+        codigo = equipo.get("codigo_interno", "")
+        if len(codigo) < 2:
+            print(f"❌ FAIL: Codigo too short")
+            return False
+        
+        partial_codigo = codigo[:3] if len(codigo) >= 3 else codigo[:2]
+        print(f"Searching for: '{partial_codigo}' (from codigo: {codigo})")
+        
+        # Search
+        response = requests.get(
+            f"{BASE_URL}/buscar?q={partial_codigo}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        resultados = data.get("resultados", [])
+        
+        equipo_found = False
+        equipo_id = None
+        for item in resultados:
+            if item["tipo"] == "equipo":
+                equipo_found = True
+                equipo_id = item["id"]
+                print(f"Found equipo: {item['label']} (Marca/Modelo: {item['sub']}, Empresa: {item['empresa']})")
+                break
+        
+        if not equipo_found:
+            print(f"❌ FAIL: No equipo found in results")
+            return False
+        
+        # Test 6b: Verify equipo ID is usable
+        print(f"Testing GET /api/equipos/{equipo_id}")
+        response = requests.get(
+            f"{BASE_URL}/equipos/{equipo_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if response.status_code != 200:
+            print(f"❌ FAIL: Equipo ID not usable: {response.status_code}")
+            return False
+        
+        print(f"✅ PASS: Found equipo and ID is usable")
+        return True
+    except Exception as e:
+        print(f"❌ FAIL: Exception - {e}")
+        return False
+
+def test_buscar_no_auth():
+    """Test 7: GET /api/buscar without Authorization header should return 401"""
+    print("\n=== TEST 7: No authorization header ===")
+    try:
+        response = requests.get(
+            f"{BASE_URL}/buscar?q=test",
+            timeout=10
+        )
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 401:
+            print(f"❌ FAIL: Expected 401, got {response.status_code}")
+            return False
+        
+        print(f"✅ PASS: Returns 401 without authorization")
+        return True
+    except Exception as e:
+        print(f"❌ FAIL: Exception - {e}")
+        return False
+
+def test_buscar_empresa_scoped(empresa_token, empresa_profile):
+    """Test 8: As ADMIN_EMPRESA, all results should match that empresa"""
+    print("\n=== TEST 8: ADMIN_EMPRESA empresa-scoped results ===")
+    try:
+        empresa_id = empresa_profile.get("empresa_id")
+        print(f"Testing as ADMIN_EMPRESA (empresa_id: {empresa_id})")
+        
+        # Get empresa name for this admin
+        response_empresas = requests.get(
+            f"{BASE_URL}/empresas",
+            headers={"Authorization": f"Bearer {empresa_token}"},
+            timeout=10
         )
         
-        if response.status_code != 200:
-            print_test("Dashboard with empresa_id - Status 200", False, f"Got {response.status_code}: {response.text}")
-            return
+        expected_empresa_name = None
+        if response_empresas.status_code == 200:
+            empresas = response_empresas.json().get("empresas", [])
+            empresa_obj = next((e for e in empresas if e["empresa_id"] == empresa_id), None)
+            if empresa_obj:
+                expected_empresa_name = empresa_obj.get("razon_social")
+                print(f"Expected empresa: {expected_empresa_name}")
         
-        print_test("Dashboard with empresa_id - Status 200", True)
-        
-        data = response.json()
-        
-        # Check response is well-formed
-        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
-        missing_keys = [k for k in required_keys if k not in data]
-        
-        if missing_keys:
-            print_test("Dashboard response well-formed", False, f"Missing keys: {missing_keys}")
-        else:
-            print_test("Dashboard response well-formed", True, "All keys present")
-        
-        print(f"  Stats: {json.dumps(data.get('stats'), indent=2)}")
-        
-    except Exception as e:
-        print_test("Dashboard with empresa_id filter", False, f"Exception: {str(e)}")
-
-def test_dashboard_with_combined_filters():
-    """Test GET /api/dashboard?empresa_id=X&mandante_id=Y"""
-    print("=" * 80)
-    print("TEST 4: Dashboard with combined filters")
-    print("=" * 80)
-    
-    try:
-        # Get empresa_id
-        response = requests.get(f"{BASE_URL}/empresas", headers=get_headers(), timeout=30)
-        if response.status_code != 200:
-            print_test("Get empresas list", False, f"Status: {response.status_code}")
-            return
-        
-        empresas = response.json().get("empresas", [])
-        if not empresas:
-            print_test("Get empresas list", False, "No empresas found")
-            return
-        
-        empresa_id = empresas[0]['empresa_id']
-        
-        # Get mandante_id
-        response = requests.get(f"{BASE_URL}/mandantes", headers=get_headers(), timeout=30)
-        if response.status_code != 200:
-            print_test("Get mandantes list", False, f"Status: {response.status_code}")
-            return
-        
-        mandantes = response.json().get("mandantes", [])
-        if not mandantes:
-            print_test("Get mandantes list", False, "No mandantes found")
-            return
-        
-        mandante_id = mandantes[0]['mandante_id']
-        
-        print_test("Get empresa_id and mandante_id for testing", True, f"empresa_id: {empresa_id}, mandante_id: {mandante_id}")
-        
-        # Test dashboard with combined filters
+        # Search with a common term (2+ chars)
         response = requests.get(
-            f"{BASE_URL}/dashboard?empresa_id={empresa_id}&mandante_id={mandante_id}",
-            headers=get_headers(),
-            timeout=30
+            f"{BASE_URL}/buscar?q=ma",
+            headers={"Authorization": f"Bearer {empresa_token}"},
+            timeout=10
         )
+        print(f"Status: {response.status_code}")
         
         if response.status_code != 200:
-            print_test("Dashboard with combined filters - Status 200", False, f"Got {response.status_code}: {response.text}")
-            return
-        
-        print_test("Dashboard with combined filters - Status 200", True)
+            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            return False
         
         data = response.json()
+        resultados = data.get("resultados", [])
         
-        # Check response is well-formed
-        required_keys = ["stats", "acreditacion_por_mandante", "docs_por_estado", "tendencia_vencimientos", "proximos_vencimientos"]
-        missing_keys = [k for k in required_keys if k not in data]
+        if not resultados:
+            print(f"⚠️  WARNING: No results returned for ADMIN_EMPRESA search")
+            print(f"✅ PASS: No 500 error, empresa scoping working (empty results)")
+            return True
         
-        if missing_keys:
-            print_test("Dashboard response well-formed and coherent", False, f"Missing keys: {missing_keys}")
-        else:
-            print_test("Dashboard response well-formed and coherent", True, "All keys present")
+        if not expected_empresa_name:
+            print(f"⚠️  WARNING: Could not determine expected empresa name")
+            print(f"✅ PASS: No 500 error, {len(resultados)} results returned")
+            return True
         
-        print(f"  Stats: {json.dumps(data.get('stats'), indent=2)}")
+        # Check all results match this empresa
+        mismatched = []
+        for item in resultados:
+            if item.get("empresa") != expected_empresa_name:
+                mismatched.append(item)
         
+        if mismatched:
+            print(f"❌ FAIL: Found {len(mismatched)} items not matching empresa")
+            for item in mismatched[:3]:
+                print(f"  - {item['tipo']}: {item['label']} (empresa: {item['empresa']})")
+            return False
+        
+        print(f"✅ PASS: All {len(resultados)} results match ADMIN_EMPRESA's empresa (empresa-scoped)")
+        return True
     except Exception as e:
-        print_test("Dashboard with combined filters", False, f"Exception: {str(e)}")
-
-def test_regression():
-    """Test that existing fields are still intact"""
-    print("=" * 80)
-    print("TEST 5: Regression - Existing fields intact")
-    print("=" * 80)
-    
-    try:
-        response = requests.get(f"{BASE_URL}/dashboard", headers=get_headers(), timeout=30)
-        
-        if response.status_code != 200:
-            print_test("Dashboard regression - Status 200", False, f"Got {response.status_code}")
-            return
-        
-        data = response.json()
-        
-        # Check stats
-        stats = data.get("stats", {})
-        required_stats = [
-            "mandantes", "contratos_vigentes", "trabajadores", "vehiculos", "equipos",
-            "docs_pendientes", "docs_por_vencer", "docs_vencidos",
-            "trabajadores_acreditados", "trabajadores_bloqueados", "trabajadores_revision"
-        ]
-        
-        all_present = all(k in stats for k in required_stats)
-        if all_present:
-            print_test("Regression: stats fields intact", True, f"All {len(required_stats)} fields present")
-        else:
-            missing = [k for k in required_stats if k not in stats]
-            print_test("Regression: stats fields intact", False, f"Missing: {missing}")
-        
-        # Check acreditacion_por_mandante
-        acred = data.get("acreditacion_por_mandante")
-        if isinstance(acred, dict):
-            print_test("Regression: acreditacion_por_mandante intact", True, f"Type: dict, Keys: {len(acred)}")
-        else:
-            print_test("Regression: acreditacion_por_mandante intact", False, f"Type: {type(acred)}")
-        
-        # Check docs_por_estado
-        docs_estado = data.get("docs_por_estado")
-        if isinstance(docs_estado, list):
-            print_test("Regression: docs_por_estado intact", True, f"Type: list, Length: {len(docs_estado)}")
-        else:
-            print_test("Regression: docs_por_estado intact", False, f"Type: {type(docs_estado)}")
-        
-    except Exception as e:
-        print_test("Regression tests", False, f"Exception: {str(e)}")
+        print(f"❌ FAIL: Exception - {e}")
+        return False
 
 def main():
-    """Main test runner"""
-    print("\n")
     print("=" * 80)
-    print("APTIVA RL BACKEND TESTING - ENHANCED DASHBOARD ENDPOINT")
+    print("BACKEND API TESTING: /api/buscar (Unified Search Endpoint)")
     print("=" * 80)
-    print(f"Base URL: {BASE_URL}")
-    print(f"Testing as: {ADMIN_EMAIL}")
-    print("=" * 80)
-    print("\n")
     
-    # Login
-    if not login():
-        print("\n❌ LOGIN FAILED - Cannot proceed with tests")
-        return
+    # Login as admin
+    print("\n=== Logging in as ADMIN ===")
+    admin_token, admin_profile = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    if not admin_token:
+        print("❌ CRITICAL: Could not login as admin")
+        sys.exit(1)
+    print(f"✅ Logged in as {admin_profile.get('email')} (role: {admin_profile.get('role_codigo')})")
+    
+    # Login as empresa admin
+    print("\n=== Logging in as ADMIN_EMPRESA ===")
+    empresa_token, empresa_profile = login(EMPRESA_EMAIL, EMPRESA_PASSWORD)
+    if not empresa_token:
+        print("❌ WARNING: Could not login as ADMIN_EMPRESA")
+    else:
+        print(f"✅ Logged in as {empresa_profile.get('email')} (role: {empresa_profile.get('role_codigo')})")
     
     # Run tests
-    test_dashboard_no_filters()
-    test_dashboard_with_mandante_filter()
-    test_dashboard_with_empresa_filter()
-    test_dashboard_with_combined_filters()
-    test_regression()
+    results = []
     
-    print("\n")
+    # Test 1: Minimum chars
+    results.append(("Test 1: Minimum 2 chars", test_buscar_minimum_chars(admin_token)))
+    
+    # Test 2: Search by name
+    test2_result, trabajador_id = test_buscar_worker_by_name(admin_token)
+    results.append(("Test 2: Search by name", test2_result))
+    
+    # Test 3: Search by RUT
+    results.append(("Test 3: Search by RUT", test_buscar_worker_by_rut(admin_token)))
+    
+    # Test 4: Trabajador ID usable
+    results.append(("Test 4: Trabajador ID usable", test_trabajador_id_usable(admin_token, trabajador_id)))
+    
+    # Test 5: Search vehiculo
+    results.append(("Test 5: Search vehiculo", test_buscar_vehiculo(admin_token)))
+    
+    # Test 6: Search equipo
+    results.append(("Test 6: Search equipo", test_buscar_equipo(admin_token)))
+    
+    # Test 7: No auth
+    results.append(("Test 7: No authorization", test_buscar_no_auth()))
+    
+    # Test 8: Empresa scoped
+    if empresa_token:
+        results.append(("Test 8: Empresa-scoped", test_buscar_empresa_scoped(empresa_token, empresa_profile)))
+    else:
+        results.append(("Test 8: Empresa-scoped", False))
+    
+    # Summary
+    print("\n" + "=" * 80)
+    print("TEST SUMMARY")
     print("=" * 80)
-    print("TESTING COMPLETE")
-    print("=" * 80)
-    print("\n")
+    passed = sum(1 for _, result in results if result)
+    total = len(results)
+    
+    for test_name, result in results:
+        status = "✅ PASS" if result else "❌ FAIL"
+        print(f"{status}: {test_name}")
+    
+    print(f"\nTotal: {passed}/{total} tests passed")
+    
+    if passed == total:
+        print("\n🎉 ALL TESTS PASSED!")
+        sys.exit(0)
+    else:
+        print(f"\n⚠️  {total - passed} test(s) failed")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -244,6 +244,37 @@ export async function GET(request, { params }) {
       return json({ trabajadores: (await query(sql, args)).rows });
     }
 
+    if (p[0] === 'buscar') {
+      const search = (searchParams.get('q') || '').trim();
+      if (search.length < 2) return json({ resultados: [] });
+      const like = `%${search}%`;
+      const likeNorm = `%${search.replace(/[.\-\s]/g, '')}%`;
+      const empFilter = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : null;
+      const resultados = [];
+      // Trabajadores
+      {
+        const args = [like, likeNorm]; let s = "select t.trabajador_id as id, t.nombre, t.apellido, t.rut, t.cargo, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.deleted_at is null and (t.nombre ilike $1 or t.apellido ilike $1 or t.rut ilike $1 or t.cargo ilike $1 or replace(replace(t.rut,'.',''),'-','') ilike $2)";
+        if (empFilter) { args.push(empFilter); s += ` and t.empresa_id=$${args.length}`; }
+        s += ' order by t.apellido, t.nombre limit 8';
+        (await query(s, args)).rows.forEach((r) => resultados.push({ tipo: 'trabajador', id: r.id, label: `${r.nombre} ${r.apellido}`, sub: r.rut, extra: r.cargo || '', empresa: r.empresa }));
+      }
+      // Vehiculos
+      {
+        const args = [like]; let s = "select v.vehiculo_id as id, v.patente, v.marca, v.modelo, v.tipo, e.razon_social as empresa from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null and (v.patente ilike $1 or v.marca ilike $1 or v.modelo ilike $1 or v.tipo ilike $1)";
+        if (empFilter) { args.push(empFilter); s += ` and v.empresa_id=$${args.length}`; }
+        s += ' order by v.patente limit 6';
+        (await query(s, args)).rows.forEach((r) => resultados.push({ tipo: 'vehiculo', id: r.id, label: r.patente, sub: [r.marca, r.modelo].filter(Boolean).join(' ') || r.tipo || '', extra: r.tipo || '', empresa: r.empresa }));
+      }
+      // Equipos
+      {
+        const args = [like]; let s = "select q.equipo_id as id, q.codigo_interno, q.marca, q.modelo, q.tipo, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null and (q.codigo_interno ilike $1 or q.marca ilike $1 or q.modelo ilike $1 or q.tipo ilike $1)";
+        if (empFilter) { args.push(empFilter); s += ` and q.empresa_id=$${args.length}`; }
+        s += ' order by q.codigo_interno limit 6';
+        (await query(s, args)).rows.forEach((r) => resultados.push({ tipo: 'equipo', id: r.id, label: r.codigo_interno, sub: [r.marca, r.modelo].filter(Boolean).join(' ') || r.tipo || '', extra: r.tipo || '', empresa: r.empresa }));
+      }
+      return json({ resultados });
+    }
+
     if (p[0] === 'trabajadores' && p[1]) {
       const t = (await query('select t.*, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.trabajador_id=$1', [p[1]])).rows[0];
       if (!t) return json({ error: 'No encontrado' }, 404);

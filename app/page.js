@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen,
 } from 'lucide-react';
 
 const LOGO = '/logo-aptiva.png';
@@ -532,6 +532,238 @@ function VencBadge({ dias }) {
   return <Badge className={`${cls} border-0`}>{txt}</Badge>;
 }
 
+function pctColor(p) { return p >= 90 ? '#10b981' : p >= 60 ? '#f59e0b' : '#ef4444'; }
+function RadialPct({ pct, size = 96 }) {
+  const c = pctColor(pct);
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <div className="rounded-full" style={{ width: size, height: size, background: `conic-gradient(${c} ${pct * 3.6}deg, #e2e8f0 0deg)` }} />
+      <div className="absolute inset-[10px] rounded-full bg-white flex flex-col items-center justify-center">
+        <span className="text-xl font-bold tabular-nums" style={{ color: c }}>{pct}%</span>
+        <span className="text-[10px] text-slate-400 -mt-0.5">cumple</span>
+      </div>
+    </div>
+  );
+}
+
+const EXP_TIPO = { trabajador: { icon: Users, label: 'Trabajador' }, vehiculo: { icon: Truck, label: 'Vehículo' }, equipo: { icon: Wrench, label: 'Equipo' } };
+
+function computeExpediente(acreditacion) {
+  const now = new Date();
+  let tot = 0, ok = 0;
+  const docSummary = { aprobado: 0, por_vencer: 0, vencido: 0, en_revision: 0, rechazado: 0, faltante: 0 };
+  const perMandante = [];
+  (acreditacion || []).forEach((a) => {
+    tot += a.docs_total || 0; ok += a.docs_ok || 0;
+    const pct = a.docs_total ? Math.round((a.docs_ok / a.docs_total) * 100) : 100;
+    perMandante.push({ mandante: a.mandante, contrato: a.contrato, estado: a.estado, ok: a.docs_ok || 0, total: a.docs_total || 0, pct });
+    (a.detalle || []).forEach((d) => {
+      let st = d.estado;
+      if (st === 'aprobado' && d.fecha_vencimiento) {
+        const dias = Math.ceil((new Date(d.fecha_vencimiento) - now) / 86400000);
+        if (dias < 0) st = 'vencido'; else if (dias <= 30) st = 'por_vencer';
+      }
+      if (st === 'pendiente') st = 'en_revision';
+      if (docSummary[st] !== undefined) docSummary[st]++;
+    });
+  });
+  const pctTotal = tot ? Math.round((ok / tot) * 100) : 100;
+  const estadoGlobal = perMandante.some((m) => m.estado === 'BLOQUEADO') ? 'BLOQUEADO'
+    : perMandante.some((m) => m.estado === 'EN_REVISION') ? 'EN_REVISION' : 'ACREDITADO';
+  return { pctTotal, ok, tot, docSummary, perMandante, estadoGlobal };
+}
+
+function printExpediente({ tipo, info, asignaciones, exp }) {
+  const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const titulo = tipo === 'trabajador' ? `${info.nombre} ${info.apellido}` : (info.patente || info.codigo_interno);
+  const metaMap = tipo === 'trabajador'
+    ? [['RUT', info.rut], ['Cargo', info.cargo], ['Empresa', info.empresa]]
+    : [['Tipo', info.tipo], ['Marca/Modelo', [info.marca, info.modelo, info.anio].filter(Boolean).join(' ')], ['Empresa', info.empresa]];
+  const meta = metaMap.map(([k, v]) => `<span style="margin-right:18px"><b>${esc(k)}:</b> ${esc(v || '—')}</span>`).join('');
+  const asigRows = (asignaciones || []).map((a) => `<tr><td>${esc(a.mandante)}</td><td>${esc(a.numero_oc)}</td><td>${esc(a.gerencia || '—')}</td><td>${esc(a.estado)}</td></tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#888">Sin asignaciones</td></tr>';
+  const manRows = exp.perMandante.map((m) => `<tr><td>${esc(m.mandante)}</td><td>${esc(m.contrato)}</td><td>${esc(m.estado)}</td><td style="text-align:right">${m.ok}/${m.total}</td><td style="text-align:right"><b>${m.pct}%</b></td></tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:#888">Sin datos</td></tr>';
+  const ds = exp.docSummary;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Expediente ${esc(titulo)}</title>
+  <style>body{font-family:Arial,Helvetica,sans-serif;color:#1e293b;padding:32px;max-width:820px;margin:auto}
+  h1{font-size:22px;margin:0 0 4px}.meta{color:#475569;font-size:13px;margin-bottom:18px}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;border-bottom:2px solid #e2e8f0;padding-bottom:6px;margin-top:26px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}th,td{border:1px solid #e2e8f0;padding:7px 9px;text-align:left}th{background:#f8fafc}
+  .big{font-size:40px;font-weight:800}.chips span{display:inline-block;border:1px solid #e2e8f0;border-radius:8px;padding:6px 12px;margin:0 8px 8px 0;font-size:13px}
+  .foot{margin-top:36px;color:#94a3b8;font-size:11px;text-align:center}</style></head>
+  <body onload="window.print()">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <div><h1>${esc(titulo)}</h1><div class="meta">${meta}</div></div>
+    <div style="text-align:right"><div class="big" style="color:${pctColor(exp.pctTotal)}">${exp.pctTotal}%</div><div style="font-size:12px;color:#64748b">Cumplimiento · ${esc(exp.estadoGlobal)}</div></div>
+  </div>
+  <h2>Resumen documental</h2>
+  <div class="chips"><span>Aprobados: <b>${ds.aprobado}</b></span><span>Por vencer: <b>${ds.por_vencer}</b></span><span>Vencidos: <b>${ds.vencido}</b></span><span>En revisión: <b>${ds.en_revision}</b></span><span>Rechazados: <b>${ds.rechazado}</b></span><span>Faltantes: <b>${ds.faltante}</b></span></div>
+  <h2>Cumplimiento por mandante</h2>
+  <table><thead><tr><th>Mandante</th><th>Contrato</th><th>Estado</th><th style="text-align:right">Oblig.</th><th style="text-align:right">%</th></tr></thead><tbody>${manRows}</tbody></table>
+  <h2>Asignaciones</h2>
+  <table><thead><tr><th>Mandante</th><th>Contrato</th><th>Gerencia</th><th>Estado</th></tr></thead><tbody>${asigRows}</tbody></table>
+  <div class="foot">Aptiva RL · Holding Río Loa · Expediente generado ${new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago' })}</div>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { toast.error('Permite las ventanas emergentes para imprimir'); return; }
+  w.document.write(html); w.document.close();
+}
+
+const DOC_CHIP = {
+  aprobado: { label: 'Aprobados', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-100' },
+  por_vencer: { label: 'Por vencer', cls: 'bg-orange-50 text-orange-700 ring-orange-100' },
+  vencido: { label: 'Vencidos', cls: 'bg-red-50 text-red-700 ring-red-100' },
+  en_revision: { label: 'En revisión', cls: 'bg-blue-50 text-blue-700 ring-blue-100' },
+  rechazado: { label: 'Rechazados', cls: 'bg-red-50 text-red-600 ring-red-100' },
+  faltante: { label: 'Faltantes', cls: 'bg-slate-50 text-slate-600 ring-slate-200' },
+};
+
+function Expediente({ api, openDetail }) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState([]);
+  const [openList, setOpenList] = useState(false);
+  const [loadingList, setLoadingList] = useState(false);
+  const [sel, setSel] = useState(null); // {tipo, id, label}
+  const [detail, setDetail] = useState(null);
+  const [loadingDet, setLoadingDet] = useState(false);
+
+  useEffect(() => {
+    if (q.trim().length < 2) { setResults([]); return; }
+    let alive = true; setLoadingList(true);
+    const t = setTimeout(async () => {
+      try { const d = await api(`/buscar?q=${encodeURIComponent(q.trim())}`); if (alive) { setResults(d.resultados || []); setOpenList(true); } }
+      catch { if (alive) setResults([]); }
+      finally { if (alive) setLoadingList(false); }
+    }, 300);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q, api]);
+
+  const pick = async (r) => {
+    setSel(r); setOpenList(false); setQ(r.label); setDetail(null); setLoadingDet(true);
+    try {
+      const path = r.tipo === 'trabajador' ? `/trabajadores/${r.id}` : r.tipo === 'vehiculo' ? `/vehiculos/${r.id}` : `/equipos/${r.id}`;
+      const d = await api(path);
+      setDetail({ tipo: r.tipo, info: d.trabajador || d.recurso, asignaciones: d.asignaciones || [], acreditacion: d.acreditacion || [] });
+    } catch (e) { toast.error(e.message); } finally { setLoadingDet(false); }
+  };
+  const clear = () => { setSel(null); setDetail(null); setQ(''); setResults([]); };
+
+  const exp = detail ? computeExpediente(detail.acreditacion) : null;
+  const info = detail?.info;
+  const tipoMeta = detail ? EXP_TIPO[detail.tipo] : null;
+  const titulo = detail ? (detail.tipo === 'trabajador' ? `${info.nombre} ${info.apellido}` : (info.patente || info.codigo_interno)) : '';
+  const metaItems = detail ? (detail.tipo === 'trabajador'
+    ? [{ label: 'RUT', value: info.rut }, { label: 'Cargo', value: info.cargo || '—' }, { label: 'Empresa', value: info.empresa }]
+    : [{ label: 'Tipo', value: info.tipo || '—' }, { label: 'Detalle', value: [info.marca, info.modelo, info.anio].filter(Boolean).join(' ') || '—' }, { label: 'Empresa', value: info.empresa }]) : [];
+
+  return (
+    <Card className="mb-4 shadow-sm border-slate-200 overflow-visible">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2"><FolderOpen className="h-4 w-4 text-blue-600" />Expediente</CardTitle>
+        <CardDescription>Busca por RUT, nombre, patente o código para ver el expediente completo</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="relative max-w-xl">
+          <Search className="h-4 w-4 absolute left-3 top-3 text-slate-400" />
+          <Input className="pl-9 pr-9 h-11" placeholder="Ej: 12.345.678-9, Juan Pérez, ABCD-12…" value={q}
+            onChange={(e) => setQ(e.target.value)} onFocus={() => results.length && setOpenList(true)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && results[0]) pick(results[0]); if (e.key === 'Escape') setOpenList(false); }} />
+          {q && <button onClick={clear} className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>}
+          {openList && (results.length > 0 || loadingList) && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setOpenList(false)} />
+              <div className="absolute z-40 mt-1 w-full bg-white border rounded-lg shadow-xl max-h-80 overflow-y-auto">
+                {loadingList && <div className="px-3 py-3 text-sm text-slate-400">Buscando…</div>}
+                {results.map((r) => {
+                  const Ic = EXP_TIPO[r.tipo].icon;
+                  return (
+                    <button key={`${r.tipo}-${r.id}`} onClick={() => pick(r)} className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 text-left border-b last:border-0">
+                      <div className="h-9 w-9 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center shrink-0"><Ic className="h-4 w-4" /></div>
+                      <div className="min-w-0 flex-1"><p className="text-sm font-medium text-slate-800 truncate">{r.label}</p><p className="text-xs text-slate-400 truncate">{r.sub}{r.extra ? ` · ${r.extra}` : ''}</p></div>
+                      <span className="text-[10px] uppercase tracking-wide text-slate-400 shrink-0">{EXP_TIPO[r.tipo].label}</span>
+                    </button>
+                  );
+                })}
+                {!loadingList && !results.length && <div className="px-3 py-3 text-sm text-slate-400">Sin coincidencias</div>}
+              </div>
+            </>
+          )}
+        </div>
+
+        {loadingDet && <div className="mt-4 h-40 rounded-xl bg-slate-50 animate-pulse" />}
+
+        {detail && exp && !loadingDet && (
+          <div className="mt-4 rounded-xl border bg-gradient-to-br from-slate-50 to-white p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className="h-14 w-14 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 text-lg font-bold">
+                  {detail.tipo === 'trabajador' ? (info.nombre?.charAt(0) || '?') : <tipoMeta.icon className="h-6 w-6" />}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-lg font-bold text-slate-800 truncate">{titulo}</h3>
+                    <SemBadge estado={exp.estadoGlobal} />
+                    <span className="text-[10px] uppercase tracking-wide text-slate-400">{tipoMeta.label}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 text-sm text-slate-500">
+                    {metaItems.map((m) => <span key={m.label}><span className="text-slate-400">{m.label}:</span> <span className="font-medium text-slate-600">{m.value}</span></span>)}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <RadialPct pct={exp.pctTotal} />
+                <div className="flex flex-col gap-2">
+                  <Button size="sm" variant="outline" onClick={() => printExpediente({ ...detail, exp })}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
+                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => openDetail(detail.tipo, sel.id)}>Ver ficha<ChevronRight className="h-4 w-4 ml-0.5" /></Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              {Object.entries(DOC_CHIP).map(([k, v]) => (
+                <div key={k} className={`rounded-lg ring-1 px-3 py-2 ${v.cls}`}>
+                  <div className="text-xl font-bold tabular-nums">{exp.docSummary[k] || 0}</div>
+                  <div className="text-[11px] font-medium">{v.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 grid lg:grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Cumplimiento por mandante</p>
+                <div className="space-y-2.5">
+                  {exp.perMandante.length === 0 && <p className="text-sm text-slate-400">Sin asignaciones a mandantes</p>}
+                  {exp.perMandante.map((m, i) => (
+                    <div key={i}>
+                      <div className="flex items-center justify-between text-sm mb-1 gap-2">
+                        <span className="text-slate-700 truncate">{m.mandante} <span className="text-xs text-slate-400">· {m.contrato}</span></span>
+                        <span className="font-semibold tabular-nums shrink-0" style={{ color: pctColor(m.pct) }}>{m.pct}%</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${m.pct}%`, background: pctColor(m.pct) }} /></div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{m.ok}/{m.total} obligatorios · {m.estado.replace('_', ' ').toLowerCase()}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Asignaciones ({detail.asignaciones.length})</p>
+                <div className="rounded-lg border bg-white divide-y max-h-56 overflow-y-auto">
+                  {detail.asignaciones.length === 0 && <p className="text-sm text-slate-400 px-3 py-3">Sin asignaciones</p>}
+                  {detail.asignaciones.map((a) => (
+                    <div key={a.asignacion_id || `${a.mandante}-${a.numero_oc}`} className="px-3 py-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0"><p className="text-sm text-slate-700 truncate">{a.mandante}</p><p className="text-xs text-slate-400 truncate">{a.numero_oc}{a.gerencia ? ` · ${a.gerencia}` : ''}</p></div>
+                      <Badge className={`${a.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'} border-0 shrink-0`}>{a.estado}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Dashboard({ api, openDetail }) {
   const [empresas] = useData(api, '/empresas');
   const [mandantes] = useData(api, '/mandantes');
@@ -558,6 +790,7 @@ function Dashboard({ api, openDetail }) {
     <div>
       <PageHead title="Dashboard ejecutivo" sub="Estado en tiempo real del Holding Río Loa"
         action={<Button variant="outline" onClick={exportar} disabled={!data}><Download className="h-4 w-4 mr-1" />Exportar</Button>} />
+      <Expediente api={api} openDetail={openDetail} />
       <div className="flex flex-wrap gap-2 mb-4">
         <Select value={fEmp} onValueChange={setFEmp}><SelectTrigger className="w-56"><SelectValue placeholder="Empresa" /></SelectTrigger><SelectContent><SelectItem value="all">Todas las empresas</SelectItem>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select>
         <Select value={fMan} onValueChange={setFMan}><SelectTrigger className="w-56"><SelectValue placeholder="Mandante" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los mandantes</SelectItem>{(mandantes?.mandantes || []).map((m) => <SelectItem key={m.mandante_id} value={m.mandante_id}>{m.razon_social}</SelectItem>)}</SelectContent></Select>
