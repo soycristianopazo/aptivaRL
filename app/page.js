@@ -1021,6 +1021,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
   const [cf, setCf] = useState({ categoria_id: null, nombre: '', descripcion: '' });
   const [reqOpen, setReqOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [selCat, setSelCat] = useState(null);
   const [rf, setRf] = useState({ requisito_id: null, nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 });
 
   const fmt = (d) => fdateCL(d);
