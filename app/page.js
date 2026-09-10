@@ -341,8 +341,8 @@ function NotificationsBell({ api, onGo }) {
             <div className="p-3 border-b font-medium text-slate-800 text-sm">Notificaciones</div>
             <div className="p-2 space-y-1 text-sm">
               {data?.pendientes_revision > 0 && <button onClick={() => { setOpen(false); onGo('revision'); }} className="w-full text-left px-2 py-2 rounded hover:bg-slate-50 flex items-center gap-2"><FileClock className="h-4 w-4 text-amber-500" />{data.pendientes_revision} documento(s) por revisar</button>}
-              {(data?.vencidos || []).map((v) => <div key={v.documento_id} className="px-2 py-2 rounded hover:bg-slate-50"><p className="text-slate-700 truncate">{v.documento}</p><p className="text-xs text-red-600">Vencido · {v.mandante}</p></div>)}
-              {(data?.por_vencer || []).map((v) => <div key={v.documento_id} className="px-2 py-2 rounded hover:bg-slate-50"><p className="text-slate-700 truncate">{v.documento}</p><p className="text-xs text-amber-600">Vence en {v.dias_restantes}d · {v.mandante}</p></div>)}
+              {(data?.vencidos || []).map((v) => <div key={v.documento_id} className="px-2 py-2 rounded hover:bg-slate-50"><p className="text-slate-700 truncate">{v.documento}</p><p className="text-xs text-slate-500 truncate">{v.recurso}</p><p className="text-xs text-red-600">Vencido · {v.mandante}</p></div>)}
+              {(data?.por_vencer || []).map((v) => <div key={v.documento_id} className="px-2 py-2 rounded hover:bg-slate-50"><p className="text-slate-700 truncate">{v.documento}</p><p className="text-xs text-slate-500 truncate">{v.recurso}</p><p className="text-xs text-amber-600">Vence en {v.dias_restantes}d · {v.mandante}</p></div>)}
               {total === 0 && <p className="text-slate-400 px-2 py-4 text-center">Sin alertas</p>}
             </div>
             <button onClick={() => { setOpen(false); onGo('vencimientos'); }} className="w-full text-center p-2 text-blue-600 text-sm border-t hover:bg-slate-50">Ver vencimientos</button>
@@ -1508,7 +1508,7 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
     <div>
       <PageHead title={isVeh ? 'Vehículos' : 'Equipos'} sub={`Cada ${isVeh ? 'vehículo' : 'equipo'} pertenece a una empresa del Holding`} action={canManage && <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo</Button>} />
       <Table columns={isVeh ? [
-        { key: 'patente', label: 'Patente', render: (r) => <span className="font-medium">{r.patente}</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' },
+        { key: 'patente', label: 'Patente', render: (r) => <span className="font-medium">{r.patente}</span> }, { key: 'numero_interno', label: 'Nº INT', render: (r) => r.numero_interno || <span className="text-slate-300">—</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' },
       ] : [
         { key: 'codigo_interno', label: 'Código', render: (r) => <span className="font-medium">{r.codigo_interno}</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' },
       ]} rows={rows} onRow={(r) => openDetail(isVeh ? 'vehiculo' : 'equipo', isVeh ? r.vehiculo_id : r.equipo_id)} />
@@ -1518,6 +1518,7 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
           {isSuper && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>{isVeh ? 'Patente' : 'Código interno'}</Label><Input onChange={(e) => setF({ ...f, [isVeh ? 'patente' : 'codigo_interno']: e.target.value })} /></div>
+            {isVeh && <div className="space-y-1.5"><Label>Nº Interno</Label><Input placeholder="Ej: 101" onChange={(e) => setF({ ...f, numero_interno: e.target.value })} /></div>}
             <div className="space-y-1.5"><Label>Tipo</Label>{isVeh
               ? <Select value={f.tipo} onValueChange={(v) => setF({ ...f, tipo: v })}><SelectTrigger><SelectValue placeholder="Selecciona tipo" /></SelectTrigger><SelectContent className="max-h-72">{(tiposVeh?.tipos || []).map((t) => <SelectItem key={t.id} value={t.nombre}>{t.nombre}</SelectItem>)}</SelectContent></Select>
               : <Input onChange={(e) => setF({ ...f, tipo: e.target.value })} />}</div>
@@ -1548,7 +1549,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
   const { recurso: r, asignaciones, acreditacion } = data;
   const titulo = tipo === 'vehiculo' ? r.patente : r.codigo_interno;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === r.empresa_id);
-  const openEdit = () => { setEf({ [tipo === 'vehiculo' ? 'patente' : 'codigo_interno']: titulo, tipo: r.tipo || '', marca: r.marca || '', modelo: r.modelo || '', anio: r.anio || '' }); setEdit(true); };
+  const openEdit = () => { setEf({ [tipo === 'vehiculo' ? 'patente' : 'codigo_interno']: titulo, numero_interno: r.numero_interno || '', tipo: r.tipo || '', marca: r.marca || '', modelo: r.modelo || '', anio: r.anio || '' }); setEdit(true); };
   const saveEdit = async () => { try { await api(`/${tipo}s/${id}`, { method: 'PUT', body: JSON.stringify({ ...ef, anio: ef.anio ? Number(ef.anio) : null }) }); toast.success(`${tipo === 'vehiculo' ? 'Vehículo' : 'Equipo'} actualizado`); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
   const doAsignar = async () => { if (!asig) return; try { await api(`/${tipo}s/asignar`, { method: 'POST', body: JSON.stringify({ recurso_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
@@ -1584,6 +1585,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
         <DialogHeader><DialogTitle>Editar {tipo === 'vehiculo' ? 'vehículo' : 'equipo'}</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5"><Label>{tipo === 'vehiculo' ? 'Patente' : 'Código interno'}</Label><Input value={ef[tipo === 'vehiculo' ? 'patente' : 'codigo_interno'] || ''} onChange={(e) => setEf({ ...ef, [tipo === 'vehiculo' ? 'patente' : 'codigo_interno']: e.target.value })} /></div>
+          {tipo === 'vehiculo' && <div className="space-y-1.5"><Label>Nº Interno</Label><Input value={ef.numero_interno || ''} onChange={(e) => setEf({ ...ef, numero_interno: e.target.value })} /></div>}
           <div className="space-y-1.5"><Label>Tipo</Label>{tipo === 'vehiculo'
             ? <Select value={ef.tipo} onValueChange={(v) => setEf({ ...ef, tipo: v })}><SelectTrigger><SelectValue placeholder="Selecciona tipo" /></SelectTrigger><SelectContent className="max-h-72">{(tiposVeh?.tipos || []).map((t) => <SelectItem key={t.id} value={t.nombre}>{t.nombre}</SelectItem>)}</SelectContent></Select>
             : <Input value={ef.tipo || ''} onChange={(e) => setEf({ ...ef, tipo: e.target.value })} />}</div>

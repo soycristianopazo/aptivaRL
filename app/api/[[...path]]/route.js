@@ -394,7 +394,16 @@ export async function GET(request, { params }) {
     if (p[0] === 'auditoria') return json({ eventos: (await query('select * from auditoria order by created_at desc limit 200')).rows });
 
     if (p[0] === 'notificaciones') {
-      const rows = (await query(`select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento, coalesce(r.nombre, d.nombre_archivo) as documento, coalesce(r.dias_alerta,30) as dias_alerta, m.razon_social as mandante, (d.fecha_vencimiento - current_date) as dias_restantes from documentos d left join requisitos_documentales r on r.requisito_id=d.requisito_id left join mandantes m on m.mandante_id=d.mandante_id where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null and d.fecha_vencimiento <= current_date + (coalesce(r.dias_alerta,30) || ' days')::interval order by d.fecha_vencimiento`)).rows;
+      const rows = (await query(`select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento, coalesce(r.nombre, d.nombre_archivo) as documento, coalesce(r.dias_alerta,30) as dias_alerta, m.razon_social as mandante, (d.fecha_vencimiento - current_date) as dias_restantes,
+        coalesce(nullif(trim(concat(t.nombre,' ',t.apellido)),''), v.patente, q.codigo_interno, concat('Contrato ', ct.numero_oc), '—') as recurso
+        from documentos d
+        left join requisitos_documentales r on r.requisito_id=d.requisito_id
+        left join mandantes m on m.mandante_id=d.mandante_id
+        left join trabajadores t on t.trabajador_id=d.recurso_id and d.recurso_tipo='trabajador'
+        left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
+        left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
+        left join contratos ct on ct.contrato_id=d.recurso_id and d.recurso_tipo='contrato'
+        where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null and d.fecha_vencimiento <= current_date + (coalesce(r.dias_alerta,30) || ' days')::interval order by d.fecha_vencimiento`)).rows;
       const vencidos = rows.filter((x) => x.dias_restantes < 0);
       const por_vencer = rows.filter((x) => x.dias_restantes >= 0);
       const pendientes_revision = (await query("select count(*)::int c from documentos where estado='en_revision' and deleted_at is null")).rows[0].c;
@@ -697,11 +706,11 @@ export async function POST(request, { params }) {
 
     if (p[0] === 'vehiculos' && !p[1]) {
       if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
-      const { empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis } = body;
+      const { empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis, numero_interno } = body;
       const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
       if (!empId || !patente) return json({ error: 'Empresa y patente requeridas' }, 400);
       const id = uuid();
-      await query('insert into vehiculos (vehiculo_id, empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, empId, patente, tipo || null, marca || null, modelo || null, anio || null, num_motor || null, num_chasis || null]);
+      await query('insert into vehiculos (vehiculo_id, empresa_id, patente, tipo, marca, modelo, anio, num_motor, num_chasis, numero_interno) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [id, empId, patente, tipo || null, marca || null, modelo || null, anio || null, num_motor || null, num_chasis || null, numero_interno || null]);
       return json({ vehiculo: (await query('select * from vehiculos where vehiculo_id=$1', [id])).rows[0] }, 201);
     }
     if (p[0] === 'equipos' && !p[1]) {
@@ -780,7 +789,7 @@ export async function PUT(request, { params }) {
     }
     if ((p[0] === 'vehiculos' || p[0] === 'equipos') && p[1]) {
       const veh = p[0] === 'vehiculos';
-      const { cols, vals, i } = build([veh ? 'patente' : 'codigo_interno', 'tipo', 'marca', 'modelo', 'anio']);
+      const { cols, vals, i } = build([veh ? 'patente' : 'codigo_interno', 'tipo', 'marca', 'modelo', 'anio', ...(veh ? ['numero_interno'] : [])]);
       if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
       vals.push(p[1]);
       const tbl = veh ? 'vehiculos' : 'equipos'; const idcol = veh ? 'vehiculo_id' : 'equipo_id';
