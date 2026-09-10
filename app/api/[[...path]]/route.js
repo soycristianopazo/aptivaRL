@@ -114,7 +114,7 @@ async function acreditacionTrabajador(trabajadorId) {
      join contratos c on c.contrato_id=a.contrato_id where a.trabajador_id=$1 and a.estado='activo'`, [trabajadorId])).rows;
   const out = [];
   for (const a of asigs) {
-    const reqs = (await query("select * from requisitos_documentales where mandante_id=$1 and tipo_recurso='trabajador' and activo=true order by orden", [a.mandante_id])).rows;
+    const reqs = (await query("select r.*, cat.nombre as categoria, cat.orden as cat_orden from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 and r.tipo_recurso='trabajador' and r.activo=true order by cat.orden nulls last, r.orden", [a.mandante_id])).rows;
     const docs = (await query('select * from documentos where recurso_tipo=$1 and recurso_id=$2 and mandante_id=$3 and deleted_at is null', ['trabajador', trabajadorId, a.mandante_id])).rows;
     let bloqueado = false, revision = false, obligTotal = 0, okCount = 0;
     const detalle = [];
@@ -131,7 +131,7 @@ async function acreditacionTrabajador(trabajadorId) {
         else if (['en_revision', 'pendiente'].includes(estado)) revision = true;
         else if (estado === 'aprobado') okCount++;
       }
-      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
+      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, categoria: req.categoria || 'Sin categoría', obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
     }
     const estadoGlobal = bloqueado ? 'BLOQUEADO' : revision ? 'EN_REVISION' : 'ACREDITADO';
     out.push({ mandante_id: a.mandante_id, mandante: a.mandante, contrato: a.numero_oc, estado: estadoGlobal, docs_ok: okCount, docs_total: obligTotal, detalle });
@@ -148,7 +148,7 @@ async function acreditacionRecurso(tipo, recursoId) {
      join contratos c on c.contrato_id=a.contrato_id where a.${T.col}=$1 and a.estado='activo'`, [recursoId])).rows;
   const out = [];
   for (const a of asigs) {
-    const reqs = (await query('select * from requisitos_documentales where mandante_id=$1 and tipo_recurso=$2 and activo=true order by orden', [a.mandante_id, tipo])).rows;
+    const reqs = (await query('select r.*, cat.nombre as categoria, cat.orden as cat_orden from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 and r.tipo_recurso=$2 and r.activo=true order by cat.orden nulls last, r.orden', [a.mandante_id, tipo])).rows;
     const docs = (await query('select * from documentos where recurso_tipo=$1 and recurso_id=$2 and mandante_id=$3 and deleted_at is null', [tipo, recursoId, a.mandante_id])).rows;
     let bloqueado = false, revision = false, obligTotal = 0, okCount = 0;
     const detalle = [];
@@ -157,7 +157,7 @@ async function acreditacionRecurso(tipo, recursoId) {
       let estado = 'faltante';
       if (doc) { estado = doc.estado; if (doc.estado === 'aprobado' && doc.fecha_vencimiento && new Date(doc.fecha_vencimiento) < new Date()) estado = 'vencido'; }
       if (req.obligatorio) { obligTotal++; if (['faltante', 'vencido', 'rechazado'].includes(estado)) bloqueado = true; else if (['en_revision', 'pendiente'].includes(estado)) revision = true; else if (estado === 'aprobado') okCount++; }
-      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
+      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, categoria: req.categoria || 'Sin categoría', obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
     }
     out.push({ mandante_id: a.mandante_id, mandante: a.mandante, contrato: a.numero_oc, estado: bloqueado ? 'BLOQUEADO' : revision ? 'EN_REVISION' : 'ACREDITADO', docs_ok: okCount, docs_total: obligTotal, detalle });
   }

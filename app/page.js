@@ -464,6 +464,44 @@ function Mandantes({ api, openDetail, canManage }) {
   );
 }
 
+function DocsPorCategoria({ detalle, canManage, onCargar }) {
+  const grupos = {};
+  const orden = [];
+  (detalle || []).forEach((d) => {
+    const k = d.categoria || 'Sin categoría';
+    if (!grupos[k]) { grupos[k] = []; orden.push(k); }
+    grupos[k].push(d);
+  });
+  return (
+    <div className="space-y-4">
+      {orden.map((cat) => {
+        const items = grupos[cat];
+        const ok = items.filter((x) => x.estado === 'aprobado').length;
+        return (
+          <div key={cat}>
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{cat}</h4>
+              <span className="text-[11px] text-slate-400">{ok}/{items.length}</span>
+            </div>
+            <div className="divide-y rounded-lg border bg-white">
+              {items.map((d) => (
+                <div key={d.requisito_id} className="flex items-center justify-between py-2 px-3 gap-2">
+                  <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
+                  <div className="flex items-center gap-2">
+                    {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
+                    <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
+                    {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => onCargar(d)}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SiNo({ on }) {
   return on
     ? <span className="inline-block px-3 py-1 rounded text-xs font-medium bg-emerald-400 text-white">SI</span>
@@ -867,18 +905,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes.</p>}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><div className="divide-y">
-                {a.detalle.map((d) => (
-                  <div key={d.requisito_id} className="flex items-center justify-between py-2 gap-2">
-                    <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
-                    <div className="flex items-center gap-2">
-                      {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
-                      <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
-                      {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => setUpload({ requisito: d, mandante_id: a.mandante_id })}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
-                    </div>
-                  </div>
-                ))}
-              </div></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>
@@ -997,18 +1024,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes. Asigna este {tipo} a un contrato para ver sus requisitos documentales.</p>}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><div className="divide-y">
-                {a.detalle.map((d) => (
-                  <div key={d.requisito_id} className="flex items-center justify-between py-2 gap-2">
-                    <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
-                    <div className="flex items-center gap-2">
-                      {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
-                      <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
-                      {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => setUpload({ requisito: d, mandante_id: a.mandante_id })}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
-                    </div>
-                  </div>
-                ))}
-              </div></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>
