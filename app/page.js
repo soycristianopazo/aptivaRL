@@ -959,6 +959,43 @@ function FiniquitoViewerModal({ api, row, onClose }) {
 }
 
 
+function DesvinculacionInfoModal({ asig, trabajador, onClose, onVerArchivo }) {
+  const oc = (asig.desv_contrato || asig.numero_oc || '').replace(/^\s*(Contrato|OC|PO|N°)\s+/i, '');
+  const filas = [
+    ['Trabajador', trabajador],
+    ['Empresa', asig.desv_empresa || '—'],
+    ['Mandante', asig.desv_mandante || asig.mandante || '—'],
+    ['Contrato', oc || '—'],
+    ['Tipo', asig.desv_tipo === 'anexo_traslado' ? 'Anexo de traslado' : 'Finiquito'],
+    ['Causal', asig.desv_causal || '—'],
+    ['Fecha', asig.desv_fecha ? fdatetime(asig.desv_fecha) : '—'],
+    ['Archivo', asig.desv_archivo || '—'],
+  ];
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Detalle de la desvinculación</DialogTitle>
+          <DialogDescription>Información registrada al momento del finiquito.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {filas.map(([k, v]) => (
+            <div key={k} className={k === 'Causal' || k === 'Archivo' ? 'sm:col-span-2' : ''}>
+              <p className="text-xs text-slate-400">{k}</p>
+              <p className="text-sm text-slate-800 break-words">{v}</p>
+            </div>
+          ))}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Cerrar</Button>
+          {asig.desvinculacion_id && <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={onVerArchivo}><Eye className="h-4 w-4 mr-1" />Ver documento</Button>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
 function DocsPorCategoria({ detalle, canManage, onCargar, api }) {
   const grupos = {};
   const orden = [];
@@ -1465,6 +1502,8 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const [asig, setAsig] = useState('');
   const [desvincular, setDesvincular] = useState(null);
   const [verHistDoc, setVerHistDoc] = useState(null);
+  const [verDesv, setVerDesv] = useState(null);
+  const [verDesvFile, setVerDesvFile] = useState(null);
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const { trabajador: t, asignaciones, acreditacion, historial, historialDocumental } = data;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === t.empresa_id);
@@ -1494,7 +1533,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
         </TabsContent>
         <TabsContent value="asignaciones">
           {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={doAsignar}>Asignar</Button></div>}
-          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => (canManage && r.estado === 'activo') ? <div className="flex justify-end"><Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button></div> : null }]} rows={asignaciones} />
+          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-700 border-0'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.estado !== 'activo' && r.desvinculacion_id && <Button size="sm" variant="outline" className="h-7 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => setVerDesv(r)}><Eye className="h-3.5 w-3.5 mr-1" />Ver desvinculación</Button>}{canManage && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button>}</div> }]} rows={asignaciones} />
         </TabsContent>
         {historialDocumental?.length > 0 && (
           <TabsContent value="dochist">
@@ -1565,6 +1604,8 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
       {qrOpen && <QRDialog id={id} titulo={`${t.nombre} ${t.apellido}`} rut={t.rut} onClose={() => setQrOpen(false)} />}
       {desvincular && <DesvincularDialog api={api} trabajadorId={id} asignacion={desvincular} onClose={() => setDesvincular(null)} onDone={() => { setDesvincular(null); reload(); }} />}
       {verHistDoc && <DocViewerModal api={api} doc={verHistDoc} onClose={() => setVerHistDoc(null)} />}
+      {verDesv && <DesvinculacionInfoModal asig={verDesv} trabajador={`${t.nombre} ${t.apellido}`} onClose={() => setVerDesv(null)} onVerArchivo={() => { setVerDesvFile(verDesv); setVerDesv(null); }} />}
+      {verDesvFile && <FiniquitoViewerModal api={api} row={{ desvinculacion_id: verDesvFile.desvinculacion_id, nombre: `${t.nombre} ${t.apellido}`, causal: verDesvFile.desv_causal, nombre_archivo: verDesvFile.desv_archivo, mime: verDesvFile.desv_mime }} onClose={() => setVerDesvFile(null)} />}
     </div>
   );
 }

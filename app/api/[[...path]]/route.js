@@ -379,7 +379,14 @@ export async function GET(request, { params }) {
     if (p[0] === 'trabajadores' && p[1]) {
       const t = (await query('select t.*, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.trabajador_id=$1', [p[1]])).rows[0];
       if (!t) return json({ error: 'No encontrado' }, 404);
-      const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc, g.nombre as gerencia from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id left join mandante_gerencias g on g.gerencia_id=a.gerencia_id where a.trabajador_id=$1 order by a.created_at desc', [p[1]])).rows;
+      const asignaciones = (await query(`select a.*, m.razon_social as mandante, c.numero_oc, g.nombre as gerencia,
+        d.desvinculacion_id, d.causal as desv_causal, d.tipo as desv_tipo, d.created_at as desv_fecha, d.nombre_archivo as desv_archivo, d.mime as desv_mime, d.empresa_nombre as desv_empresa, d.mandante_nombre as desv_mandante, d.contrato_numero as desv_contrato
+        from trabajador_asignaciones a
+        join mandantes m on m.mandante_id=a.mandante_id
+        join contratos c on c.contrato_id=a.contrato_id
+        left join mandante_gerencias g on g.gerencia_id=a.gerencia_id
+        left join lateral (select * from desvinculaciones dd where dd.asignacion_id=a.asignacion_id order by dd.created_at desc limit 1) d on true
+        where a.trabajador_id=$1 order by a.created_at desc`, [p[1]])).rows;
       const acreditacion = await acreditacionTrabajador(p[1]);
       const historial = (await query("select * from auditoria where entidad='trabajador' and entidad_id=$1 order by created_at desc limit 50", [p[1]])).rows;
       const historialDocumental = await historialDocumentalTrabajador(p[1]);
