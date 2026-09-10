@@ -918,6 +918,47 @@ function DocViewerModal({ api, doc, onClose }) {
   );
 }
 
+function FiniquitoViewerModal({ api, row, onClose }) {
+  const [state, setState] = useState({ loading: true, url: null, error: null });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api(`/desvinculaciones/${row.desvinculacion_id}/url`);
+        if (alive) setState({ loading: false, url: r.url, error: null });
+      } catch (e) {
+        if (alive) setState({ loading: false, url: null, error: e.message });
+      }
+    })();
+    return () => { alive = false; };
+  }, [row, api]);
+  const isImg = (row.mime || '').startsWith('image/');
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl w-[95vw]">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-6">{row.nombre}</DialogTitle>
+          <DialogDescription className="truncate">{row.causal} · {row.nombre_archivo}</DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border bg-slate-50 overflow-hidden" style={{ height: '70vh' }}>
+          {state.loading && <div className="h-full flex items-center justify-center text-slate-400 text-sm">Cargando documento…</div>}
+          {state.error && <div className="h-full flex items-center justify-center text-red-500 text-sm">{state.error}</div>}
+          {!state.loading && !state.error && state.url && (
+            isImg
+              ? <div className="h-full w-full flex items-center justify-center overflow-auto bg-white"><img src={state.url} alt={row.nombre} className="max-h-full max-w-full object-contain" /></div>
+              : <iframe src={state.url} title={row.nombre} className="w-full h-full" />
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Cerrar</Button>
+          {state.url && <a href={state.url} download={row.nombre_archivo || true}><Button className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
 function DocsPorCategoria({ detalle, canManage, onCargar, api }) {
   const grupos = {};
   const orden = [];
@@ -1708,7 +1749,8 @@ function Desvinculaciones({ api }) {
     const t = setTimeout(() => { api(`/desvinculaciones${q.trim().length >= 2 ? `?q=${encodeURIComponent(q.trim())}` : ''}`).then((d) => { if (alive) setRows(d.desvinculaciones || []); }).catch((e) => toast.error(e.message)); }, 300);
     return () => { alive = false; clearTimeout(t); };
   }, [api, q]);
-  const verArchivo = async (r) => { try { const { url } = await api(`/desvinculaciones/${r.desvinculacion_id}/url`); window.open(url, '_blank'); } catch (e) { toast.error(e.message); } };
+  const [verDoc, setVerDoc] = useState(null);
+  const verArchivo = (r) => setVerDoc(r);
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(null);
   const pageSize = 12;
@@ -1786,6 +1828,7 @@ function Desvinculaciones({ api }) {
           </div>
         )}
       </div>
+      {verDoc && <FiniquitoViewerModal api={api} row={verDoc} onClose={() => setVerDoc(null)} />}
     </div>
   );
 }
