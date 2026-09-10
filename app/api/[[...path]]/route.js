@@ -19,6 +19,64 @@ async function getProfile(request) {
 const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
 const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
 
+const RECURSO_META = {
+  trabajadores: { rt: 'trabajador', table: 'trabajadores', col: 'trabajador_id' },
+  vehiculos: { rt: 'vehiculo', table: 'vehiculos', col: 'vehiculo_id' },
+  equipos: { rt: 'equipo', table: 'equipos', col: 'equipo_id' },
+};
+
+async function depCounts(tipo, id) {
+  const c = async (sql, args) => (await query(sql, args)).rows[0].c;
+  const items = [];
+  if (tipo === 'mandantes') {
+    items.push({ label: 'Contratos', count: await c('select count(*)::int c from contratos where mandante_id=$1', [id]) });
+    items.push({ label: 'Categorías documentales', count: await c('select count(*)::int c from categorias_documentales where mandante_id=$1', [id]) });
+    items.push({ label: 'Documentos requeridos (estándar)', count: await c('select count(*)::int c from requisitos_documentales where mandante_id=$1', [id]) });
+    items.push({ label: 'Empresas asociadas', count: await c('select count(*)::int c from mandante_empresas where mandante_id=$1', [id]) });
+    items.push({ label: 'Gerencias', count: await c('select count(*)::int c from mandante_gerencias where mandante_id=$1', [id]) });
+    items.push({ label: 'Asignaciones de trabajadores', count: await c('select count(*)::int c from trabajador_asignaciones where mandante_id=$1', [id]) });
+    items.push({ label: 'Asignaciones de vehículos', count: await c('select count(*)::int c from vehiculo_asignaciones where mandante_id=$1', [id]) });
+    items.push({ label: 'Asignaciones de equipos', count: await c('select count(*)::int c from equipo_asignaciones where mandante_id=$1', [id]) });
+    items.push({ label: 'Documentos cargados', count: await c('select count(*)::int c from documentos where mandante_id=$1', [id]) });
+  } else if (tipo === 'contratos') {
+    items.push({ label: 'Asignaciones de trabajadores', count: await c('select count(*)::int c from trabajador_asignaciones where contrato_id=$1', [id]) });
+    items.push({ label: 'Asignaciones de vehículos', count: await c('select count(*)::int c from vehiculo_asignaciones where contrato_id=$1', [id]) });
+    items.push({ label: 'Asignaciones de equipos', count: await c('select count(*)::int c from equipo_asignaciones where contrato_id=$1', [id]) });
+  } else if (RECURSO_META[tipo]) {
+    const m = RECURSO_META[tipo];
+    items.push({ label: 'Asignaciones a contratos', count: await c(`select count(*)::int c from ${m.rt}_asignaciones where ${m.col}=$1`, [id]) });
+    items.push({ label: 'Documentos cargados', count: await c('select count(*)::int c from documentos where recurso_tipo=$1 and recurso_id=$2', [m.rt, id]) });
+  }
+  return items.filter((i) => i.count > 0);
+}
+
+async function cascadeDelete(tipo, id) {
+  if (tipo === 'mandantes') {
+    await query('delete from documentos where mandante_id=$1', [id]);
+    await query('delete from documentos where requisito_id in (select requisito_id from requisitos_documentales where mandante_id=$1)', [id]);
+    await query('delete from trabajador_asignaciones where mandante_id=$1', [id]);
+    await query('delete from vehiculo_asignaciones where mandante_id=$1', [id]);
+    await query('delete from equipo_asignaciones where mandante_id=$1', [id]);
+    await query('delete from requisitos_documentales where mandante_id=$1', [id]);
+    await query('delete from categorias_documentales where mandante_id=$1', [id]);
+    await query('delete from contratos where mandante_id=$1', [id]);
+    await query('delete from mandante_gerencias where mandante_id=$1', [id]);
+    await query('delete from mandante_empresas where mandante_id=$1', [id]);
+    await query('delete from mandantes where mandante_id=$1', [id]);
+  } else if (tipo === 'contratos') {
+    await query('delete from trabajador_asignaciones where contrato_id=$1', [id]);
+    await query('delete from vehiculo_asignaciones where contrato_id=$1', [id]);
+    await query('delete from equipo_asignaciones where contrato_id=$1', [id]);
+    await query('delete from contratos where contrato_id=$1', [id]);
+  } else if (RECURSO_META[tipo]) {
+    const m = RECURSO_META[tipo];
+    await query('delete from documentos where recurso_tipo=$1 and recurso_id=$2', [m.rt, id]);
+    await query(`delete from ${m.rt}_asignaciones where ${m.col}=$1`, [id]);
+    await query(`delete from ${m.table} where ${m.col}=$1`, [id]);
+  }
+}
+
+
 async function audit(p, accion, entidad, entidad_id, nuevos) {
   try { await query('insert into auditoria (usuario, usuario_id, accion, entidad, entidad_id, valores_nuevos) values ($1,$2,$3,$4,$5,$6)', [p?.email || 'sistema', p?.auth_user_id || null, accion, entidad, entidad_id || null, nuevos ? JSON.stringify(nuevos) : null]); } catch {}
 }
@@ -93,6 +151,13 @@ export async function GET(request, { params }) {
 
     if (p[0] === 'me') return json({ profile });
     if (p[0] === 'roles') return json({ roles: (await query('select * from roles order by nombre')).rows });
+
+    // Dependency preview for cascade delete (Super Admin): /api/<tipo>/:id/dependencias
+    if (p[1] && p[2] === 'dependencias' && ['mandantes', 'contratos', 'trabajadores', 'vehiculos', 'equipos'].includes(p[0])) {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const items = await depCounts(p[0], p[1]);
+      return json({ items, total: items.reduce((s, i) => s + i.count, 0) });
+    }
 
     if (p[0] === 'usuarios' && isSuper(profile)) {
       const r = await query('select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, e.razon_social as empresa, m.razon_social as mandante from usuarios_perfiles up left join empresas_grupo e on e.empresa_id=up.empresa_id left join mandantes m on m.mandante_id=up.mandante_id order by up.created_at');
@@ -544,6 +609,13 @@ export async function DELETE(request, { params }) {
     const profile = await getProfile(request);
     if (!profile) return json({ error: 'No autorizado' }, 401);
     if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+
+    // Super Admin Holding: borrado en cascada sin importar dependencias
+    if (isSuper(profile) && p[1] && !p[2] && ['mandantes', 'contratos', 'trabajadores', 'vehiculos', 'equipos'].includes(p[0])) {
+      await cascadeDelete(p[0], p[1]);
+      await audit(profile, 'eliminar_cascada', p[0], p[1], null);
+      return json({ ok: true, cascada: true });
+    }
 
     if (p[0] === 'requisitos' && p[1]) { await query('update requisitos_documentales set activo=false where requisito_id=$1', [p[1]]); return json({ ok: true }); }
     if (p[0] === 'categorias' && p[1]) { await query('update categorias_documentales set activo=false where categoria_id=$1', [p[1]]); return json({ ok: true }); }

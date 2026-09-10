@@ -15,7 +15,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2,
 } from 'lucide-react';
 
 const LOGO = '/logo-aptiva.png';
@@ -393,8 +393,42 @@ function SiNo({ on }) {
     : <span className="inline-block px-3 py-1 rounded text-xs font-medium bg-[#a97e6f] text-white">NO</span>;
 }
 
+function CascadeDelete({ api, tipo, id, nombre, onDone, className }) {
+  const [open, setOpen] = useState(false);
+  const [deps, setDeps] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const openDlg = async () => {
+    setOpen(true); setDeps(null); setLoading(true);
+    try { setDeps(await api(`/${tipo}/${id}/dependencias`)); } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+  const confirm = async () => {
+    setBusy(true);
+    try { await api(`/${tipo}/${id}`, { method: 'DELETE' }); toast.success('Eliminado correctamente'); setOpen(false); onDone && onDone(); }
+    catch (e) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <Button variant="outline" className={`text-red-600 border-red-200 hover:bg-red-50 ${className || ''}`} onClick={openDlg}><Trash2 className="h-4 w-4 mr-1" />Eliminar</Button>
+      <Dialog open={open} onOpenChange={setOpen}><DialogContent>
+        <DialogHeader><DialogTitle className="flex items-center gap-2 text-red-600"><AlertTriangle className="h-5 w-5" />Eliminar definitivamente</DialogTitle>
+          <DialogDescription>Vas a eliminar <strong className="text-slate-700">{nombre}</strong>. Esta acción es permanente y no se puede deshacer.</DialogDescription></DialogHeader>
+        <div className="text-sm">
+          {loading && <p className="text-slate-400">Calculando dependencias…</p>}
+          {!loading && deps && (deps.total > 0 ? (
+            <div className="rounded-lg border border-red-100 bg-red-50 p-3">
+              <p className="font-medium text-red-700 mb-2">También se eliminarán en cascada:</p>
+              <ul className="space-y-1">{deps.items.map((it, k) => <li key={k} className="flex justify-between gap-4"><span className="text-slate-600">{it.label}</span><span className="font-semibold text-red-600">{it.count}</span></li>)}</ul>
+            </div>
+          ) : <p className="text-slate-500">No tiene datos asociados. Se eliminará solo el registro.</p>)}
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-red-600 hover:bg-red-700" disabled={busy || loading} onClick={confirm}>{busy ? 'Eliminando…' : 'Sí, eliminar todo'}</Button></DialogFooter>
+      </DialogContent></Dialog>
+    </>
+  );
+}
+
 function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload, mandante }) {
-  const [selCat, setSelCat] = useState(null);
   const [catOpen, setCatOpen] = useState(false);
   const [cf, setCf] = useState({ categoria_id: null, nombre: '', descripcion: '' });
   const [reqOpen, setReqOpen] = useState(false);
@@ -513,7 +547,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
   );
 }
 
-function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
+function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
   const [data, reload] = useData(api, `/mandantes/${id}`, [id]);
   const [allEmp] = useData(api, '/empresas');
   const [edit, setEdit] = useState(false);
@@ -546,7 +580,7 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage }) {
             </div>
           </div>
         </div>
-        {canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button></div>}
+        {canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button>{isSuper && <CascadeDelete api={api} tipo="mandantes" id={id} nombre={mandante.razon_social} onDone={onBack} />}</div>}
       </div>
       <Tabs defaultValue="resumen">
         <TabsList className="flex flex-wrap h-auto gap-0 bg-transparent p-0 mb-6 border-b border-slate-200 rounded-none w-full justify-start">{['resumen','empresas','gerencias','contratos','trabajadores','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-slate-500 data-[state=active]:border-blue-600 data-[state=active]:text-blue-700 data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-slate-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
@@ -603,7 +637,7 @@ function Contratos({ api, openDetail, canManage }) {
     </div>
   );
 }
-function ContratoDetail({ api, id, onBack, canManage }) {
+function ContratoDetail({ api, id, onBack, canManage, isSuper }) {
   const [data, reload] = useData(api, `/contratos/${id}`, [id]);
   const [edit, setEdit] = useState(false);
   const [ef, setEf] = useState({});
@@ -615,7 +649,7 @@ function ContratoDetail({ api, id, onBack, canManage }) {
   return (
     <div>
       <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
-      <PageHead title={`Contrato ${c.numero_oc}`} sub={`${c.mandante} · ${c.empresa}`} action={canManage && <Button variant="outline" onClick={openEdit}>Editar</Button>} />
+      <PageHead title={`Contrato ${c.numero_oc}`} sub={`${c.mandante} · ${c.empresa}`} action={canManage && <div className="flex gap-2"><Button variant="outline" onClick={openEdit}>Editar</Button>{isSuper && <CascadeDelete api={api} tipo="contratos" id={id} nombre={`Contrato ${c.numero_oc}`} onDone={onBack} />}</div>} />
       <div className="grid lg:grid-cols-3 gap-4 mb-4">
         <Card className="lg:col-span-2"><CardContent className="p-5">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
@@ -684,7 +718,7 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
   );
 }
 
-function TrabajadorDetail({ api, id, onBack, canManage }) {
+function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const [data, reload] = useData(api, `/trabajadores/${id}`, [id]);
   const [contratos] = useData(api, '/contratos');
   const [upload, setUpload] = useState(null);
@@ -702,7 +736,7 @@ function TrabajadorDetail({ api, id, onBack, canManage }) {
     <div>
       <div className="flex items-center justify-between mb-3">
         <button onClick={onBack} className="text-sm text-blue-600">← Volver</button>
-        {canManage && <div className="flex gap-2"><Button variant="outline" size="sm" onClick={openEdit}>Editar</Button><Button variant="outline" size="sm" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button></div>}
+        {canManage && <div className="flex gap-2"><Button variant="outline" size="sm" onClick={openEdit}>Editar</Button><Button variant="outline" size="sm" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button>{isSuper && <CascadeDelete api={api} tipo="trabajadores" id={id} nombre={`${t.nombre} ${t.apellido}`} onDone={onBack} />}</div>}
       </div>
       <Card className="mb-4"><CardContent className="p-5 flex items-center gap-4 flex-wrap">
         <div className="h-16 w-16 rounded-full bg-blue-600 text-white flex items-center justify-center text-2xl font-bold">{t.nombre?.charAt(0)}</div>
@@ -819,7 +853,7 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
 }
 
 /* ------------ Recurso (Vehículo/Equipo) detail ------------ */
-function RecursoDetail({ api, tipo, id, onBack, canManage }) {
+function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
   const [data, reload] = useData(api, `/${tipo}s/${id}`, [tipo, id]);
   const [contratos] = useData(api, '/contratos');
   const [upload, setUpload] = useState(null);
@@ -831,7 +865,10 @@ function RecursoDetail({ api, tipo, id, onBack, canManage }) {
   const doAsignar = async () => { if (!asig) return; try { await api(`/${tipo}s/asignar`, { method: 'POST', body: JSON.stringify({ recurso_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={onBack} className="text-sm text-blue-600">← Volver</button>
+        {isSuper && <CascadeDelete api={api} tipo={`${tipo}s`} id={id} nombre={titulo} onDone={onBack} />}
+      </div>
       <Card className="mb-4"><CardContent className="p-5 flex items-center gap-4 flex-wrap">
         <div className="h-14 w-14 rounded-xl bg-blue-600 text-white flex items-center justify-center">{tipo === 'vehiculo' ? <Truck className="h-7 w-7" /> : <Wrench className="h-7 w-7" />}</div>
         <div className="flex-1"><h1 className="text-xl font-bold text-slate-900">{titulo}</h1><p className="text-slate-500 text-sm">{r.tipo || ''} · {r.marca || ''} {r.modelo || ''} {r.anio || ''}</p><p className="text-slate-400 text-sm">{r.empresa}</p></div>
