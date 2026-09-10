@@ -277,7 +277,7 @@ export async function GET(request, { params }) {
     if (p[0] === 'documentos' && p[1] && p[2] === 'url') {
       const d = (await query('select * from documentos where documento_id=$1', [p[1]])).rows[0];
       if (!d?.path) return json({ error: 'Sin archivo' }, 404);
-      return json({ url: await storageSignedUrl(d.path, 900) });
+      return json({ url: await storageSignedUrl(d.path, 900), mime: d.mime || null, nombre_archivo: d.nombre_archivo || null });
     }
 
     if (p[0] === 'vencimientos') {

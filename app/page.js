@@ -15,7 +15,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink,
 } from 'lucide-react';
 
 const LOGO = '/logo-aptiva.png';
@@ -464,7 +464,48 @@ function Mandantes({ api, openDetail, canManage }) {
   );
 }
 
-function DocsPorCategoria({ detalle, canManage, onCargar }) {
+function DocViewerModal({ api, doc, onClose }) {
+  const [state, setState] = useState({ loading: true, url: null, mime: null, nombre: null, error: null });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api(`/documentos/${doc.documento_id}/url`);
+        if (alive) setState({ loading: false, url: r.url, mime: r.mime, nombre: r.nombre_archivo, error: null });
+      } catch (e) {
+        if (alive) setState({ loading: false, url: null, mime: null, nombre: null, error: e.message });
+      }
+    })();
+    return () => { alive = false; };
+  }, [doc, api]);
+  const isImg = (state.mime || '').startsWith('image/');
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl w-[95vw]">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-6">{doc.nombre}</DialogTitle>
+          <DialogDescription className="truncate">{state.nombre || 'Documento cargado'}</DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border bg-slate-50 overflow-hidden" style={{ height: '70vh' }}>
+          {state.loading && <div className="h-full flex items-center justify-center text-slate-400 text-sm">Cargando documento…</div>}
+          {state.error && <div className="h-full flex items-center justify-center text-red-500 text-sm">{state.error}</div>}
+          {!state.loading && !state.error && state.url && (
+            isImg
+              ? <div className="h-full w-full flex items-center justify-center overflow-auto bg-white"><img src={state.url} alt={doc.nombre} className="max-h-full max-w-full object-contain" /></div>
+              : <iframe src={state.url} title={doc.nombre} className="w-full h-full" />
+          )}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Cerrar</Button>
+          {state.url && <a href={state.url} target="_blank" rel="noreferrer"><Button variant="outline"><ExternalLink className="h-4 w-4 mr-1" />Abrir en pestaña</Button></a>}
+          {state.url && <a href={state.url} download={state.nombre || true}><Button className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DocsPorCategoria({ detalle, canManage, onCargar, api }) {
   const grupos = {};
   const orden = [];
   (detalle || []).forEach((d) => {
@@ -473,7 +514,9 @@ function DocsPorCategoria({ detalle, canManage, onCargar }) {
     grupos[k].push(d);
   });
   const [abiertas, setAbiertas] = useState({});
+  const [verDoc, setVerDoc] = useState(null);
   const toggle = (cat) => setAbiertas((s) => ({ ...s, [cat]: !s[cat] }));
+  const puedeVer = (d) => !!d.documento_id && ['aprobado', 'en_revision', 'vencido', 'rechazado', 'pendiente'].includes(d.estado);
   return (
     <div className="space-y-2">
       {orden.map((cat) => {
@@ -481,24 +524,26 @@ function DocsPorCategoria({ detalle, canManage, onCargar }) {
         const ok = items.filter((x) => x.estado === 'aprobado').length;
         const falta = items.some((x) => x.obligatorio && ['faltante', 'vencido', 'rechazado'].includes(x.estado));
         const open = !!abiertas[cat];
+        const accent = falta ? 'border-l-red-400' : ok === items.length ? 'border-l-emerald-400' : 'border-l-amber-400';
         return (
-          <div key={cat} className="rounded-lg border bg-white overflow-hidden">
-            <button onClick={() => toggle(cat)} className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-slate-50 text-left">
+          <div key={cat} className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+            <button onClick={() => toggle(cat)} className={`w-full flex items-center justify-between px-3 py-2.5 text-left bg-slate-100 hover:bg-slate-200/70 border-l-4 ${accent} transition-colors`}>
               <div className="flex items-center gap-2 min-w-0">
-                <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`} />
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600 truncate">{cat}</span>
+                <ChevronRight className={`h-4 w-4 text-slate-500 transition-transform ${open ? 'rotate-90' : ''}`} />
+                <span className="text-xs font-bold uppercase tracking-wide text-slate-700 truncate">{cat}</span>
                 <span className={`h-2 w-2 rounded-full ${falta ? 'bg-red-400' : ok === items.length ? 'bg-emerald-400' : 'bg-amber-400'}`} />
               </div>
-              <span className="text-[11px] text-slate-400 shrink-0">{ok}/{items.length}</span>
+              <span className="text-[11px] font-medium text-slate-500 shrink-0">{ok}/{items.length}</span>
             </button>
             {open && (
-              <div className="divide-y border-t">
+              <div className="divide-y border-t bg-white">
                 {items.map((d) => (
                   <div key={d.requisito_id} className="flex items-center justify-between py-2 px-3 gap-2">
                     <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
                     <div className="flex items-center gap-2">
                       {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
                       <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
+                      {puedeVer(d) && api && <Button size="sm" variant="outline" className="h-7" onClick={() => setVerDoc(d)}><Eye className="h-3.5 w-3.5 mr-1" />Ver</Button>}
                       {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => onCargar(d)}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
                     </div>
                   </div>
@@ -508,6 +553,7 @@ function DocsPorCategoria({ detalle, canManage, onCargar }) {
           </div>
         );
       })}
+      {verDoc && <DocViewerModal api={api} doc={verDoc} onClose={() => setVerDoc(null)} />}
     </div>
   );
 }
@@ -915,7 +961,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes.</p>}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>
@@ -1034,7 +1080,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes. Asigna este {tipo} a un contrato para ver sus requisitos documentales.</p>}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>
