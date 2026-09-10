@@ -212,6 +212,8 @@ export async function GET(request, { params }) {
       return json({ usuarios: r.rows });
     }
 
+    if (p[0] === 'tipos-vehiculo') return json({ tipos: (await query('select id, nombre from tipos_vehiculo order by nombre')).rows });
+
     if (p[0] === 'empresas') {
       const r = await query('select e.*, (select count(*)::int from trabajadores t where t.empresa_id=e.empresa_id and t.deleted_at is null) as trabajadores_count from empresas_grupo e where e.deleted_at is null order by e.razon_social');
       return json({ empresas: r.rows });
@@ -734,6 +736,16 @@ export async function PUT(request, { params }) {
       vals.push(p[1]);
       await query(`update categorias_documentales set ${cols.join(', ')} where categoria_id=$${i}`, vals);
       return json({ categoria: (await query('select * from categorias_documentales where categoria_id=$1', [p[1]])).rows[0] });
+    }
+    if ((p[0] === 'vehiculos' || p[0] === 'equipos') && p[1]) {
+      const veh = p[0] === 'vehiculos';
+      const { cols, vals, i } = build([veh ? 'patente' : 'codigo_interno', 'tipo', 'marca', 'modelo', 'anio']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      const tbl = veh ? 'vehiculos' : 'equipos'; const idcol = veh ? 'vehiculo_id' : 'equipo_id';
+      await query(`update ${tbl} set ${cols.join(', ')}, updated_at=now() where ${idcol}=$${i}`, vals);
+      await audit(profile, veh ? 'editar_vehiculo' : 'editar_equipo', p[0].slice(0, -1), p[1], body);
+      return json({ recurso: (await query(`select * from ${tbl} where ${idcol}=$1`, [p[1]])).rows[0] });
     }
     return json({ error: 'No encontrado' }, 404);
   } catch (e) { return json({ error: e.message }, 500); }

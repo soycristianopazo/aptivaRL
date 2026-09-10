@@ -1022,6 +1022,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
   const [reqOpen, setReqOpen] = useState(false);
   const [q, setQ] = useState('');
   const [selCat, setSelCat] = useState(null);
+  const [tipoRec, setTipoRec] = useState('trabajador');
   const [rf, setRf] = useState({ requisito_id: null, nombre: '', descripcion: '', obligatorio: true, tiene_vencimiento: true, transversal: false, dias_alerta: 30 });
 
   const fmt = (d) => fdateCL(d);
@@ -1032,7 +1033,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
     if (!cf.nombre) return;
     try {
       if (cf.categoria_id) { await api(`/categorias/${cf.categoria_id}`, { method: 'PUT', body: JSON.stringify({ nombre: cf.nombre, descripcion: cf.descripcion }) }); toast.success('Categoría actualizada'); }
-      else { await api('/categorias', { method: 'POST', body: JSON.stringify({ mandante_id: id, tipo_recurso: 'trabajador', nombre: cf.nombre, descripcion: cf.descripcion || cf.nombre }) }); toast.success('Categoría creada'); }
+      else { await api('/categorias', { method: 'POST', body: JSON.stringify({ mandante_id: id, tipo_recurso: tipoRec, nombre: cf.nombre, descripcion: cf.descripcion || cf.nombre }) }); toast.success('Categoría creada'); }
       setCatOpen(false); reload();
     } catch (e) { toast.error(e.message); }
   };
@@ -1044,7 +1045,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
     try {
       const payload = { nombre: rf.nombre, descripcion: rf.descripcion, obligatorio: rf.obligatorio, tiene_vencimiento: rf.tiene_vencimiento, transversal: rf.transversal, dias_alerta: Number(rf.dias_alerta) };
       if (rf.requisito_id) { await api(`/requisitos/${rf.requisito_id}`, { method: 'PUT', body: JSON.stringify(payload) }); toast.success('Documento actualizado'); }
-      else { await api('/requisitos', { method: 'POST', body: JSON.stringify({ ...payload, mandante_id: id, tipo_recurso: 'trabajador', categoria_id: selCat.categoria_id }) }); toast.success('Documento agregado'); }
+      else { await api('/requisitos', { method: 'POST', body: JSON.stringify({ ...payload, mandante_id: id, tipo_recurso: tipoRec, categoria_id: selCat.categoria_id }) }); toast.success('Documento agregado'); }
       setReqOpen(false); reload();
     } catch (e) { toast.error(e.message); }
   };
@@ -1103,9 +1104,16 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
   }
 
   // Level 1: categories list
-  const cats = (categorias || []).filter((c) => !q || c.nombre?.toLowerCase().includes(q.toLowerCase()) || (c.descripcion || '').toLowerCase().includes(q.toLowerCase()));
+  const cats = (categorias || []).filter((c) => (c.tipo_recurso || 'trabajador') === tipoRec).filter((c) => !q || c.nombre?.toLowerCase().includes(q.toLowerCase()) || (c.descripcion || '').toLowerCase().includes(q.toLowerCase()));
+  const TIPOS = [['trabajador', 'Trabajadores'], ['vehiculo', 'Vehículos'], ['equipo', 'Equipos']];
   return (
     <div>
+      <div className="inline-flex rounded-lg border bg-slate-100 p-1 mb-4">
+        {TIPOS.map(([val, label]) => (
+          <button key={val} onClick={() => { setTipoRec(val); setSelCat(null); setQ(''); }}
+            className={`px-4 py-1.5 text-sm rounded-md transition-colors ${tipoRec === val ? 'bg-white shadow-sm font-semibold text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}>{label}</button>
+        ))}
+      </div>
       <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
         <Input className="h-9 w-64" placeholder="Buscar categoría…" value={q} onChange={(e) => setQ(e.target.value)} />
         {canManage && <Button className="bg-emerald-500 hover:bg-emerald-600" onClick={openNewCat}><Plus className="h-4 w-4 mr-1" />Agregar Categoría</Button>}
@@ -1485,6 +1493,7 @@ function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, o
 function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
   const [data, reload] = useData(api, `/${kind}`);
   const [empresas] = useData(api, '/empresas');
+  const [tiposVeh] = useData(api, '/tipos-vehiculo');
   const [open, setOpen] = useState(false);
   const isVeh = kind === 'vehiculos';
   const [f, setF] = useState({});
@@ -1504,7 +1513,9 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
           {isSuper && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5"><Label>{isVeh ? 'Patente' : 'Código interno'}</Label><Input onChange={(e) => setF({ ...f, [isVeh ? 'patente' : 'codigo_interno']: e.target.value })} /></div>
-            <div className="space-y-1.5"><Label>Tipo</Label><Input onChange={(e) => setF({ ...f, tipo: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Tipo</Label>{isVeh
+              ? <Select value={f.tipo} onValueChange={(v) => setF({ ...f, tipo: v })}><SelectTrigger><SelectValue placeholder="Selecciona tipo" /></SelectTrigger><SelectContent className="max-h-72">{(tiposVeh?.tipos || []).map((t) => <SelectItem key={t.id} value={t.nombre}>{t.nombre}</SelectItem>)}</SelectContent></Select>
+              : <Input onChange={(e) => setF({ ...f, tipo: e.target.value })} />}</div>
             <div className="space-y-1.5"><Label>Marca</Label><Input onChange={(e) => setF({ ...f, marca: e.target.value })} /></div>
             <div className="space-y-1.5"><Label>Modelo</Label><Input onChange={(e) => setF({ ...f, modelo: e.target.value })} /></div>
             <div className="space-y-1.5"><Label>Año</Label><Input type="number" onChange={(e) => setF({ ...f, anio: Number(e.target.value) })} /></div>
@@ -1520,12 +1531,17 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
 function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
   const [data, reload] = useData(api, `/${tipo}s/${id}`, [tipo, id]);
   const [contratos] = useData(api, '/contratos');
+  const [tiposVeh] = useData(api, '/tipos-vehiculo');
   const [upload, setUpload] = useState(null);
   const [asig, setAsig] = useState('');
+  const [edit, setEdit] = useState(false);
+  const [ef, setEf] = useState({});
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const { recurso: r, asignaciones, acreditacion } = data;
   const titulo = tipo === 'vehiculo' ? r.patente : r.codigo_interno;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === r.empresa_id);
+  const openEdit = () => { setEf({ [tipo === 'vehiculo' ? 'patente' : 'codigo_interno']: titulo, tipo: r.tipo || '', marca: r.marca || '', modelo: r.modelo || '', anio: r.anio || '' }); setEdit(true); };
+  const saveEdit = async () => { try { await api(`/${tipo}s/${id}`, { method: 'PUT', body: JSON.stringify({ ...ef, anio: ef.anio ? Number(ef.anio) : null }) }); toast.success(`${tipo === 'vehiculo' ? 'Vehículo' : 'Equipo'} actualizado`); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
   const doAsignar = async () => { if (!asig) return; try { await api(`/${tipo}s/asignar`, { method: 'POST', body: JSON.stringify({ recurso_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
@@ -1534,7 +1550,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
         icon={tipo === 'vehiculo' ? <Truck className="h-7 w-7" /> : <Wrench className="h-7 w-7" />}
         title={titulo}
         meta={[{ label: 'Tipo', value: r.tipo || '—' }, { label: 'Detalle', value: [r.marca, r.modelo, r.anio].filter(Boolean).join(' ') || '—' }, { label: 'Empresa', value: r.empresa }]}
-        actions={isSuper && <CascadeDelete api={api} tipo={`${tipo}s`} id={id} nombre={titulo} onDone={onBack} />}
+        actions={<>{canManage && <Button variant="outline" onClick={openEdit}>Editar</Button>}{isSuper && <CascadeDelete api={api} tipo={`${tipo}s`} id={id} nombre={titulo} onDone={onBack} />}</>}
       />
       {acreditacion.length > 0 && <div className="flex gap-3 flex-wrap mb-4 -mt-2">{acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}</div>}
       <Tabs defaultValue="documentacion">
@@ -1556,6 +1572,19 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
         </CardContent></Card></TabsContent>
       </Tabs>
       {upload && <UploadDialog api={api} recurso_tipo={tipo} recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
+      <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
+        <DialogHeader><DialogTitle>Editar {tipo === 'vehiculo' ? 'vehículo' : 'equipo'}</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5"><Label>{tipo === 'vehiculo' ? 'Patente' : 'Código interno'}</Label><Input value={ef[tipo === 'vehiculo' ? 'patente' : 'codigo_interno'] || ''} onChange={(e) => setEf({ ...ef, [tipo === 'vehiculo' ? 'patente' : 'codigo_interno']: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Tipo</Label>{tipo === 'vehiculo'
+            ? <Select value={ef.tipo} onValueChange={(v) => setEf({ ...ef, tipo: v })}><SelectTrigger><SelectValue placeholder="Selecciona tipo" /></SelectTrigger><SelectContent className="max-h-72">{(tiposVeh?.tipos || []).map((t) => <SelectItem key={t.id} value={t.nombre}>{t.nombre}</SelectItem>)}</SelectContent></Select>
+            : <Input value={ef.tipo || ''} onChange={(e) => setEf({ ...ef, tipo: e.target.value })} />}</div>
+          <div className="space-y-1.5"><Label>Marca</Label><Input value={ef.marca || ''} onChange={(e) => setEf({ ...ef, marca: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Modelo</Label><Input value={ef.modelo || ''} onChange={(e) => setEf({ ...ef, modelo: e.target.value })} /></div>
+          <div className="space-y-1.5"><Label>Año</Label><Input type="number" value={ef.anio || ''} onChange={(e) => setEf({ ...ef, anio: e.target.value })} /></div>
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
+      </DialogContent></Dialog>
     </div>
   );
 }
