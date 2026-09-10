@@ -1386,7 +1386,7 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
       <Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre} {r.apellido}</span> },
         { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }, { key: 'empresa', label: 'Empresa Holding' },
-        { key: 'estado', label: 'Estado', render: (r) => <Badge className="bg-emerald-100 text-emerald-700">{r.estado}</Badge> },
+        { key: 'estado', label: 'Estado', render: (r) => r.vinculado ? <Badge className="bg-emerald-100 text-emerald-700">activo</Badge> : <Badge className="bg-slate-100 text-slate-500">inactivo</Badge> },
         { key: 'x', label: '', render: () => <ChevronRight className="h-4 w-4 text-slate-300" /> },
       ]} rows={rows} />
       <Dialog open={open} onOpenChange={setOpen}><DialogContent>

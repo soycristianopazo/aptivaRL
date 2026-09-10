@@ -329,7 +329,7 @@ export async function GET(request, { params }) {
     if (p[0] === 'trabajadores' && !p[1]) {
       const search = searchParams.get('q');
       const empresaFilter = searchParams.get('empresa_id');
-      let sql = 'select t.*, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.deleted_at is null';
+      let sql = "select t.*, e.razon_social as empresa, exists(select 1 from trabajador_asignaciones a where a.trabajador_id=t.trabajador_id and a.estado='activo') as vinculado from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.deleted_at is null";
       const args = [];
       if (profile.role_codigo === 'ADMIN_EMPRESA') { args.push(profile.empresa_id); sql += ` and t.empresa_id=$${args.length}`; }
       else if (empresaFilter) { args.push(empresaFilter); sql += ` and t.empresa_id=$${args.length}`; }
