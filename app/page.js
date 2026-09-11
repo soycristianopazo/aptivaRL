@@ -198,8 +198,8 @@ function Shell({ token, profile, onLogout }) {
     <div className="min-h-screen bg-slate-100 flex">
       {/* Sidebar */}
       <aside className={`fixed z-40 inset-y-0 left-0 w-64 bg-gradient-to-b from-[#15626c] via-[#0f4d55] to-[#0a3940] text-teal-50/70 flex flex-col shadow-xl transition-transform md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="h-16 flex items-center justify-center px-4 bg-white border-b border-slate-200 shadow-sm">
-          <img src={LOGO_RIOLOA} alt="Río Loa" className="h-8 w-auto" />
+        <div className="h-16 flex items-center justify-center px-3 bg-white border-b border-slate-200 shadow-sm">
+          <img src={LOGO_RIOLOA} alt="Río Loa" className="h-12 w-auto max-w-full object-contain" />
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-5">
           {NAV.map((sec, i) => (
