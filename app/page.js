@@ -294,10 +294,24 @@ function Kpi({ label, value, icon: Icon, color }) {
   return <Card><CardContent className="p-4 flex items-center gap-3"><div className={`h-11 w-11 rounded-lg flex items-center justify-center ${color}`}><Icon className="h-5 w-5" /></div><div><div className="text-2xl font-bold text-slate-900">{value ?? 0}</div><div className="text-xs text-slate-500">{label}</div></div></CardContent></Card>;
 }
 function SemBadge({ estado }) { const s = semaforo[estado] || semaforo.EN_REVISION; return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium ${s.c}`}><span className={`h-2 w-2 rounded-full ${s.dot}`} />{s.label}</span>; }
+const REF_CACHE = new Map(); // cache cliente para datos de referencia poco cambiantes
+const CACHEABLE = new Set(['/empresas', '/mandantes']);
+const REF_TTL = 60000; // 60s
 function useData(api, path, dep = []) {
-  const [data, setData] = useState(null);
-  const reload = useCallback(() => { api(path).then(setData).catch((e) => toast.error(e.message)); }, [api, path]);
-  useEffect(() => { reload(); }, dep); // eslint-disable-line
+  const [data, setData] = useState(() => {
+    const c = REF_CACHE.get(path);
+    return c && Date.now() - c.ts < REF_TTL ? c.data : null;
+  });
+  const reload = useCallback(() => {
+    api(path)
+      .then((d) => { if (CACHEABLE.has(path)) REF_CACHE.set(path, { data: d, ts: Date.now() }); setData(d); })
+      .catch((e) => toast.error(e.message));
+  }, [api, path]);
+  useEffect(() => {
+    const c = REF_CACHE.get(path);
+    if (CACHEABLE.has(path) && c && Date.now() - c.ts < REF_TTL) { setData(c.data); return; }
+    reload();
+  }, dep); // eslint-disable-line
   return [data, reload];
 }
 function Table({ columns, rows, onRow, empty = 'Sin registros', pageSize = 15 }) {

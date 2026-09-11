@@ -7,14 +7,20 @@ export const dynamic = 'force-dynamic';
 
 const json = (data, status = 200) => NextResponse.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 
+const profileCache = new Map();
 async function getProfile(request) {
   const h = request.headers.get('authorization') || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return null;
+  const cached = profileCache.get(token);
+  if (cached && cached.exp > Date.now()) return cached.profile;
   const authUser = await getAuthUser(token);
   if (!authUser?.id) return null;
   const r = await query('select * from usuarios_perfiles where auth_user_id=$1 and activo=true', [authUser.id]);
-  return r.rows[0] || null;
+  const profile = r.rows[0] || null;
+  profileCache.set(token, { profile, exp: Date.now() + 30000 }); // cache 30s
+  if (profileCache.size > 500) { const now = Date.now(); for (const [k, v] of profileCache) if (v.exp <= now) profileCache.delete(k); }
+  return profile;
 }
 const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
 const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
@@ -491,35 +497,82 @@ export async function GET(request, { params }) {
       const empF = searchParams.get('empresa_id') || null;
       const manF = searchParams.get('mandante_id') || null;
       const q1 = async (s, a = []) => (await query(s, a)).rows[0].c;
+      const qRows = async (s, a = []) => (await query(s, a)).rows;
       const stats = {};
-      stats.mandantes = manF ? 1 : await q1("select count(*)::int c from mandantes where activo=true and deleted_at is null");
-      { let s = "select count(*)::int c from contratos where estado='vigente' and deleted_at is null"; const a = []; if (empF) { a.push(empF); s += ` and empresa_id=$${a.length}`; } if (manF) { a.push(manF); s += ` and mandante_id=$${a.length}`; } stats.contratos_vigentes = await q1(s, a); }
+
+      // Contratos vigentes (filtro empresa/mandante)
+      const contP = (() => { let s = "select count(*)::int c from contratos where estado='vigente' and deleted_at is null"; const a = []; if (empF) { a.push(empF); s += ` and empresa_id=$${a.length}`; } if (manF) { a.push(manF); s += ` and mandante_id=$${a.length}`; } return q1(s, a); })();
+
+      // Trabajadores/Vehículos/Equipos (según haya filtro de mandante)
+      let trabP, vehP, equP;
       if (manF) {
-        { const a = [manF]; let s = "select count(distinct a.trabajador_id)::int c from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and a.mandante_id=$1 and t.deleted_at is null"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } stats.trabajadores = await q1(s, a); }
-        { const a = [manF]; let s = "select count(distinct a.vehiculo_id)::int c from vehiculo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } stats.vehiculos = await q1(s, a); }
-        { const a = [manF]; let s = "select count(distinct a.equipo_id)::int c from equipo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } stats.equipos = await q1(s, a); }
+        { const a = [manF]; let s = "select count(distinct a.trabajador_id)::int c from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and a.mandante_id=$1 and t.deleted_at is null"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } trabP = q1(s, a); }
+        { const a = [manF]; let s = "select count(distinct a.vehiculo_id)::int c from vehiculo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } vehP = q1(s, a); }
+        { const a = [manF]; let s = "select count(distinct a.equipo_id)::int c from equipo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } equP = q1(s, a); }
       } else {
         const ea = empF ? [empF] : []; const w = empF ? ' and empresa_id=$1' : '';
-        stats.trabajadores = await q1(`select count(*)::int c from trabajadores where estado='activo' and deleted_at is null${w}`, ea);
-        stats.vehiculos = await q1(`select count(*)::int c from vehiculos where deleted_at is null${w}`, ea);
-        stats.equipos = await q1(`select count(*)::int c from equipos where deleted_at is null${w}`, ea);
+        trabP = q1(`select count(*)::int c from trabajadores where estado='activo' and deleted_at is null${w}`, ea);
+        vehP = q1(`select count(*)::int c from vehiculos where deleted_at is null${w}`, ea);
+        equP = q1(`select count(*)::int c from equipos where deleted_at is null${w}`, ea);
       }
-      const dw = manF ? ' and mandante_id=$1' : ''; const da = manF ? [manF] : [];
-      stats.docs_pendientes = await q1(`select count(*)::int c from documentos where estado='en_revision' and deleted_at is null${dw}`, da);
-      stats.docs_por_vencer = await q1(`select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null${dw}`, da);
-      stats.docs_vencidos = await q1(`select count(*)::int c from documentos where deleted_at is null and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))${dw}`, da);
-      const docs_por_estado = (await query(`select case when estado='aprobado' and fecha_vencimiento is not null and fecha_vencimiento < current_date then 'vencido' else estado end as estado, count(*)::int c from documentos where deleted_at is null${dw} group by 1`, da)).rows;
 
-      const asigRows = (await query("select a.trabajador_id, a.empresa_id, a.mandante_id, m.razon_social as mandante from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and t.deleted_at is null")).rows
-        .filter((r) => (!empF || r.empresa_id === empF) && (!manF || r.mandante_id === manF));
-      const reqRows = (await query("select mandante_id, requisito_id, obligatorio from requisitos_documentales where tipo_recurso='trabajador' and activo=true")).rows;
-      const docRows = (await query("select recurso_id, mandante_id, requisito_id, estado, fecha_vencimiento from documentos where recurso_tipo='trabajador' and deleted_at is null")).rows;
+      const dw = manF ? ' and mandante_id=$1' : ''; const da = manF ? [manF] : [];
+      const dwd = manF ? ' and d.mandante_id=$1' : '';
+
+      // Ejecuta TODAS las consultas independientes en paralelo (antes eran secuenciales)
+      const [
+        mandantesC, contratosVig, trabC, vehC, equC,
+        docsPend, docsPorVencer, docsVencidos, docs_por_estado,
+        asigRows, reqRows, docRows, tendencia_vencimientos, proximos_vencimientos,
+      ] = await Promise.all([
+        manF ? Promise.resolve(1) : q1("select count(*)::int c from mandantes where activo=true and deleted_at is null"),
+        contP, trabP, vehP, equP,
+        q1(`select count(*)::int c from documentos where estado='en_revision' and deleted_at is null${dw}`, da),
+        q1(`select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null${dw}`, da),
+        q1(`select count(*)::int c from documentos where deleted_at is null and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))${dw}`, da),
+        qRows(`select case when estado='aprobado' and fecha_vencimiento is not null and fecha_vencimiento < current_date then 'vencido' else estado end as estado, count(*)::int c from documentos where deleted_at is null${dw} group by 1`, da),
+        qRows("select a.trabajador_id, a.empresa_id, a.mandante_id, m.razon_social as mandante from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and t.deleted_at is null"),
+        qRows("select mandante_id, requisito_id, obligatorio from requisitos_documentales where tipo_recurso='trabajador' and activo=true"),
+        qRows("select recurso_id, mandante_id, requisito_id, estado, fecha_vencimiento from documentos where recurso_tipo='trabajador' and deleted_at is null"),
+        qRows(`
+        with meses as (
+          select date_trunc('month', current_date) + (n || ' month')::interval as mes
+          from generate_series(0,5) n
+        )
+        select to_char(meses.mes,'YYYY-MM') as mes, count(d.documento_id)::int c
+        from meses
+        left join documentos d on d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
+          and date_trunc('month', d.fecha_vencimiento)=meses.mes${dwd}
+        group by meses.mes order by meses.mes`, da),
+        qRows(`
+        select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento,
+          coalesce(r.nombre, d.nombre_archivo) as documento,
+          m.razon_social as mandante,
+          (d.fecha_vencimiento - current_date) as dias_restantes,
+          coalesce(nullif(trim(concat(t.nombre,' ',t.apellido)),''), v.patente, q.codigo_interno, '—') as recurso
+        from documentos d
+        left join requisitos_documentales r on r.requisito_id=d.requisito_id
+        left join mandantes m on m.mandante_id=d.mandante_id
+        left join trabajadores t on t.trabajador_id=d.recurso_id and d.recurso_tipo='trabajador'
+        left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
+        left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
+        where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
+          and d.fecha_vencimiento <= current_date + interval '90 days'${dwd}
+        order by d.fecha_vencimiento asc limit 15`, da),
+      ]);
+
+      stats.mandantes = mandantesC;
+      stats.contratos_vigentes = contratosVig;
+      stats.trabajadores = trabC; stats.vehiculos = vehC; stats.equipos = equC;
+      stats.docs_pendientes = docsPend; stats.docs_por_vencer = docsPorVencer; stats.docs_vencidos = docsVencidos;
+
+      const asigFilt = asigRows.filter((r) => (!empF || r.empresa_id === empF) && (!manF || r.mandante_id === manF));
       const reqByMand = {}; reqRows.forEach((r) => { (reqByMand[r.mandante_id] = reqByMand[r.mandante_id] || []).push(r); });
       const dkey = (rid, mid, reqid) => `${rid}|${mid}|${reqid}`;
       const docMap = {}; docRows.forEach((d) => { const k = dkey(d.recurso_id, d.mandante_id, d.requisito_id); if (!docMap[k]) docMap[k] = d; });
       const now = new Date(); const rank = { ACREDITADO: 0, EN_REVISION: 1, BLOQUEADO: 2 };
       const porMandante = {}; const perWorst = {};
-      for (const a of asigRows) {
+      for (const a of asigFilt) {
         let bloq = false, rev = false;
         for (const req of (reqByMand[a.mandante_id] || [])) {
           if (!req.obligatorio) continue;
@@ -538,36 +591,6 @@ export async function GET(request, { params }) {
       let acreditados = 0, bloqueados = 0, revision = 0;
       Object.values(perWorst).forEach((v) => { if (v === 'BLOQUEADO') bloqueados++; else if (v === 'EN_REVISION') revision++; else acreditados++; });
       stats.trabajadores_acreditados = acreditados; stats.trabajadores_bloqueados = bloqueados; stats.trabajadores_revision = revision;
-
-      // Tendencia de vencimientos: próximos 6 meses (rellena meses en 0)
-      const dwd = manF ? ' and d.mandante_id=$1' : '';
-      const tendencia_vencimientos = (await query(`
-        with meses as (
-          select date_trunc('month', current_date) + (n || ' month')::interval as mes
-          from generate_series(0,5) n
-        )
-        select to_char(meses.mes,'YYYY-MM') as mes, count(d.documento_id)::int c
-        from meses
-        left join documentos d on d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
-          and date_trunc('month', d.fecha_vencimiento)=meses.mes${dwd}
-        group by meses.mes order by meses.mes`, da)).rows;
-
-      // Próximos vencimientos (tabla): vencidos + por vencer, ordenados por urgencia
-      const proximos_vencimientos = (await query(`
-        select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento,
-          coalesce(r.nombre, d.nombre_archivo) as documento,
-          m.razon_social as mandante,
-          (d.fecha_vencimiento - current_date) as dias_restantes,
-          coalesce(nullif(trim(concat(t.nombre,' ',t.apellido)),''), v.patente, q.codigo_interno, '—') as recurso
-        from documentos d
-        left join requisitos_documentales r on r.requisito_id=d.requisito_id
-        left join mandantes m on m.mandante_id=d.mandante_id
-        left join trabajadores t on t.trabajador_id=d.recurso_id and d.recurso_tipo='trabajador'
-        left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
-        left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
-        where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
-          and d.fecha_vencimiento <= current_date + interval '90 days'${dwd}
-        order by d.fecha_vencimiento asc limit 15`, da)).rows;
 
       return json({ stats, acreditacion_por_mandante: porMandante, docs_por_estado, tendencia_vencimientos, proximos_vencimientos });
     }
