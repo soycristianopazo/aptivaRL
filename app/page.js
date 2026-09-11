@@ -15,6 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ConfirmDialogHost, confirmDialog } from '@/components/confirm-dialog';
 import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
@@ -102,8 +103,8 @@ export default function App() {
   const onLogout = () => { localStorage.removeItem('aptiva_token'); setToken(null); setProfile(null); };
 
   if (booting) return <div className="min-h-screen flex items-center justify-center bg-slate-100"><img src={FAVICON} alt="Aptiva" className="h-12 w-12 animate-spin" style={{ animationDuration: '1.1s' }} /></div>;
-  if (!token || !profile) return <Login onLogin={onLogin} />;
-  return <Shell token={token} profile={profile} onLogout={onLogout} />;
+  if (!token || !profile) return <><Login onLogin={onLogin} /><ConfirmDialogHost /></>;
+  return <><Shell token={token} profile={profile} onLogout={onLogout} /><ConfirmDialogHost /></>;
 }
 
 function Login({ onLogin }) {
@@ -1514,7 +1515,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === t.empresa_id);
   const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email }); setEdit(true); };
   const saveEdit = async () => { try { await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); toast.success('Trabajador actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
-  const desactivar = async () => { if (!confirm('¿Desactivar trabajador?')) return; try { await api(`/trabajadores/${id}`, { method: 'DELETE' }); toast.success('Trabajador desactivado'); onBack(); } catch (e) { toast.error(e.message); } };
+  const desactivar = async () => { if (!(await confirmDialog({ title: '¿Desactivar trabajador?', description: 'El trabajador quedará inactivo en la plataforma.', confirmText: 'Desactivar' }))) return; try { await api(`/trabajadores/${id}`, { method: 'DELETE' }); toast.success('Trabajador desactivado'); onBack(); } catch (e) { toast.error(e.message); } };
   const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
@@ -2018,7 +2019,7 @@ function CatalogoTab({ api, endpoint, dataKey, singular }) {
       toast.success('Guardado'); setOpen(false); reload();
     } catch (e) { toast.error(e.message); }
   };
-  const del = async (it) => { if (!window.confirm(`¿Eliminar "${it.nombre}"?`)) return; try { await api(`/${endpoint}/${it.id}`, { method: 'DELETE' }); toast.success('Eliminado'); reload(); } catch (e) { toast.error(e.message); } };
+  const del = async (it) => { if (!(await confirmDialog({ title: 'Eliminar registro', description: `¿Eliminar "${it.nombre}"? Esta acción no se puede deshacer.`, confirmText: 'Eliminar' }))) return; try { await api(`/${endpoint}/${it.id}`, { method: 'DELETE' }); toast.success('Eliminado'); reload(); } catch (e) { toast.error(e.message); } };
   const filtered = items.filter((it) => !q || it.nombre.toLowerCase().includes(q.toLowerCase()));
   return (
     <div>
@@ -2100,7 +2101,7 @@ function Usuarios({ api, isSuper }) {
       setOpen(false); reload();
     } catch (e) { toast.error(e.message); }
   };
-  const del = async (r) => { if (!window.confirm(`¿Eliminar al usuario ${r.nombre} (${r.email})? Esta acción no se puede deshacer.`)) return; try { await api(`/usuarios/${r.perfil_id}`, { method: 'DELETE' }); toast.success('Usuario eliminado'); reload(); } catch (e) { toast.error(e.message); } };
+  const del = async (r) => { if (!(await confirmDialog({ title: 'Eliminar usuario', description: `¿Eliminar al usuario ${r.nombre} (${r.email})? Esta acción no se puede deshacer.`, confirmText: 'Eliminar' }))) return; try { await api(`/usuarios/${r.perfil_id}`, { method: 'DELETE' }); toast.success('Usuario eliminado'); reload(); } catch (e) { toast.error(e.message); } };
   if (!isSuper) return <div><PageHead title="Usuarios" /><p className="text-slate-400">Solo el Super Administrador puede gestionar usuarios.</p></div>;
   const showMand = !['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(f.role_codigo);
   return (
