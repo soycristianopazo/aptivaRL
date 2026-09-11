@@ -455,7 +455,7 @@ export async function GET(request, { params }) {
       const operadores = await operadoresRecurso('vehiculo', p[1]);
       return json({ recurso: v, asignaciones, acreditacion, operadores, operador_actual: operadores.find((o) => o.vigente) || null });
     }
-    if (p[0] === 'vehiculos') return json({ vehiculos: (await query(`select v.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('vehiculo', 'v.vehiculo_id')} as operador_actual from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null order by v.patente`)).rows });
+    if (p[0] === 'vehiculos') return json({ vehiculos: (await query(`select v.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('vehiculo', 'v.vehiculo_id')} as operador_actual, (select coalesce(array_agg(distinct m.razon_social) filter (where m.razon_social is not null), '{}') from vehiculo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.vehiculo_id=v.vehiculo_id and a.estado='activo') as mandantes from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null order by v.patente`)).rows });
     if (p[0] === 'equipos' && p[1]) {
       const q = (await query('select q.*, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.equipo_id=$1', [p[1]])).rows[0];
       if (!q) return json({ error: 'No encontrado' }, 404);
@@ -464,7 +464,7 @@ export async function GET(request, { params }) {
       const operadores = await operadoresRecurso('equipo', p[1]);
       return json({ recurso: q, asignaciones, acreditacion, operadores, operador_actual: operadores.find((o) => o.vigente) || null });
     }
-    if (p[0] === 'equipos') return json({ equipos: (await query(`select q.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('equipo', 'q.equipo_id')} as operador_actual from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null order by q.codigo_interno`)).rows });
+    if (p[0] === 'equipos') return json({ equipos: (await query(`select q.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('equipo', 'q.equipo_id')} as operador_actual, (select coalesce(array_agg(distinct m.razon_social) filter (where m.razon_social is not null), '{}') from equipo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.equipo_id=q.equipo_id and a.estado='activo') as mandantes from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null order by q.codigo_interno`)).rows });
 
     if (p[0] === 'documentos' && p[1] === 'pendientes') {
       const r = await query("select d.*, r.nombre as requisito, t.nombre as trab_nombre, t.apellido as trab_apellido, m.razon_social as mandante from documentos d left join requisitos_documentales r on r.requisito_id=d.requisito_id left join trabajadores t on t.trabajador_id=d.recurso_id left join mandantes m on m.mandante_id=d.mandante_id where d.estado='en_revision' and d.deleted_at is null order by d.fecha_subida desc");

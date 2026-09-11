@@ -1763,36 +1763,51 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
   const [marcasVeh] = useData(api, '/marcas-vehiculo');
   const [open, setOpen] = useState(false);
   const isVeh = kind === 'vehiculos';
+  const idKey = isVeh ? 'vehiculo_id' : 'equipo_id';
   const [f, setF] = useState({});
-  const save = async () => { try { await api(`/${kind}`, { method: 'POST', body: JSON.stringify(f) }); toast.success('Creado'); setOpen(false); setF({}); reload(); } catch (e) { toast.error(e.message); } };
+  const [editId, setEditId] = useState(null);
+  const [qrRow, setQrRow] = useState(null);
+  const openNew = () => { setEditId(null); setF({}); setOpen(true); };
+  const openEdit = (r) => { setEditId(r[idKey]); setF({ [isVeh ? 'patente' : 'codigo_interno']: isVeh ? r.patente : r.codigo_interno, numero_interno: r.numero_interno || '', tipo: r.tipo || '', marca: r.marca || '', modelo: r.modelo || '', anio: r.anio || '' }); setOpen(true); };
+  const save = async () => {
+    try {
+      if (editId) { await api(`/${kind}/${editId}`, { method: 'PUT', body: JSON.stringify({ ...f, anio: f.anio ? Number(f.anio) : null }) }); toast.success('Actualizado'); }
+      else { await api(`/${kind}`, { method: 'POST', body: JSON.stringify(f) }); toast.success('Creado'); }
+      setOpen(false); setF({}); setEditId(null); reload();
+    } catch (e) { toast.error(e.message); }
+  };
   const rows = data?.[kind];
+  const mandantesCol = { key: 'mandantes', label: 'Mandantes', render: (r) => { const ms = r.mandantes || []; if (!ms.length) return <span className="text-slate-300">Sin asignar</span>; return <div className="flex flex-wrap gap-1 max-w-xs">{ms.slice(0, 2).map((m, i) => <Badge key={i} className="bg-sky-100 text-sky-700 border-0">{m}</Badge>)}{ms.length > 2 && <Badge className="bg-slate-100 text-slate-600 border-0">+{ms.length - 2}</Badge>}</div>; } };
+  const qrCol = { key: 'qr', label: 'QR', render: (r) => <button onClick={(e) => { e.stopPropagation(); setQrRow(r); }} className="text-slate-500 hover:text-[#1c9dd7] transition-colors" title="Ver QR"><QrCode className="h-5 w-5" /></button> };
+  const editCol = { key: 'edit', label: '', render: (r) => canManage ? <Button size="sm" variant="outline" className="h-7" onClick={(e) => { e.stopPropagation(); openEdit(r); }}>Editar</Button> : null };
   return (
     <div>
-      <PageHead title={isVeh ? 'Vehículos' : 'Equipos'} sub={`Cada ${isVeh ? 'vehículo' : 'equipo'} pertenece a una empresa del Holding`} action={canManage && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo</Button>} />
+      <PageHead title={isVeh ? 'Vehículos' : 'Equipos'} sub={`Cada ${isVeh ? 'vehículo' : 'equipo'} pertenece a una empresa del Holding y puede asignarse a uno o varios mandantes`} action={canManage && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={openNew}><Plus className="h-4 w-4 mr-1" />Nuevo</Button>} />
       <Table columns={isVeh ? [
-        { key: 'patente', label: 'Patente', render: (r) => <span className="font-medium">{r.patente}</span> }, { key: 'numero_interno', label: 'Nº INT', render: (r) => r.numero_interno || <span className="text-slate-300">—</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' }, { key: 'dispo', label: 'Disponibilidad', render: (r) => <DispoBadge r={r} /> },
+        { key: 'patente', label: 'Patente', render: (r) => <span className="font-medium">{r.patente}</span> }, { key: 'numero_interno', label: 'Nº INT', render: (r) => r.numero_interno || <span className="text-slate-300">—</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, mandantesCol, { key: 'dispo', label: 'Disponibilidad', render: (r) => <DispoBadge r={r} /> }, qrCol, editCol,
       ] : [
-        { key: 'codigo_interno', label: 'Código', render: (r) => <span className="font-medium">{r.codigo_interno}</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' }, { key: 'dispo', label: 'Disponibilidad', render: (r) => <DispoBadge r={r} /> },
+        { key: 'codigo_interno', label: 'Código', render: (r) => <span className="font-medium">{r.codigo_interno}</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, mandantesCol, { key: 'dispo', label: 'Disponibilidad', render: (r) => <DispoBadge r={r} /> }, qrCol, editCol,
       ]} rows={rows} onRow={(r) => openDetail(isVeh ? 'vehiculo' : 'equipo', isVeh ? r.vehiculo_id : r.equipo_id)} />
       <Dialog open={open} onOpenChange={setOpen}><DialogContent>
-        <DialogHeader><DialogTitle>Nuevo {isVeh ? 'vehículo' : 'equipo'}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{editId ? 'Editar' : 'Nuevo'} {isVeh ? 'vehículo' : 'equipo'}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          {isSuper && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
+          {isSuper && !editId && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5"><Label>{isVeh ? 'Patente' : 'Código interno'}</Label><Input onChange={(e) => setF({ ...f, [isVeh ? 'patente' : 'codigo_interno']: e.target.value })} /></div>
-            {isVeh && <div className="space-y-1.5"><Label>Nº Interno</Label><Input placeholder="Ej: 101" onChange={(e) => setF({ ...f, numero_interno: e.target.value })} /></div>}
+            <div className="space-y-1.5"><Label>{isVeh ? 'Patente' : 'Código interno'}</Label><Input value={f[isVeh ? 'patente' : 'codigo_interno'] ?? ''} onChange={(e) => setF({ ...f, [isVeh ? 'patente' : 'codigo_interno']: e.target.value })} /></div>
+            {isVeh && <div className="space-y-1.5"><Label>Nº Interno</Label><Input placeholder="Ej: 101" value={f.numero_interno ?? ''} onChange={(e) => setF({ ...f, numero_interno: e.target.value })} /></div>}
             <div className="space-y-1.5"><Label>Tipo</Label>{isVeh
               ? <Select value={f.tipo} onValueChange={(v) => setF({ ...f, tipo: v })}><SelectTrigger><SelectValue placeholder="Selecciona tipo" /></SelectTrigger><SelectContent className="max-h-72">{(tiposVeh?.tipos || []).map((t) => <SelectItem key={t.id} value={t.nombre}>{t.nombre}</SelectItem>)}</SelectContent></Select>
-              : <Input onChange={(e) => setF({ ...f, tipo: e.target.value })} />}</div>
+              : <Input value={f.tipo ?? ''} onChange={(e) => setF({ ...f, tipo: e.target.value })} />}</div>
             <div className="space-y-1.5"><Label>Marca</Label>{isVeh
               ? <Select value={f.marca} onValueChange={(v) => setF({ ...f, marca: v })}><SelectTrigger><SelectValue placeholder="Selecciona marca" /></SelectTrigger><SelectContent className="max-h-72">{(marcasVeh?.marcas || []).map((mm) => <SelectItem key={mm.id} value={mm.nombre}>{mm.nombre}</SelectItem>)}</SelectContent></Select>
-              : <Input onChange={(e) => setF({ ...f, marca: e.target.value })} />}</div>
-            <div className="space-y-1.5"><Label>Modelo</Label><Input onChange={(e) => setF({ ...f, modelo: e.target.value })} /></div>
-            <div className="space-y-1.5"><Label>Año</Label><Input type="number" onChange={(e) => setF({ ...f, anio: Number(e.target.value) })} /></div>
+              : <Input value={f.marca ?? ''} onChange={(e) => setF({ ...f, marca: e.target.value })} />}</div>
+            <div className="space-y-1.5"><Label>Modelo</Label><Input value={f.modelo ?? ''} onChange={(e) => setF({ ...f, modelo: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Año</Label><Input type="number" value={f.anio ?? ''} onChange={(e) => setF({ ...f, anio: Number(e.target.value) })} /></div>
           </div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>{editId ? 'Guardar' : 'Crear'}</Button></DialogFooter>
       </DialogContent></Dialog>
+      {qrRow && <QRDialog id={qrRow[idKey]} titulo={isVeh ? qrRow.patente : qrRow.codigo_interno} rut={[qrRow.marca, qrRow.modelo].filter(Boolean).join(' ') || (isVeh ? 'Vehículo' : 'Equipo')} onClose={() => setQrRow(null)} />}
     </div>
   );
 }
