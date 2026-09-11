@@ -23,10 +23,12 @@ import {
   CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus,
 } from 'lucide-react';
 import logoAptiva from '@/assets/logo-aptiva.png';
+import logoRioLoa from '@/assets/logo-rioloa.png';
 import loginBg from '@/assets/login-bg.jpg';
 import faviconAptiva from '@/assets/favicon-aptiva.png';
 
 const LOGO = logoAptiva.src;
+const LOGO_RIOLOA = logoRioLoa.src;
 const LOGIN_BG = loginBg.src;
 const FAVICON = faviconAptiva.src;
 const YEAR = new Date().getFullYear();
@@ -77,7 +79,7 @@ const roleColor = {
   SUPER_ADMIN_HOLDING: 'bg-purple-100 text-purple-700 border-purple-200',
   ADMIN_EMPRESA: 'bg-rose-100 text-rose-700 border-rose-200',
   MANDANTE_ADMIN: 'bg-amber-100 text-amber-700 border-amber-200',
-  REVISOR: 'bg-blue-100 text-blue-700 border-blue-200',
+  REVISOR: 'bg-blue-100 text-[#1789bf] border-blue-200',
   MANDANTE_RRHH: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   MANDANTE_PREVENCION: 'bg-cyan-100 text-cyan-700 border-cyan-200',
   MANDANTE_VISOR: 'bg-slate-100 text-slate-600 border-slate-200',
@@ -91,7 +93,7 @@ const semaforo = {
   BLOQUEADO: { c: 'bg-red-100 text-red-700 border-red-200', dot: 'bg-red-500', label: 'Bloqueado' },
 };
 const docEstado = {
-  aprobado: 'bg-emerald-100 text-emerald-700', en_revision: 'bg-blue-100 text-blue-700', rechazado: 'bg-red-100 text-red-700',
+  aprobado: 'bg-emerald-100 text-emerald-700', en_revision: 'bg-blue-100 text-[#1789bf]', rechazado: 'bg-red-100 text-red-700',
   vencido: 'bg-red-100 text-red-700', pendiente: 'bg-slate-100 text-slate-600', faltante: 'bg-slate-100 text-slate-500',
 };
 
@@ -154,7 +156,7 @@ function Login({ onLogin }) {
             <div className="space-y-4">
               <div className="space-y-1.5"><Label>Correo</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="usuario@aptivarl.com" /></div>
               <div className="space-y-1.5"><Label>Contraseña</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={(e) => e.key === 'Enter' && submit()} /></div>
-              <Button className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading} onClick={submit}>{loading ? 'Ingresando…' : 'Ingresar'}</Button>
+              <Button className="w-full bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={loading} onClick={submit}>{loading ? 'Ingresando…' : 'Ingresar'}</Button>
             </div>
           </div>
         </div>
@@ -195,41 +197,45 @@ function Shell({ token, profile, onLogout }) {
   return (
     <div className="min-h-screen bg-slate-100 flex">
       {/* Sidebar */}
-      <aside className={`fixed z-40 inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 flex flex-col transition-transform md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="h-16 flex items-center justify-center px-4 bg-white border-b border-slate-200">
-          <img src={LOGO} alt="Aptiva RL" className="h-11 w-auto" />
+      <aside className={`fixed z-40 inset-y-0 left-0 w-64 bg-gradient-to-b from-[#15626c] via-[#0f4d55] to-[#0a3940] text-teal-50/70 flex flex-col shadow-xl transition-transform md:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="h-16 flex items-center justify-center px-4 bg-white border-b border-slate-200 shadow-sm">
+          <img src={LOGO_RIOLOA} alt="Río Loa" className="h-8 w-auto" />
         </div>
-        <nav className="flex-1 overflow-y-auto p-3 space-y-4">
+        <nav className="flex-1 overflow-y-auto p-3 space-y-5">
           {NAV.map((sec, i) => (
             <div key={i}>
-              {sec.group && <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{sec.group}</p>}
-              <div className="space-y-0.5">
-                {sec.items.filter((it) => !it.super || isSuper).map((it) => (
-                  <button key={it.id} onClick={() => go(it.id)} className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${view === it.id && !detail ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white'}`}>
-                    <it.icon className="h-4 w-4 shrink-0" />{it.label}
-                  </button>
-                ))}
+              {sec.group && <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-teal-200/45">{sec.group}</p>}
+              <div className="space-y-1">
+                {sec.items.filter((it) => !it.super || isSuper).map((it) => {
+                  const active = view === it.id && !detail;
+                  return (
+                    <button key={it.id} onClick={() => go(it.id)} className={`group w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 relative ${active ? 'bg-[#1c9dd7] text-white shadow-lg shadow-cyan-950/40' : 'text-teal-50/70 hover:bg-white/10 hover:text-white'}`}>
+                      <it.icon className={`h-4 w-4 shrink-0 transition-transform ${active ? '' : 'group-hover:scale-110'}`} />{it.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ))}
         </nav>
+        <div className="px-4 py-3 border-t border-white/10 text-[10px] text-teal-100/40 tracking-wide">Holding Río Loa · Plataforma Aptiva</div>
       </aside>
 
       {/* Main */}
       <div className="flex-1 md:ml-64 flex flex-col min-h-screen">
-        <header className="h-16 bg-white border-b flex items-center justify-between px-4 sticky top-0 z-30">
+        <header className="h-16 bg-white/90 backdrop-blur border-b flex items-center justify-between px-4 sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <button className="md:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}><Menu className="h-5 w-5" /></button>
             <div className="text-sm text-slate-400 flex items-center gap-1">
-              <span className="text-slate-600 font-medium capitalize">{view}</span>
+              <span className="text-slate-700 font-semibold capitalize">{view}</span>
               {detail && <><ChevronRight className="h-4 w-4" /><span className="text-slate-600">Detalle</span></>}
             </div>
           </div>
           <div className="flex items-center gap-3">
             <NotificationsBell api={api} onGo={go} />
             <div className="text-right hidden sm:block"><p className="text-sm font-medium text-slate-800">{profile.nombre}</p><p className="text-xs text-slate-400">{roleLabel[profile.role_codigo]}</p></div>
-            <div className="h-9 w-9 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-semibold">{profile.nombre?.charAt(0)}</div>
-            <button onClick={onLogout} className="text-slate-400 hover:text-red-500"><LogOut className="h-5 w-5" /></button>
+            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-[#15626c] to-[#1c9dd7] text-white flex items-center justify-center text-sm font-semibold shadow-sm">{profile.nombre?.charAt(0)}</div>
+            <button onClick={onLogout} className="text-slate-400 hover:text-red-500 transition-colors"><LogOut className="h-5 w-5" /></button>
           </div>
         </header>
 
@@ -270,7 +276,7 @@ function DetailHeader({ icon, title, subtitle, meta = [], badge, actions }) {
   return (
     <div className="rounded-xl border bg-white shadow-sm p-5 mb-5 flex flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-4">
-        <div className="h-14 w-14 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">{icon}</div>
+        <div className="h-14 w-14 rounded-xl bg-blue-50 text-[#1789bf] flex items-center justify-center shrink-0">{icon}</div>
         <div>
           <h1 className="text-2xl font-bold text-slate-800 leading-tight">{title}</h1>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-slate-500">
@@ -303,7 +309,7 @@ function Table({ columns, rows, onRow, empty = 'Sin registros', pageSize = 15 })
   const start = (cur - 1) * pageSize;
   const pageRows = all.slice(start, start + pageSize);
   const cols = onRow
-    ? [...columns, { key: '__acceder', label: '', render: (r) => <Button size="sm" variant="outline" className="h-7 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => onRow(r)}>Acceder <ChevronRight className="h-3.5 w-3.5 ml-0.5" /></Button> }]
+    ? [...columns, { key: '__acceder', label: '', render: (r) => <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => onRow(r)}>Acceder <ChevronRight className="h-3.5 w-3.5 ml-0.5" /></Button> }]
     : columns;
   return (
     <div className="bg-white rounded-lg border overflow-hidden">
@@ -364,7 +370,7 @@ function NotificationsBell({ api, onGo }) {
               {(data?.por_vencer || []).map((v) => <div key={v.documento_id} className="px-2 py-2 rounded hover:bg-slate-50"><p className="text-slate-700 truncate">{v.documento}</p><p className="text-xs text-slate-500 truncate">{v.recurso}</p><p className="text-xs text-amber-600">Vence en {v.dias_restantes}d · {v.mandante}</p></div>)}
               {total === 0 && <p className="text-slate-400 px-2 py-4 text-center">Sin alertas</p>}
             </div>
-            <button onClick={() => { setOpen(false); onGo('vencimientos'); }} className="w-full text-center p-2 text-blue-600 text-sm border-t hover:bg-slate-50">Ver vencimientos</button>
+            <button onClick={() => { setOpen(false); onGo('vencimientos'); }} className="w-full text-center p-2 text-[#1789bf] text-sm border-t hover:bg-slate-50">Ver vencimientos</button>
           </div>
         </>
       )}
@@ -414,7 +420,7 @@ function ChartCard({ title, desc, icon: Icon, className = '', children, right })
 
 function KpiCard({ label, value, icon: Icon, accent = 'blue', hint }) {
   const map = {
-    blue: 'from-blue-500/10 to-blue-500/0 text-blue-600 ring-blue-100',
+    blue: 'from-blue-500/10 to-blue-500/0 text-[#1789bf] ring-blue-100',
     indigo: 'from-indigo-500/10 to-indigo-500/0 text-indigo-600 ring-indigo-100',
     slate: 'from-slate-500/10 to-slate-500/0 text-slate-600 ring-slate-100',
     emerald: 'from-emerald-500/10 to-emerald-500/0 text-emerald-600 ring-emerald-100',
@@ -626,7 +632,7 @@ const DOC_CHIP = {
   aprobado: { label: 'Aprobados', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-100' },
   por_vencer: { label: 'Por vencer', cls: 'bg-orange-50 text-orange-700 ring-orange-100' },
   vencido: { label: 'Vencidos', cls: 'bg-red-50 text-red-700 ring-red-100' },
-  en_revision: { label: 'En revisión', cls: 'bg-blue-50 text-blue-700 ring-blue-100' },
+  en_revision: { label: 'En revisión', cls: 'bg-blue-50 text-[#1789bf] ring-blue-100' },
   rechazado: { label: 'Rechazados', cls: 'bg-red-50 text-red-600 ring-red-100' },
   faltante: { label: 'Faltantes', cls: 'bg-slate-50 text-slate-600 ring-slate-200' },
 };
@@ -672,7 +678,7 @@ function Expediente({ api, openDetail }) {
   return (
     <Card className="mb-4 shadow-sm border-slate-200 overflow-visible">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2"><FolderOpen className="h-4 w-4 text-blue-600" />Expediente</CardTitle>
+        <CardTitle className="text-base flex items-center gap-2"><FolderOpen className="h-4 w-4 text-[#1789bf]" />Expediente</CardTitle>
         <CardDescription>Busca por RUT, nombre, patente o código para ver el expediente completo</CardDescription>
       </CardHeader>
       <CardContent>
@@ -709,7 +715,7 @@ function Expediente({ api, openDetail }) {
           <div className="mt-4 rounded-xl border bg-gradient-to-br from-slate-50 to-white p-4 sm:p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-4 min-w-0">
-                <div className="h-14 w-14 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 text-lg font-bold">
+                <div className="h-14 w-14 rounded-xl bg-[#1c9dd7] text-white flex items-center justify-center shrink-0 text-lg font-bold">
                   {detail.tipo === 'trabajador' ? (info.nombre?.charAt(0) || '?') : <tipoMeta.icon className="h-6 w-6" />}
                 </div>
                 <div className="min-w-0">
@@ -727,7 +733,7 @@ function Expediente({ api, openDetail }) {
                 <RadialPct pct={exp.pctTotal} />
                 <div className="flex flex-col gap-2">
                   <Button size="sm" variant="outline" onClick={() => printExpediente({ ...detail, exp })}><Printer className="h-4 w-4 mr-1" />Imprimir</Button>
-                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => openDetail(detail.tipo, sel.id)}>Ver ficha<ChevronRight className="h-4 w-4 ml-0.5" /></Button>
+                  <Button size="sm" className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => openDetail(detail.tipo, sel.id)}>Ver ficha<ChevronRight className="h-4 w-4 ml-0.5" /></Button>
                 </div>
               </div>
             </div>
@@ -871,7 +877,7 @@ function Mandantes({ api, openDetail, canManage }) {
   const save = async () => { try { await api('/mandantes', { method: 'POST', body: JSON.stringify(f) }); toast.success('Mandante creado'); setOpen(false); setF({ razon_social: '', rut: '', region: '', comuna: '' }); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <PageHead title="Mandantes" sub="Empresas clientes del Holding" action={canManage && <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo mandante</Button>} />
+      <PageHead title="Mandantes" sub="Empresas clientes del Holding" action={canManage && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo mandante</Button>} />
       <Table onRow={(r) => openDetail('mandante', r.mandante_id)} columns={[
         { key: 'razon_social', label: 'Razón Social', render: (r) => <span className="font-medium text-slate-800">{r.razon_social}</span> },
         { key: 'rut', label: 'RUT' }, { key: 'region', label: 'Región' },
@@ -889,7 +895,7 @@ function Mandantes({ api, openDetail, canManage }) {
           </div>
           <div className="space-y-1.5"><Label>Comuna</Label><Input value={f.comuna} onChange={(e) => setF({ ...f, comuna: e.target.value })} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>Crear</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
@@ -929,7 +935,7 @@ function DocViewerModal({ api, doc, onClose }) {
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Cerrar</Button>
           {state.url && <a href={state.url} target="_blank" rel="noreferrer"><Button variant="outline"><ExternalLink className="h-4 w-4 mr-1" />Abrir en pestaña</Button></a>}
-          {state.url && <a href={state.url} download={state.nombre || true}><Button className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
+          {state.url && <a href={state.url} download={state.nombre || true}><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -969,7 +975,7 @@ function FiniquitoViewerModal({ api, row, onClose }) {
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Cerrar</Button>
-          {state.url && <a href={state.url} download={row.nombre_archivo || true}><Button className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
+          {state.url && <a href={state.url} download={row.nombre_archivo || true}><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1048,7 +1054,7 @@ function DocsPorCategoria({ detalle, canManage, onCargar, api }) {
               <div className="divide-y border-t bg-white">
                 {items.map((d) => (
                   <div key={d.requisito_id} className="flex items-center justify-between py-2 px-3 gap-2">
-                    <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-blue-600 border border-blue-200 rounded px-1">Oblig.</span>}</div>
+                    <div className="flex items-center gap-2 min-w-0"><span className="text-sm text-slate-700 truncate">{d.nombre}</span>{d.obligatorio && <span className="text-[10px] text-[#1789bf] border border-blue-200 rounded px-1">Oblig.</span>}</div>
                     <div className="flex items-center gap-2">
                       {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
                       <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
@@ -1149,7 +1155,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
       .filter((r) => !q || r.nombre?.toLowerCase().includes(q.toLowerCase()) || (r.descripcion || '').toLowerCase().includes(q.toLowerCase()));
     return (
       <div>
-        <button onClick={() => { setSelCat(null); setQ(''); }} className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 mb-4"><ChevronRight className="h-4 w-4 rotate-180" />Volver a categorías</button>
+        <button onClick={() => { setSelCat(null); setQ(''); }} className="inline-flex items-center gap-1 text-sm text-[#1789bf] hover:text-[#1789bf] mb-4"><ChevronRight className="h-4 w-4 rotate-180" />Volver a categorías</button>
         <div className="mb-5 rounded-xl border border-emerald-100 bg-gradient-to-r from-emerald-50 to-white p-4 shadow-sm flex items-center gap-3 max-w-2xl">
           <div className="h-10 w-10 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center"><FileClock className="h-5 w-5" /></div>
           <div>
@@ -1217,7 +1223,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
         { key: 'created_at', label: 'Fecha Registro', render: (r) => fmt(r.created_at) },
         { key: 'x', label: 'Acción', render: (r) => (
           <div className="flex gap-2">
-            <Button size="sm" className="h-7 bg-blue-500 hover:bg-blue-600" onClick={() => { setSelCat(r); setQ(''); }}>Definir Documentos</Button>
+            <Button size="sm" className="h-7 bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => { setSelCat(r); setQ(''); }}>Definir Documentos</Button>
             {canManage && <Button size="sm" className="h-7 bg-amber-400 hover:bg-amber-500 text-white" onClick={() => openEditCat(r)}>Editar</Button>}
             {canManage && <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => delCat(r.categoria_id)}>Eliminar</Button>}
           </div>
@@ -1256,7 +1262,7 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
 
   return (
     <div>
-      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver a Mandantes</button>
+      <button onClick={onBack} className="text-sm text-[#1789bf] mb-3">← Volver a Mandantes</button>
       <DetailHeader
         icon={<Building2 className="h-7 w-7" />}
         title={mandante.razon_social}
@@ -1265,19 +1271,19 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
         actions={canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button>{isSuper && <CascadeDelete api={api} tipo="mandantes" id={id} nombre={mandante.razon_social} onDone={onBack} />}</>}
       />
       <Tabs defaultValue="resumen">
-        <TabsList className="flex flex-wrap h-auto gap-0 bg-transparent p-0 mb-6 border-b border-slate-200 rounded-none w-full justify-start">{['resumen','empresas','gerencias','contratos','trabajadores','usuarios','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-slate-500 data-[state=active]:border-blue-600 data-[state=active]:text-blue-700 data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-slate-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',usuarios:'Usuarios Holding Río Loa',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
+        <TabsList className="flex flex-wrap h-auto gap-0 bg-transparent p-0 mb-6 border-b border-slate-200 rounded-none w-full justify-start">{['resumen','empresas','gerencias','contratos','trabajadores','usuarios','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-slate-500 data-[state=active]:border-[#1c9dd7] data-[state=active]:text-[#1789bf] data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-slate-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',usuarios:'Usuarios Holding Río Loa',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
         <TabsContent value="resumen"><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Kpi label="Empresas Holding" value={empresas.length} icon={Building} color="bg-blue-50 text-blue-600" />
+          <Kpi label="Empresas Holding" value={empresas.length} icon={Building} color="bg-blue-50 text-[#1789bf]" />
           <Kpi label="Contratos" value={contratos.length} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
           <Kpi label="Trabajadores" value={trabajadores.length} icon={Users} color="bg-slate-100 text-slate-600" />
           <Kpi label="Requisitos doc." value={requisitos.length} icon={ShieldCheck} color="bg-emerald-50 text-emerald-600" />
         </div></TabsContent>
         <TabsContent value="empresas">
-          {canManage && <div className="flex gap-2 mb-3 max-w-md"><Select value={addEmp} onValueChange={setAddEmp}><SelectTrigger><SelectValue placeholder="Habilitar empresa del Holding…" /></SelectTrigger><SelectContent>{noAsoc.map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={linkEmp}>Agregar</Button></div>}
+          {canManage && <div className="flex gap-2 mb-3 max-w-md"><Select value={addEmp} onValueChange={setAddEmp}><SelectTrigger><SelectValue placeholder="Habilitar empresa del Holding…" /></SelectTrigger><SelectContent>{noAsoc.map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={linkEmp}>Agregar</Button></div>}
           <Table columns={[{ key: 'razon_social', label: 'Empresa del Holding' }, { key: 'rut', label: 'RUT' }, { key: 'comuna', label: 'Comuna' }, { key: 'x', label: '', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => unlinkEmp(r.empresa_id)}>Quitar</Button> : null }]} rows={empresas} empty="Sin empresas habilitadas" />
         </TabsContent>
         <TabsContent value="gerencias">
-          {canManage && <div className="flex gap-2 mb-3 max-w-md"><Input placeholder="Nueva gerencia…" value={newGer} onChange={(e) => setNewGer(e.target.value)} /><Button className="bg-blue-600 hover:bg-blue-700" onClick={addGer}>Agregar</Button></div>}
+          {canManage && <div className="flex gap-2 mb-3 max-w-md"><Input placeholder="Nueva gerencia…" value={newGer} onChange={(e) => setNewGer(e.target.value)} /><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={addGer}>Agregar</Button></div>}
           <Table columns={[{ key: 'nombre', label: 'Gerencia' }, { key: 'activo', label: 'Estado', render: (r) => <Badge className="bg-emerald-100 text-emerald-700">{r.activo ? 'Activa' : 'Inactiva'}</Badge> }]} rows={gerencias} empty="Sin gerencias" />
         </TabsContent>
         <TabsContent value="contratos"><Table onRow={(r) => openDetail('contrato', r.contrato_id)} columns={[
@@ -1307,7 +1313,7 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={ef.rut || ''} onChange={(e) => setEf({ ...ef, rut: e.target.value })} /></div><div className="space-y-1.5"><Label>Región</Label><Input value={ef.region || ''} onChange={(e) => setEf({ ...ef, region: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Comuna</Label><Input value={ef.comuna || ''} onChange={(e) => setEf({ ...ef, comuna: e.target.value })} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={saveEdit}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
@@ -1357,7 +1363,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
   };
   return (
     <div>
-      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
+      <button onClick={onBack} className="text-sm text-[#1789bf] mb-3">← Volver</button>
       <DetailHeader
         icon={<FileSignature className="h-7 w-7" />}
         title={`Contrato ${c.numero_oc}`}
@@ -1393,7 +1399,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
         <h3 className="font-semibold text-slate-700">Trabajadores asignados</h3>
         {canManage && <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={() => setAsignOpen(true)}><Plus className="h-4 w-4 mr-1" />Asignar trabajador</Button>
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => setCrearOpen(true)}><Plus className="h-4 w-4 mr-1" />Crear trabajador</Button>
+          <Button size="sm" className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setCrearOpen(true)}><Plus className="h-4 w-4 mr-1" />Crear trabajador</Button>
         </div>}
       </div>
       <Table columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={data.trabajadores} onRow={(r) => openDetail && openDetail('trabajador', r.trabajador_id)} />
@@ -1404,7 +1410,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
             <SelectContent>{disponibles.length === 0 ? <div className="px-3 py-2 text-sm text-slate-400">No hay trabajadores disponibles de esta empresa</div> : disponibles.map((t) => <SelectItem key={t.trabajador_id} value={t.trabajador_id}>{t.nombre} {t.apellido} · {t.rut}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setAsignOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" disabled={!asig} onClick={doAsignar}>Asignar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setAsignOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={!asig} onClick={doAsignar}>Asignar</Button></DialogFooter>
       </DialogContent></Dialog>
 
       <Dialog open={crearOpen} onOpenChange={setCrearOpen}><DialogContent>
@@ -1414,7 +1420,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={nf.nombre} onChange={(e) => setNf({ ...nf, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={nf.apellido} onChange={(e) => setNf({ ...nf, apellido: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Teléfono</Label><Input value={nf.telefono} onChange={(e) => setNf({ ...nf, telefono: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={nf.comuna} onChange={(e) => setNf({ ...nf, comuna: e.target.value })} /></div></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setCrearOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" disabled={!validarRut(nf.rut)} onClick={doCrear}>Crear y asignar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setCrearOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={!validarRut(nf.rut)} onClick={doCrear}>Crear y asignar</Button></DialogFooter>
       </DialogContent></Dialog>
       <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
         <DialogHeader><DialogTitle>Editar contrato</DialogTitle></DialogHeader>
@@ -1424,7 +1430,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
           <div className="space-y-1.5"><Label>Estado</Label><Select value={ef.estado} onValueChange={(v) => setEf({ ...ef, estado: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pendiente">Pendiente</SelectItem><SelectItem value="vigente">Vigente</SelectItem><SelectItem value="finalizado">Finalizado</SelectItem><SelectItem value="suspendido">Suspendido</SelectItem></SelectContent></Select></div>
           <div className="space-y-1.5"><Label>Observaciones</Label><Textarea value={ef.observaciones || ''} onChange={(e) => setEf({ ...ef, observaciones: e.target.value })} rows={2} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Guardar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
       {upload && <UploadDialog api={api} recurso_tipo="contrato" recurso_id={id} requisito={upload.requisito} mandante_id={c.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
     </div>
@@ -1445,7 +1451,7 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
   const save = async () => { try { await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) }); toast.success('Trabajador creado'); setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '' }); fetchList(q); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <PageHead title="Trabajadores" sub="Ficha única por trabajador (una empresa del Holding)" action={canManage && <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo trabajador</Button>} />
+      <PageHead title="Trabajadores" sub="Ficha única por trabajador (una empresa del Holding)" action={canManage && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo trabajador</Button>} />
       <div className="mb-3 max-w-md"><div className="relative"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar por nombre, RUT, cargo…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
       <Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre} {r.apellido}</span> },
@@ -1461,7 +1467,7 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={f.rut} onChange={(e) => setF({ ...f, rut: e.target.value })} className={f.rut && !validarRut(f.rut) ? 'border-red-400' : ''} />{f.rut && !validarRut(f.rut) && <p className="text-xs text-red-500">RUT inválido</p>}</div><div className="space-y-1.5"><Label>Cargo</Label><Input value={f.cargo} onChange={(e) => setF({ ...f, cargo: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Teléfono</Label><Input value={f.telefono} onChange={(e) => setF({ ...f, telefono: e.target.value })} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" disabled={!validarRut(f.rut)} onClick={save}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={!validarRut(f.rut)} onClick={save}>Crear</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
@@ -1540,7 +1546,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
   const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
+      <button onClick={onBack} className="text-sm text-[#1789bf] mb-3">← Volver</button>
       <DetailHeader
         icon={<span className="text-xl font-bold">{t.nombre?.charAt(0)}</span>}
         title={`${t.nombre} ${t.apellido}`}
@@ -1567,8 +1573,8 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
           ))}
         </TabsContent>
         <TabsContent value="asignaciones">
-          {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={doAsignar}>Asignar</Button></div>}
-          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-700 border-0'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.estado !== 'activo' && r.desvinculacion_id && <Button size="sm" variant="outline" className="h-7 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => setVerDesv(r)}><Eye className="h-3.5 w-3.5 mr-1" />Ver desvinculación</Button>}{canManage && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button>}</div> }]} rows={asignaciones} />
+          {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={doAsignar}>Asignar</Button></div>}
+          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-700 border-0'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.estado !== 'activo' && r.desvinculacion_id && <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => setVerDesv(r)}><Eye className="h-3.5 w-3.5 mr-1" />Ver desvinculación</Button>}{canManage && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button>}</div> }]} rows={asignaciones} />
         </TabsContent>
         {historialDocumental?.length > 0 && (
           <TabsContent value="dochist">
@@ -1633,7 +1639,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Región</Label><Input value={ef.region || ''} onChange={(e) => setEf({ ...ef, region: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={ef.comuna || ''} onChange={(e) => setEf({ ...ef, comuna: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Email</Label><Input value={ef.email || ''} onChange={(e) => setEf({ ...ef, email: e.target.value })} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={saveEdit}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
       {upload && <UploadDialog api={api} recurso_tipo="trabajador" recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
       {qrOpen && <QRDialog id={id} titulo={`${t.nombre} ${t.apellido}`} rut={t.rut} onClose={() => setQrOpen(false)} />}
@@ -1681,7 +1687,7 @@ function QRDialog({ id, titulo, rut, onClose }) {
       <DialogFooter className="gap-2 flex-wrap sm:justify-center">
         <Button variant="outline" onClick={onClose}>Cerrar</Button>
         {url && <a href={url} target="_blank" rel="noreferrer"><Button variant="outline"><ExternalLink className="h-4 w-4 mr-1" />Abrir</Button></a>}
-        {img && <a href={img} download={`QR_${(rut || id)}.png`}><Button className="bg-blue-600 hover:bg-blue-700"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
+        {img && <a href={img} download={`QR_${(rut || id)}.png`}><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]"><Download className="h-4 w-4 mr-1" />Descargar</Button></a>}
       </DialogFooter>
     </DialogContent></Dialog>
   );
@@ -1712,7 +1718,7 @@ function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, o
         <div className="space-y-1.5"><Label>Archivo (PDF o imagen)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} /></div>
         <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Fecha emisión</Label><Input type="date" value={emision} onChange={(e) => setEmision(e.target.value)} /></div><div className="space-y-1.5"><Label>Fecha vencimiento</Label><Input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} /></div></div>
       </div>
-      <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" disabled={loading} onClick={submit}>{loading ? 'Subiendo…' : 'Subir'}</Button></DialogFooter>
+      <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={loading} onClick={submit}>{loading ? 'Subiendo…' : 'Subir'}</Button></DialogFooter>
     </DialogContent></Dialog>
   );
 }
@@ -1730,7 +1736,7 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
   const rows = data?.[kind];
   return (
     <div>
-      <PageHead title={isVeh ? 'Vehículos' : 'Equipos'} sub={`Cada ${isVeh ? 'vehículo' : 'equipo'} pertenece a una empresa del Holding`} action={canManage && <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo</Button>} />
+      <PageHead title={isVeh ? 'Vehículos' : 'Equipos'} sub={`Cada ${isVeh ? 'vehículo' : 'equipo'} pertenece a una empresa del Holding`} action={canManage && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo</Button>} />
       <Table columns={isVeh ? [
         { key: 'patente', label: 'Patente', render: (r) => <span className="font-medium">{r.patente}</span> }, { key: 'numero_interno', label: 'Nº INT', render: (r) => r.numero_interno || <span className="text-slate-300">—</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' },
       ] : [
@@ -1753,7 +1759,7 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
             <div className="space-y-1.5"><Label>Año</Label><Input type="number" onChange={(e) => setF({ ...f, anio: Number(e.target.value) })} /></div>
           </div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>Crear</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
@@ -1778,7 +1784,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
   const doAsignar = async () => { if (!asig) return; try { await api(`/${tipo}s/asignar`, { method: 'POST', body: JSON.stringify({ recurso_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <button onClick={onBack} className="text-sm text-blue-600 mb-3">← Volver</button>
+      <button onClick={onBack} className="text-sm text-[#1789bf] mb-3">← Volver</button>
       <DetailHeader
         icon={tipo === 'vehiculo' ? <Truck className="h-7 w-7" /> : <Wrench className="h-7 w-7" />}
         title={titulo}
@@ -1797,7 +1803,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
           ))}
         </TabsContent>
         <TabsContent value="asignaciones">
-          {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-blue-600 hover:bg-blue-700" onClick={doAsignar}>Asignar</Button></div>}
+          {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={doAsignar}>Asignar</Button></div>}
           <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'estado', label: 'Estado', render: (x) => <Badge className={x.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{x.estado}</Badge> }]} rows={asignaciones} />
         </TabsContent>
         <TabsContent value="info"><Card><CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
@@ -1819,7 +1825,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
           <div className="space-y-1.5"><Label>Modelo</Label><Input value={ef.modelo || ''} onChange={(e) => setEf({ ...ef, modelo: e.target.value })} /></div>
           <div className="space-y-1.5"><Label>Año</Label><Input type="number" value={ef.anio || ''} onChange={(e) => setEf({ ...ef, anio: e.target.value })} /></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={saveEdit}>Guardar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={saveEdit}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
@@ -1919,7 +1925,7 @@ function Desvinculaciones({ api }) {
                     <td className="px-3 py-3 whitespace-nowrap tabular-nums text-slate-600">{r.rut}</td>
                     <td className="px-3 py-3 font-medium text-slate-800">{r.nombre}</td>
                     <td className="px-3 py-3 text-slate-600">{r.cargo}</td>
-                    <td className="px-3 py-3 text-slate-600"><div className="flex items-start gap-1">{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-blue-700 border-0 shrink-0">Traslado</Badge> : null}<span>{r.causal}</span></div></td>
+                    <td className="px-3 py-3 text-slate-600"><div className="flex items-start gap-1">{r.tipo === 'anexo_traslado' ? <Badge className="bg-blue-100 text-[#1789bf] border-0 shrink-0">Traslado</Badge> : null}<span>{r.causal}</span></div></td>
                     <td className="px-3 py-3"><Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={(e) => { e.stopPropagation(); verArchivo(r); }}><Eye className="h-3.5 w-3.5 mr-1" />VER</Button></td>
                     <td className="px-3 py-3 whitespace-nowrap tabular-nums text-slate-500">{fdatetime(r.created_at)}</td>
                   </tr>
@@ -1992,7 +1998,7 @@ function Vencimientos({ api }) {
 
   return (
     <div>
-      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center flex-wrap">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-blue-600' : ''} onClick={() => setDias(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Recurso', 'Tipo', 'Mandante', 'Empresa', 'Vence', 'Dias'], filtered.map((r) => [r.requisito || '', r.recurso || '', VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo, r.mandante || '', r.empresa || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
+      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center flex-wrap">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-[#1c9dd7]' : ''} onClick={() => setDias(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Recurso', 'Tipo', 'Mandante', 'Empresa', 'Vence', 'Dias'], filtered.map((r) => [r.requisito || '', r.recurso || '', VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo, r.mandante || '', r.empresa || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <VencKpi label="Vencidos" value={kpis.vencidos} accent="red" icon={AlertTriangle} />
@@ -2058,7 +2064,7 @@ function CatalogoTab({ api, endpoint, dataKey, singular }) {
       <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-sm">
         <DialogHeader><DialogTitle>{editItem ? 'Editar' : 'Agregar'} {singular}</DialogTitle></DialogHeader>
         <div className="space-y-1.5"><Label>Nombre</Label><Input value={nombre} onChange={(e) => setNombre(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} autoFocus /></div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Guardar</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
@@ -2089,7 +2095,7 @@ function Empresas({ api, isSuper }) {
   const save = async () => { try { await api('/empresas', { method: 'POST', body: JSON.stringify(f) }); toast.success('Empresa creada'); setOpen(false); setF({ razon_social: '', rut: '', nombre_fantasia: '', region: '', comuna: '' }); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <PageHead title="Empresas del Holding" sub="Se pueden agregar nuevas empresas al grupo" action={isSuper && <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nueva empresa</Button>} />
+      <PageHead title="Empresas del Holding" sub="Se pueden agregar nuevas empresas al grupo" action={isSuper && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nueva empresa</Button>} />
       <Table columns={[{ key: 'razon_social', label: 'Razón Social', render: (r) => <span className="font-medium">{r.razon_social}</span> }, { key: 'rut', label: 'RUT' }, { key: 'comuna', label: 'Comuna' }, { key: 'trabajadores_count', label: 'Trabajadores' }]} rows={data?.empresas} />
       <Dialog open={open} onOpenChange={setOpen}><DialogContent>
         <DialogHeader><DialogTitle>Nueva empresa del Holding</DialogTitle></DialogHeader>
@@ -2098,7 +2104,7 @@ function Empresas({ api, isSuper }) {
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={f.rut} onChange={(e) => setF({ ...f, rut: e.target.value })} /></div><div className="space-y-1.5"><Label>Nombre fantasía</Label><Input value={f.nombre_fantasia} onChange={(e) => setF({ ...f, nombre_fantasia: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Región</Label><Input value={f.region} onChange={(e) => setF({ ...f, region: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={f.comuna} onChange={(e) => setF({ ...f, comuna: e.target.value })} /></div></div>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>Crear</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
@@ -2127,7 +2133,7 @@ function Usuarios({ api, isSuper }) {
   const showMand = !['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(f.role_codigo);
   return (
     <div>
-      <PageHead title="Usuarios y permisos" sub="Cuentas gestionadas con Supabase Auth" action={<Button className="bg-blue-600 hover:bg-blue-700" onClick={openNew}><Plus className="h-4 w-4 mr-1" />Nuevo usuario</Button>} />
+      <PageHead title="Usuarios y permisos" sub="Cuentas gestionadas con Supabase Auth" action={<Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={openNew}><Plus className="h-4 w-4 mr-1" />Nuevo usuario</Button>} />
       <Table columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <div><p className="font-medium text-slate-800">{r.nombre}</p><p className="text-xs text-slate-400">{r.email}</p></div> },
         { key: 'telefono', label: 'Teléfono', render: (r) => r.telefono || <span className="text-slate-300">—</span> },
@@ -2165,7 +2171,7 @@ function Usuarios({ api, isSuper }) {
             </div>
           )}
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>{editing ? 'Guardar' : 'Crear'}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>{editing ? 'Guardar' : 'Crear'}</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );
