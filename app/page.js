@@ -70,7 +70,7 @@ const formatRut = (rut) => {
 };
 
 
-const roleLabel = { SUPER_ADMIN_HOLDING: 'Super Admin Holding', ADMIN_EMPRESA: 'Admin Empresa', USUARIO_MANDANTE: 'Usuario Mandante', REVISOR: 'Revisor Documental' };
+const roleLabel = { SUPER_ADMIN_HOLDING: 'Super Admin Holding', ADMIN_EMPRESA: 'Admin Empresa', USUARIO_MANDANTE: 'Usuario Mandante', REVISOR: 'Revisor Documental', MANDANTE_ADMIN: 'Administrador', MANDANTE_VISOR: 'Visor', MANDANTE_RRHH: 'RRHH', MANDANTE_PREVENCION: 'Prevención' };
 
 const semaforo = {
   ACREDITADO: { c: 'bg-emerald-100 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', label: 'Acreditado' },
@@ -2084,25 +2084,66 @@ function Empresas({ api, isSuper }) {
 function Usuarios({ api, isSuper }) {
   const [data, reload] = useData(api, isSuper ? '/usuarios' : '/me');
   const [empresas] = useData(api, '/empresas');
-  const [mandantes] = useData(api, '/mandantes');
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ email: '', password: '', nombre: '', role_codigo: 'ADMIN_EMPRESA', empresa_id: '', mandante_id: '' });
-  const save = async () => { try { await api('/usuarios', { method: 'POST', body: JSON.stringify(f) }); toast.success('Usuario creado'); setOpen(false); reload(); } catch (e) { toast.error(e.message); } };
+  const empty = { perfil_id: null, email: '', password: '', nombre: '', telefono: '', role_codigo: 'MANDANTE_VISOR', empresa_id: '', mandante_id: '', activo: true, mandantes: [] };
+  const [f, setF] = useState(empty);
+  const editing = !!f.perfil_id;
+  const roles = data?.roles || [];
+  const mandAll = data?.mandantesAll || [];
+  const openNew = () => { setF(empty); setOpen(true); };
+  const openEdit = (r) => { setF({ perfil_id: r.perfil_id, email: r.email, password: '', nombre: r.nombre || '', telefono: r.telefono || '', role_codigo: r.role_codigo, empresa_id: r.empresa_id || '', mandante_id: r.mandante_id || '', activo: r.activo, mandantes: (r.mandantes || []).map((m) => m.mandante_id) }); setOpen(true); };
+  const toggleMand = (id) => setF((s) => ({ ...s, mandantes: s.mandantes.includes(id) ? s.mandantes.filter((x) => x !== id) : [...s.mandantes, id] }));
+  const save = async () => {
+    try {
+      if (editing) { await api(`/usuarios/${f.perfil_id}`, { method: 'PUT', body: JSON.stringify(f) }); toast.success('Usuario actualizado'); }
+      else { await api('/usuarios', { method: 'POST', body: JSON.stringify(f) }); toast.success('Usuario creado'); }
+      setOpen(false); reload();
+    } catch (e) { toast.error(e.message); }
+  };
+  const del = async (r) => { if (!window.confirm(`¿Eliminar al usuario ${r.nombre} (${r.email})? Esta acción no se puede deshacer.`)) return; try { await api(`/usuarios/${r.perfil_id}`, { method: 'DELETE' }); toast.success('Usuario eliminado'); reload(); } catch (e) { toast.error(e.message); } };
   if (!isSuper) return <div><PageHead title="Usuarios" /><p className="text-slate-400">Solo el Super Administrador puede gestionar usuarios.</p></div>;
+  const showMand = !['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(f.role_codigo);
   return (
     <div>
-      <PageHead title="Usuarios y permisos" sub="Cuentas gestionadas con Supabase Auth" action={<Button className="bg-blue-600 hover:bg-blue-700" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo usuario</Button>} />
-      <Table columns={[{ key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium">{r.nombre}</span> }, { key: 'email', label: 'Correo' }, { key: 'role_codigo', label: 'Rol', render: (r) => <Badge variant="secondary">{roleLabel[r.role_codigo]}</Badge> }, { key: 'empresa', label: 'Empresa' }, { key: 'mandante', label: 'Mandante' }]} rows={data?.usuarios} />
-      <Dialog open={open} onOpenChange={setOpen}><DialogContent>
-        <DialogHeader><DialogTitle>Nuevo usuario</DialogTitle></DialogHeader>
-        <div className="space-y-3">
+      <PageHead title="Usuarios y permisos" sub="Cuentas gestionadas con Supabase Auth" action={<Button className="bg-blue-600 hover:bg-blue-700" onClick={openNew}><Plus className="h-4 w-4 mr-1" />Nuevo usuario</Button>} />
+      <Table columns={[
+        { key: 'nombre', label: 'Nombre', render: (r) => <div><p className="font-medium text-slate-800">{r.nombre}</p><p className="text-xs text-slate-400">{r.email}</p></div> },
+        { key: 'telefono', label: 'Teléfono', render: (r) => r.telefono || <span className="text-slate-300">—</span> },
+        { key: 'role_codigo', label: 'Rol', render: (r) => <Badge variant="secondary">{roleLabel[r.role_codigo] || r.role_codigo}</Badge> },
+        { key: 'mandantes', label: 'Mandantes', render: (r) => (r.mandantes && r.mandantes.length) ? <span className="text-slate-600" title={r.mandantes.map((m) => m.razon_social).join(', ')}>{r.mandantes.length === 1 ? r.mandantes[0].razon_social : `${r.mandantes.length} mandantes`}</span> : (r.mandante || <span className="text-slate-300">—</span>) },
+        { key: 'activo', label: 'Estado', render: (r) => r.activo ? <Badge className="bg-emerald-100 text-emerald-700 border-0">Activo</Badge> : <Badge className="bg-slate-100 text-slate-500 border-0">Inactivo</Badge> },
+        { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}><Settings className="h-3.5 w-3.5 mr-1" />Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" onClick={() => del(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
+      ]} rows={data?.usuarios} />
+      <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle>{editing ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle></DialogHeader>
+        <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
           <div className="space-y-1.5"><Label>Nombre</Label><Input value={f.nombre} onChange={(e) => setF({ ...f, nombre: e.target.value })} /></div>
-          <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Correo</Label><Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></div><div className="space-y-1.5"><Label>Contraseña</Label><Input type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} /></div></div>
-          <div className="space-y-1.5"><Label>Rol</Label><Select value={f.role_codigo} onValueChange={(v) => setF({ ...f, role_codigo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="SUPER_ADMIN_HOLDING">Super Admin Holding</SelectItem><SelectItem value="ADMIN_EMPRESA">Admin Empresa</SelectItem><SelectItem value="USUARIO_MANDANTE">Usuario Mandante</SelectItem><SelectItem value="REVISOR">Revisor Documental</SelectItem></SelectContent></Select></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5"><Label>Correo</Label><Input value={f.email} disabled={editing} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
+            <div className="space-y-1.5"><Label>Teléfono</Label><Input value={f.telefono} onChange={(e) => setF({ ...f, telefono: e.target.value })} /></div>
+          </div>
+          <div className="space-y-1.5"><Label>{editing ? 'Nueva contraseña (opcional)' : 'Contraseña'}</Label><Input type="password" value={f.password} placeholder={editing ? 'Dejar en blanco para no cambiar' : ''} onChange={(e) => setF({ ...f, password: e.target.value })} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5"><Label>Rol</Label><Select value={f.role_codigo} onValueChange={(v) => setF({ ...f, role_codigo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{roles.map((r) => <SelectItem key={r.codigo} value={r.codigo}>{roleLabel[r.codigo] || r.nombre}</SelectItem>)}</SelectContent></Select></div>
+            <div className="space-y-1.5"><Label>Estado</Label><Select value={f.activo ? 'si' : 'no'} onValueChange={(v) => setF({ ...f, activo: v === 'si' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="si">Activo</SelectItem><SelectItem value="no">Inactivo</SelectItem></SelectContent></Select></div>
+          </div>
           {f.role_codigo === 'ADMIN_EMPRESA' && <div className="space-y-1.5"><Label>Empresa</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
-          {f.role_codigo === 'USUARIO_MANDANTE' && <div className="space-y-1.5"><Label>Mandante</Label><Select value={f.mandante_id} onValueChange={(v) => setF({ ...f, mandante_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(mandantes?.mandantes || []).map((m) => <SelectItem key={m.mandante_id} value={m.mandante_id}>{m.razon_social}</SelectItem>)}</SelectContent></Select></div>}
+          {showMand && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between"><Label>Mandantes asignados</Label><span className="text-xs text-slate-400">{f.mandantes.length} seleccionados</span></div>
+              <div className="border rounded-lg max-h-52 overflow-y-auto divide-y">
+                {mandAll.map((m) => (
+                  <label key={m.mandante_id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+                    <input type="checkbox" checked={f.mandantes.includes(m.mandante_id)} onChange={() => toggleMand(m.mandante_id)} className="h-4 w-4 rounded border-slate-300" />
+                    <span className="text-slate-700">{m.razon_social}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-slate-400">Define qué información podrá ver el usuario.</p>
+            </div>
+          )}
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>Crear</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-blue-600 hover:bg-blue-700" onClick={save}>{editing ? 'Guardar' : 'Crear'}</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );

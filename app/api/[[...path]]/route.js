@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query, ensureSchema, uuid } from '@/lib/db';
-import { authSignIn, getAuthUser, adminCreateUser, storageUpload, storageSignedUrl, BUCKET } from '@/lib/supabase';
+import { authSignIn, getAuthUser, adminCreateUser, adminDeleteUser, adminUpdateUser, storageUpload, storageSignedUrl, BUCKET } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -260,8 +260,17 @@ export async function GET(request, { params }) {
     }
 
     if (p[0] === 'usuarios' && isSuper(profile)) {
-      const r = await query('select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, e.razon_social as empresa, m.razon_social as mandante from usuarios_perfiles up left join empresas_grupo e on e.empresa_id=up.empresa_id left join mandantes m on m.mandante_id=up.mandante_id order by up.created_at');
-      return json({ usuarios: r.rows });
+      const r = await query(`select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, up.telefono, up.empresa_id, up.mandante_id,
+        e.razon_social as empresa, m.razon_social as mandante,
+        coalesce((select json_agg(json_build_object('mandante_id', mm.mandante_id, 'razon_social', mn.razon_social) order by mn.razon_social)
+          from usuario_mandantes mm join mandantes mn on mn.mandante_id=mm.mandante_id where mm.perfil_id=up.perfil_id), '[]') as mandantes
+        from usuarios_perfiles up
+        left join empresas_grupo e on e.empresa_id=up.empresa_id
+        left join mandantes m on m.mandante_id=up.mandante_id
+        order by up.created_at`);
+      const roles = (await query('select codigo, nombre from roles order by nombre')).rows;
+      const mandantesAll = (await query('select mandante_id, razon_social from mandantes where deleted_at is null order by razon_social')).rows;
+      return json({ usuarios: r.rows, roles, mandantesAll });
     }
 
     if (p[0] === 'tipos-vehiculo') return json({ tipos: (await query('select id, nombre from tipos_vehiculo order by nombre')).rows });
@@ -677,12 +686,15 @@ export async function POST(request, { params }) {
 
     if (p[0] === 'usuarios') {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
-      const { email, password, nombre, role_codigo, empresa_id, mandante_id } = body;
+      const { email, password, nombre, role_codigo, empresa_id, mandante_id, telefono, mandantes } = body;
       if (!email || !password || !nombre || !role_codigo) return json({ error: 'Faltan campos' }, 400);
       const authUser = await adminCreateUser(email, password, { nombre, rol: role_codigo });
       const authId = authUser.id || authUser.user?.id;
       const id = uuid();
-      await query('insert into usuarios_perfiles (perfil_id, auth_user_id, email, nombre, role_codigo, empresa_id, mandante_id) values ($1,$2,$3,$4,$5,$6,$7)', [id, authId, email.toLowerCase(), nombre, role_codigo, empresa_id || null, mandante_id || null]);
+      await query('insert into usuarios_perfiles (perfil_id, auth_user_id, email, nombre, role_codigo, empresa_id, mandante_id, telefono) values ($1,$2,$3,$4,$5,$6,$7,$8)', [id, authId, email.toLowerCase(), nombre, role_codigo, empresa_id || null, mandante_id || null, telefono || null]);
+      if (Array.isArray(mandantes)) {
+        for (const mid of mandantes) await query('insert into usuario_mandantes (perfil_id, mandante_id) values ($1,$2) on conflict do nothing', [id, mid]);
+      }
       await audit(profile, 'crear_usuario', 'usuario', id, { email, role_codigo });
       return json({ perfil: (await query('select * from usuarios_perfiles where perfil_id=$1', [id])).rows[0] }, 201);
     }
@@ -836,6 +848,23 @@ export async function PUT(request, { params }) {
     const body = await request.json().catch(() => ({}));
     const build = (allowed) => { const cols = []; const vals = []; let i = 1; for (const k of allowed) { if (body[k] !== undefined) { cols.push(`${k}=$${i++}`); vals.push(body[k]); } } return { cols, vals, i }; };
 
+    if (p[0] === 'usuarios' && p[1]) {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const perfil = (await query('select * from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
+      if (!perfil) return json({ error: 'No encontrado' }, 404);
+      const { nombre, role_codigo, telefono, empresa_id, mandante_id, activo, mandantes, password } = body;
+      await query('update usuarios_perfiles set nombre=coalesce($2,nombre), role_codigo=coalesce($3,role_codigo), telefono=$4, empresa_id=$5, mandante_id=$6, activo=coalesce($7,activo), updated_at=now() where perfil_id=$1',
+        [p[1], nombre ?? null, role_codigo ?? null, telefono ?? null, empresa_id || null, mandante_id || null, (activo === undefined ? null : activo)]);
+      if (Array.isArray(mandantes)) {
+        await query('delete from usuario_mandantes where perfil_id=$1', [p[1]]);
+        for (const mid of mandantes) await query('insert into usuario_mandantes (perfil_id, mandante_id) values ($1,$2) on conflict do nothing', [p[1], mid]);
+      }
+      if (password) { try { await adminUpdateUser(perfil.auth_user_id, { password }); } catch (e) { /* noop */ } }
+      await audit(profile, 'editar_usuario', 'usuario', p[1], { role_codigo });
+      return json({ ok: true });
+    }
+
+
     const CATP = { 'tipos-vehiculo': 'tipos_vehiculo', 'marcas-vehiculo': 'marcas_vehiculo' };
     if (CATP[p[0]] && p[1]) {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
@@ -920,6 +949,17 @@ export async function DELETE(request, { params }) {
       await cascadeDelete(p[0], p[1]);
       await audit(profile, 'eliminar_cascada', p[0], p[1], null);
       return json({ ok: true, cascada: true });
+    }
+
+    if (p[0] === 'usuarios' && p[1]) {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      if (p[1] === profile.perfil_id) return json({ error: 'No puedes eliminar tu propio usuario' }, 400);
+      const perfil = (await query('select * from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
+      if (!perfil) return json({ error: 'No encontrado' }, 404);
+      await query('delete from usuarios_perfiles where perfil_id=$1', [p[1]]);
+      try { await adminDeleteUser(perfil.auth_user_id); } catch (e) { /* noop */ }
+      await audit(profile, 'eliminar_usuario', 'usuario', p[1], { email: perfil.email });
+      return json({ ok: true });
     }
 
     if (p[0] === 'requisitos' && p[1]) { await query('update requisitos_documentales set activo=false where requisito_id=$1', [p[1]]); return json({ ok: true }); }

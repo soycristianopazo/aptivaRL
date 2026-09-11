@@ -1,551 +1,535 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for Aptiva RL - Unified Search Endpoint /api/buscar
-Tests the new GET /api/buscar endpoint for Expediente autocomplete functionality
+Backend test for Usuarios CRUD endpoints
+Tests the new Usuarios (users) CRUD endpoints of the Aptiva RL Next.js app
 """
 
 import requests
-import json
+import random
+import string
 import sys
 
 # Base URL from .env
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
 
-# Test credentials
+# Admin credentials
 ADMIN_EMAIL = "admin@aptivarl.com"
 ADMIN_PASSWORD = "Aptiva2025!"
-EMPRESA_EMAIL = "empresa@aptivarl.com"
-EMPRESA_PASSWORD = "Aptiva2025!"
 
-def login(email, password):
-    """Login and return token"""
-    try:
-        response = requests.post(
-            f"{BASE_URL}/auth/login",
-            json={"email": email, "password": password},
-            timeout=10
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("token"), data.get("profile")
-        else:
-            print(f"❌ Login failed: {response.status_code} - {response.text}")
-            return None, None
-    except Exception as e:
-        print(f"❌ Login exception: {e}")
-        return None, None
+def generate_random_email():
+    """Generate random email for test user"""
+    random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    return f"qatest_{random_str}@aptivarl.com"
 
-def test_buscar_minimum_chars(token):
-    """Test 1: GET /api/buscar?q=a (1 char) should return empty resultados"""
-    print("\n=== TEST 1: Minimum 2 chars required ===")
-    try:
-        response = requests.get(
-            f"{BASE_URL}/buscar?q=a",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"❌ FAIL: Expected 200, got {response.status_code}")
-            return False
-        
-        data = response.json()
-        if "resultados" not in data:
-            print(f"❌ FAIL: Missing 'resultados' key in response")
-            return False
-        
-        if data["resultados"] != []:
-            print(f"❌ FAIL: Expected empty array, got {len(data['resultados'])} items")
-            return False
-        
-        print("✅ PASS: Returns empty resultados for 1 char query")
-        return True
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
-        return False
-
-def test_buscar_worker_by_name(token):
-    """Test 2: Search by first 4 letters of real worker name"""
-    print("\n=== TEST 2: Search trabajador by name (first 4 letters) ===")
-    try:
-        # First get a real worker
-        response = requests.get(
-            f"{BASE_URL}/trabajadores",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ FAIL: Could not fetch trabajadores: {response.status_code}")
-            return False, None
-        
-        workers = response.json().get("trabajadores", [])
-        if not workers:
-            print(f"❌ FAIL: No trabajadores found")
-            return False, None
-        
-        # Get first worker's name (first 4 letters)
-        worker = workers[0]
-        worker_name = worker.get("nombre", "")
-        if len(worker_name) < 4:
-            worker_name = worker.get("apellido", "")
-        
-        search_term = worker_name[:4].lower()
-        print(f"Searching for: '{search_term}' (from worker: {worker.get('nombre')} {worker.get('apellido')})")
-        
-        # Search
-        response = requests.get(
-            f"{BASE_URL}/buscar?q={search_term}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"❌ FAIL: Expected 200, got {response.status_code}")
-            return False, None
-        
-        data = response.json()
-        if "resultados" not in data:
-            print(f"❌ FAIL: Missing 'resultados' key")
-            return False, None
-        
-        resultados = data["resultados"]
-        if not isinstance(resultados, list):
-            print(f"❌ FAIL: resultados is not an array")
-            return False, None
-        
-        # Check structure of items
-        trabajador_found = False
-        trabajador_id = None
-        for item in resultados:
-            required_keys = ["tipo", "id", "label", "sub", "extra", "empresa"]
-            missing_keys = [k for k in required_keys if k not in item]
-            if missing_keys:
-                print(f"❌ FAIL: Item missing keys: {missing_keys}")
-                return False, None
-            
-            if item["tipo"] == "trabajador":
-                trabajador_found = True
-                trabajador_id = item["id"]
-                print(f"Found trabajador: {item['label']} (RUT: {item['sub']}, Cargo: {item['extra']}, Empresa: {item['empresa']})")
-        
-        if not trabajador_found:
-            print(f"❌ FAIL: No trabajador found in results")
-            return False, None
-        
-        print(f"✅ PASS: Found {len(resultados)} results with at least one trabajador")
-        return True, trabajador_id
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
-        return False, None
-
-def test_buscar_worker_by_rut(token):
-    """Test 3: Search by partial RUT (with dots and without)"""
-    print("\n=== TEST 3: Search trabajador by partial RUT ===")
-    try:
-        # Get a real worker with RUT
-        response = requests.get(
-            f"{BASE_URL}/trabajadores",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ FAIL: Could not fetch trabajadores")
-            return False
-        
-        workers = response.json().get("trabajadores", [])
-        worker_with_rut = None
-        for w in workers:
-            if w.get("rut"):
-                worker_with_rut = w
-                break
-        
-        if not worker_with_rut:
-            print(f"❌ FAIL: No worker with RUT found")
-            return False
-        
-        rut = worker_with_rut["rut"]
-        print(f"Testing with RUT: {rut} (Worker: {worker_with_rut.get('nombre')} {worker_with_rut.get('apellido')})")
-        
-        # Test 3a: Search with dots (e.g., "17.561")
-        if "." in rut:
-            partial_with_dots = rut[:6]  # e.g., "17.561"
-            print(f"Searching with dots: '{partial_with_dots}'")
-            response = requests.get(
-                f"{BASE_URL}/buscar?q={partial_with_dots}",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            if response.status_code != 200:
-                print(f"❌ FAIL: Search with dots failed: {response.status_code}")
-                return False
-            
-            data = response.json()
-            trabajador_found = any(item["tipo"] == "trabajador" for item in data.get("resultados", []))
-            if trabajador_found:
-                print(f"✅ PASS: Found trabajador with partial RUT (with dots)")
-            else:
-                print(f"⚠️  WARNING: No trabajador found with partial RUT (with dots)")
-        
-        # Test 3b: Search without dots (e.g., "17561")
-        partial_no_dots = rut.replace(".", "").replace("-", "")[:5]  # e.g., "17561"
-        print(f"Searching without dots: '{partial_no_dots}'")
-        response = requests.get(
-            f"{BASE_URL}/buscar?q={partial_no_dots}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ FAIL: Search without dots failed: {response.status_code}")
-            return False
-        
-        data = response.json()
-        trabajador_found = any(item["tipo"] == "trabajador" for item in data.get("resultados", []))
-        if trabajador_found:
-            print(f"✅ PASS: Found trabajador with partial RUT (without dots)")
-        else:
-            print(f"⚠️  WARNING: No trabajador found with partial RUT (without dots)")
-        
-        print(f"✅ PASS: RUT search completed")
-        return True
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
-        return False
-
-def test_trabajador_id_usable(token, trabajador_id):
-    """Test 4: Verify trabajador id from search is usable"""
-    print(f"\n=== TEST 4: Verify trabajador ID is usable ===")
-    if not trabajador_id:
-        print("⚠️  SKIP: No trabajador_id provided")
-        return True
+def test_usuarios_crud():
+    """Test Usuarios CRUD endpoints"""
+    print("=" * 80)
+    print("TESTING USUARIOS CRUD ENDPOINTS")
+    print("=" * 80)
+    
+    token = None
+    admin_perfil_id = None
+    test_user_perfil_id = None
+    test_email = generate_random_email()
+    mandante_id_1 = None
+    mandante_id_2 = None
     
     try:
-        print(f"Testing GET /api/trabajadores/{trabajador_id}")
-        response = requests.get(
-            f"{BASE_URL}/trabajadores/{trabajador_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
+        # ========================================================================
+        # STEP 0: Login as admin to get token
+        # ========================================================================
+        print("\n[STEP 0] POST /api/auth/login - Login as admin")
+        print("-" * 80)
+        
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+            timeout=30
         )
+        
         print(f"Status: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
             return False
         
         data = response.json()
-        if "trabajador" not in data:
-            print(f"❌ FAIL: Missing 'trabajador' key in response")
+        token = data.get("token")
+        profile = data.get("profile")
+        
+        if not token:
+            print("❌ FAILED: No token in response")
             return False
         
-        print(f"✅ PASS: Trabajador ID is usable (ficha opens correctly)")
-        return True
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
-        return False
-
-def test_buscar_vehiculo(token):
-    """Test 5: Search by partial patente and verify ID is usable"""
-    print("\n=== TEST 5: Search vehiculo by partial patente ===")
-    try:
-        # Get a real vehiculo
-        response = requests.get(
-            f"{BASE_URL}/vehiculos",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ FAIL: Could not fetch vehiculos: {response.status_code}")
+        if not profile:
+            print("❌ FAILED: No profile in response")
             return False
         
-        vehiculos = response.json().get("vehiculos", [])
-        if not vehiculos:
-            print(f"❌ FAIL: No vehiculos found")
+        admin_perfil_id = profile.get("perfil_id")
+        role_codigo = profile.get("role_codigo")
+        
+        print(f"✅ PASSED: Login successful")
+        print(f"   Token: {token[:20]}...")
+        print(f"   Admin perfil_id: {admin_perfil_id}")
+        print(f"   Role: {role_codigo}")
+        
+        if role_codigo != "SUPER_ADMIN_HOLDING":
+            print(f"❌ FAILED: Expected role SUPER_ADMIN_HOLDING, got {role_codigo}")
             return False
         
-        vehiculo = vehiculos[0]
-        patente = vehiculo.get("patente", "")
-        if len(patente) < 3:
-            print(f"❌ FAIL: Patente too short")
-            return False
+        headers = {"Authorization": f"Bearer {token}"}
         
-        partial_patente = patente[:3]
-        print(f"Searching for: '{partial_patente}' (from patente: {patente})")
+        # ========================================================================
+        # STEP 1: GET /api/usuarios - Verify structure
+        # ========================================================================
+        print("\n[STEP 1] GET /api/usuarios - Verify structure")
+        print("-" * 80)
         
-        # Search
-        response = requests.get(
-            f"{BASE_URL}/buscar?q={partial_patente}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
+        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=30)
+        
         print(f"Status: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
             return False
         
         data = response.json()
-        resultados = data.get("resultados", [])
         
-        vehiculo_found = False
-        vehiculo_id = None
-        for item in resultados:
-            if item["tipo"] == "vehiculo":
-                vehiculo_found = True
-                vehiculo_id = item["id"]
-                print(f"Found vehiculo: {item['label']} (Marca/Modelo: {item['sub']}, Empresa: {item['empresa']})")
+        # Verify top-level keys
+        if "usuarios" not in data:
+            print("❌ FAILED: Missing 'usuarios' key in response")
+            return False
+        
+        if "roles" not in data:
+            print("❌ FAILED: Missing 'roles' key in response")
+            return False
+        
+        if "mandantesAll" not in data:
+            print("❌ FAILED: Missing 'mandantesAll' key in response")
+            return False
+        
+        usuarios = data["usuarios"]
+        roles = data["roles"]
+        mandantesAll = data["mandantesAll"]
+        
+        print(f"✅ PASSED: Response has all required keys")
+        print(f"   usuarios: {len(usuarios)} users")
+        print(f"   roles: {len(roles)} roles")
+        print(f"   mandantesAll: {len(mandantesAll)} mandantes")
+        
+        # Verify usuarios structure
+        if len(usuarios) == 0:
+            print("❌ FAILED: usuarios array is empty")
+            return False
+        
+        sample_user = usuarios[0]
+        required_user_fields = ["perfil_id", "email", "nombre", "role_codigo", "activo", "telefono", "mandantes"]
+        
+        for field in required_user_fields:
+            if field not in sample_user:
+                print(f"❌ FAILED: Missing field '{field}' in usuario object")
+                return False
+        
+        print(f"✅ PASSED: Usuario object has all required fields")
+        print(f"   Sample user: {sample_user.get('email')} - {sample_user.get('nombre')}")
+        
+        # Verify mandantes is an array
+        if not isinstance(sample_user["mandantes"], list):
+            print(f"❌ FAILED: mandantes should be an array, got {type(sample_user['mandantes'])}")
+            return False
+        
+        print(f"✅ PASSED: mandantes is an array")
+        
+        # Verify roles structure
+        required_roles = ["MANDANTE_ADMIN", "MANDANTE_VISOR", "MANDANTE_RRHH", "MANDANTE_PREVENCION"]
+        role_codigos = [r.get("codigo") for r in roles]
+        
+        for req_role in required_roles:
+            if req_role not in role_codigos:
+                print(f"❌ FAILED: Missing required role '{req_role}' in roles array")
+                return False
+        
+        print(f"✅ PASSED: All required roles present")
+        print(f"   Roles: {', '.join(role_codigos)}")
+        
+        # Capture 2 mandante_id values for later
+        if len(mandantesAll) < 2:
+            print(f"❌ FAILED: Need at least 2 mandantes, got {len(mandantesAll)}")
+            return False
+        
+        mandante_id_1 = mandantesAll[0]["mandante_id"]
+        mandante_id_2 = mandantesAll[1]["mandante_id"]
+        
+        print(f"✅ PASSED: Captured 2 mandante IDs for testing")
+        print(f"   Mandante 1: {mandantesAll[0]['razon_social']} ({mandante_id_1})")
+        print(f"   Mandante 2: {mandantesAll[1]['razon_social']} ({mandante_id_2})")
+        
+        # ========================================================================
+        # STEP 2: POST /api/usuarios - Create test user
+        # ========================================================================
+        print("\n[STEP 2] POST /api/usuarios - Create test user")
+        print("-" * 80)
+        
+        new_user_data = {
+            "email": test_email,
+            "password": "Aptiva2025!",
+            "nombre": "QA Test User",
+            "telefono": "+56 9 1111 2222",
+            "role_codigo": "MANDANTE_VISOR",
+            "mandantes": [mandante_id_1, mandante_id_2]
+        }
+        
+        print(f"Creating user: {test_email}")
+        print(f"   Role: MANDANTE_VISOR")
+        print(f"   Mandantes: 2 assigned")
+        
+        response = requests.post(
+            f"{BASE_URL}/usuarios",
+            headers=headers,
+            json=new_user_data,
+            timeout=30
+        )
+        
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code != 201:
+            print(f"❌ FAILED: Expected 201, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        
+        if "perfil" not in data:
+            print("❌ FAILED: Missing 'perfil' key in response")
+            return False
+        
+        test_user_perfil_id = data["perfil"]["perfil_id"]
+        
+        print(f"✅ PASSED: User created successfully")
+        print(f"   perfil_id: {test_user_perfil_id}")
+        
+        # Verify user appears in GET /api/usuarios
+        print("\n   Verifying user appears in GET /api/usuarios...")
+        
+        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: GET /api/usuarios returned {response.status_code}")
+            return False
+        
+        data = response.json()
+        usuarios = data["usuarios"]
+        
+        test_user = None
+        for user in usuarios:
+            if user["perfil_id"] == test_user_perfil_id:
+                test_user = user
                 break
         
-        if not vehiculo_found:
-            print(f"❌ FAIL: No vehiculo found in results")
+        if not test_user:
+            print(f"❌ FAILED: Test user not found in usuarios list")
             return False
         
-        # Test 5b: Verify vehiculo ID is usable
-        print(f"Testing GET /api/vehiculos/{vehiculo_id}")
-        response = requests.get(
-            f"{BASE_URL}/vehiculos/{vehiculo_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
+        print(f"✅ PASSED: Test user found in usuarios list")
+        
+        # Verify telefono
+        if test_user.get("telefono") != "+56 9 1111 2222":
+            print(f"❌ FAILED: telefono mismatch. Expected '+56 9 1111 2222', got '{test_user.get('telefono')}'")
+            return False
+        
+        print(f"✅ PASSED: telefono set correctly: {test_user.get('telefono')}")
+        
+        # Verify activo
+        if test_user.get("activo") != True:
+            print(f"❌ FAILED: activo should be true, got {test_user.get('activo')}")
+            return False
+        
+        print(f"✅ PASSED: activo=true")
+        
+        # Verify mandantes
+        user_mandantes = test_user.get("mandantes", [])
+        
+        if not isinstance(user_mandantes, list):
+            print(f"❌ FAILED: mandantes should be an array, got {type(user_mandantes)}")
+            return False
+        
+        if len(user_mandantes) != 2:
+            print(f"❌ FAILED: Expected 2 mandantes, got {len(user_mandantes)}")
+            return False
+        
+        user_mandante_ids = [m["mandante_id"] for m in user_mandantes]
+        
+        if mandante_id_1 not in user_mandante_ids or mandante_id_2 not in user_mandante_ids:
+            print(f"❌ FAILED: Mandantes not assigned correctly")
+            print(f"   Expected: {mandante_id_1}, {mandante_id_2}")
+            print(f"   Got: {user_mandante_ids}")
+            return False
+        
+        print(f"✅ PASSED: mandantes contains 2 assigned mandantes")
+        print(f"   Mandante 1: {user_mandantes[0]['razon_social']}")
+        print(f"   Mandante 2: {user_mandantes[1]['razon_social']}")
+        
+        # ========================================================================
+        # STEP 3: PUT /api/usuarios/:id - Update test user
+        # ========================================================================
+        print("\n[STEP 3] PUT /api/usuarios/:id - Update test user")
+        print("-" * 80)
+        
+        update_data = {
+            "nombre": "QA Test User EDIT",
+            "role_codigo": "MANDANTE_RRHH",
+            "telefono": "+56 9 3333 4444",
+            "activo": False,
+            "mandantes": [mandante_id_1]  # Only one mandante now
+        }
+        
+        print(f"Updating user: {test_user_perfil_id}")
+        print(f"   nombre: QA Test User EDIT")
+        print(f"   role_codigo: MANDANTE_RRHH")
+        print(f"   telefono: +56 9 3333 4444")
+        print(f"   activo: false")
+        print(f"   mandantes: 1 (only mandante_id_1)")
+        
+        response = requests.put(
+            f"{BASE_URL}/usuarios/{test_user_perfil_id}",
+            headers=headers,
+            json=update_data,
+            timeout=30
         )
-        if response.status_code != 200:
-            print(f"❌ FAIL: Vehiculo ID not usable: {response.status_code}")
-            return False
         
-        print(f"✅ PASS: Found vehiculo and ID is usable")
-        return True
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
-        return False
-
-def test_buscar_equipo(token):
-    """Test 6: Search by partial codigo_interno and verify ID is usable"""
-    print("\n=== TEST 6: Search equipo by partial codigo_interno ===")
-    try:
-        # Get a real equipo
-        response = requests.get(
-            f"{BASE_URL}/equipos",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        if response.status_code != 200:
-            print(f"❌ FAIL: Could not fetch equipos: {response.status_code}")
-            return False
-        
-        equipos = response.json().get("equipos", [])
-        if not equipos:
-            print(f"❌ FAIL: No equipos found")
-            return False
-        
-        equipo = equipos[0]
-        codigo = equipo.get("codigo_interno", "")
-        if len(codigo) < 2:
-            print(f"❌ FAIL: Codigo too short")
-            return False
-        
-        partial_codigo = codigo[:3] if len(codigo) >= 3 else codigo[:2]
-        print(f"Searching for: '{partial_codigo}' (from codigo: {codigo})")
-        
-        # Search
-        response = requests.get(
-            f"{BASE_URL}/buscar?q={partial_codigo}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
         print(f"Status: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
             return False
         
         data = response.json()
-        resultados = data.get("resultados", [])
         
-        equipo_found = False
-        equipo_id = None
-        for item in resultados:
-            if item["tipo"] == "equipo":
-                equipo_found = True
-                equipo_id = item["id"]
-                print(f"Found equipo: {item['label']} (Marca/Modelo: {item['sub']}, Empresa: {item['empresa']})")
+        if data.get("ok") != True:
+            print(f"❌ FAILED: Expected {{ok:true}}, got {data}")
+            return False
+        
+        print(f"✅ PASSED: Update returned {{ok:true}}")
+        
+        # Verify changes via GET /api/usuarios
+        print("\n   Verifying changes via GET /api/usuarios...")
+        
+        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: GET /api/usuarios returned {response.status_code}")
+            return False
+        
+        data = response.json()
+        usuarios = data["usuarios"]
+        
+        updated_user = None
+        for user in usuarios:
+            if user["perfil_id"] == test_user_perfil_id:
+                updated_user = user
                 break
         
-        if not equipo_found:
-            print(f"❌ FAIL: No equipo found in results")
+        if not updated_user:
+            print(f"❌ FAILED: Updated user not found in usuarios list")
             return False
         
-        # Test 6b: Verify equipo ID is usable
-        print(f"Testing GET /api/equipos/{equipo_id}")
-        response = requests.get(
-            f"{BASE_URL}/equipos/{equipo_id}",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
+        # Verify nombre
+        if updated_user.get("nombre") != "QA Test User EDIT":
+            print(f"❌ FAILED: nombre not updated. Expected 'QA Test User EDIT', got '{updated_user.get('nombre')}'")
+            return False
+        
+        print(f"✅ PASSED: nombre updated: {updated_user.get('nombre')}")
+        
+        # Verify role_codigo
+        if updated_user.get("role_codigo") != "MANDANTE_RRHH":
+            print(f"❌ FAILED: role_codigo not updated. Expected 'MANDANTE_RRHH', got '{updated_user.get('role_codigo')}'")
+            return False
+        
+        print(f"✅ PASSED: role_codigo updated: {updated_user.get('role_codigo')}")
+        
+        # Verify telefono
+        if updated_user.get("telefono") != "+56 9 3333 4444":
+            print(f"❌ FAILED: telefono not updated. Expected '+56 9 3333 4444', got '{updated_user.get('telefono')}'")
+            return False
+        
+        print(f"✅ PASSED: telefono updated: {updated_user.get('telefono')}")
+        
+        # Verify activo
+        if updated_user.get("activo") != False:
+            print(f"❌ FAILED: activo not updated. Expected false, got {updated_user.get('activo')}")
+            return False
+        
+        print(f"✅ PASSED: activo updated: false")
+        
+        # Verify mandantes (should only contain mandante_id_1 now)
+        updated_mandantes = updated_user.get("mandantes", [])
+        
+        if len(updated_mandantes) != 1:
+            print(f"❌ FAILED: Expected 1 mandante, got {len(updated_mandantes)}")
+            return False
+        
+        if updated_mandantes[0]["mandante_id"] != mandante_id_1:
+            print(f"❌ FAILED: Mandante not updated correctly")
+            print(f"   Expected: {mandante_id_1}")
+            print(f"   Got: {updated_mandantes[0]['mandante_id']}")
+            return False
+        
+        print(f"✅ PASSED: mandantes updated - now contains ONLY mandante_id_1")
+        print(f"   Mandante: {updated_mandantes[0]['razon_social']}")
+        
+        # ========================================================================
+        # STEP 4: DELETE /api/usuarios/:id - Delete test user
+        # ========================================================================
+        print("\n[STEP 4] DELETE /api/usuarios/:id - Delete test user")
+        print("-" * 80)
+        
+        print(f"Deleting user: {test_user_perfil_id}")
+        
+        response = requests.delete(
+            f"{BASE_URL}/usuarios/{test_user_perfil_id}",
+            headers=headers,
+            timeout=30
         )
+        
+        print(f"Status: {response.status_code}")
+        
         if response.status_code != 200:
-            print(f"❌ FAIL: Equipo ID not usable: {response.status_code}")
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
             return False
         
-        print(f"✅ PASS: Found equipo and ID is usable")
-        return True
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
-        return False
-
-def test_buscar_no_auth():
-    """Test 7: GET /api/buscar without Authorization header should return 401"""
-    print("\n=== TEST 7: No authorization header ===")
-    try:
-        response = requests.get(
-            f"{BASE_URL}/buscar?q=test",
-            timeout=10
-        )
+        data = response.json()
+        
+        if data.get("ok") != True:
+            print(f"❌ FAILED: Expected {{ok:true}}, got {data}")
+            return False
+        
+        print(f"✅ PASSED: Delete returned {{ok:true}}")
+        
+        # Verify user is gone from GET /api/usuarios
+        print("\n   Verifying user is gone from GET /api/usuarios...")
+        
+        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: GET /api/usuarios returned {response.status_code}")
+            return False
+        
+        data = response.json()
+        usuarios = data["usuarios"]
+        
+        deleted_user = None
+        for user in usuarios:
+            if user["perfil_id"] == test_user_perfil_id:
+                deleted_user = user
+                break
+        
+        if deleted_user:
+            print(f"❌ FAILED: Deleted user still appears in usuarios list")
+            return False
+        
+        print(f"✅ PASSED: Test user is GONE from usuarios list")
+        
+        # Mark test_user_perfil_id as None since it's deleted
+        test_user_perfil_id = None
+        
+        # ========================================================================
+        # STEP 5a: Negative check - GET /api/usuarios without Authorization
+        # ========================================================================
+        print("\n[STEP 5a] Negative check - GET /api/usuarios WITHOUT Authorization header")
+        print("-" * 80)
+        
+        response = requests.get(f"{BASE_URL}/usuarios", timeout=30)
+        
         print(f"Status: {response.status_code}")
         
         if response.status_code != 401:
-            print(f"❌ FAIL: Expected 401, got {response.status_code}")
+            print(f"❌ FAILED: Expected 401, got {response.status_code}")
+            print(f"Response: {response.text}")
             return False
         
-        print(f"✅ PASS: Returns 401 without authorization")
-        return True
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
-        return False
-
-def test_buscar_empresa_scoped(empresa_token, empresa_profile):
-    """Test 8: As ADMIN_EMPRESA, all results should match that empresa"""
-    print("\n=== TEST 8: ADMIN_EMPRESA empresa-scoped results ===")
-    try:
-        empresa_id = empresa_profile.get("empresa_id")
-        print(f"Testing as ADMIN_EMPRESA (empresa_id: {empresa_id})")
+        print(f"✅ PASSED: Correctly returned 401 without Authorization header")
         
-        # Get empresa name for this admin
-        response_empresas = requests.get(
-            f"{BASE_URL}/empresas",
-            headers={"Authorization": f"Bearer {empresa_token}"},
-            timeout=10
+        # ========================================================================
+        # STEP 5b: Negative check - DELETE own user
+        # ========================================================================
+        print("\n[STEP 5b] Negative check - DELETE /api/usuarios/:id (admin's own user)")
+        print("-" * 80)
+        
+        print(f"Attempting to delete admin's own user: {admin_perfil_id}")
+        
+        response = requests.delete(
+            f"{BASE_URL}/usuarios/{admin_perfil_id}",
+            headers=headers,
+            timeout=30
         )
         
-        expected_empresa_name = None
-        if response_empresas.status_code == 200:
-            empresas = response_empresas.json().get("empresas", [])
-            empresa_obj = next((e for e in empresas if e["empresa_id"] == empresa_id), None)
-            if empresa_obj:
-                expected_empresa_name = empresa_obj.get("razon_social")
-                print(f"Expected empresa: {expected_empresa_name}")
-        
-        # Search with a common term (2+ chars)
-        response = requests.get(
-            f"{BASE_URL}/buscar?q=ma",
-            headers={"Authorization": f"Bearer {empresa_token}"},
-            timeout=10
-        )
         print(f"Status: {response.status_code}")
         
-        if response.status_code != 200:
-            print(f"❌ FAIL: Expected 200, got {response.status_code}")
+        if response.status_code != 400:
+            print(f"❌ FAILED: Expected 400, got {response.status_code}")
+            print(f"Response: {response.text}")
             return False
         
         data = response.json()
-        resultados = data.get("resultados", [])
+        error_message = data.get("error", "")
         
-        if not resultados:
-            print(f"⚠️  WARNING: No results returned for ADMIN_EMPRESA search")
-            print(f"✅ PASS: No 500 error, empresa scoping working (empty results)")
-            return True
-        
-        if not expected_empresa_name:
-            print(f"⚠️  WARNING: Could not determine expected empresa name")
-            print(f"✅ PASS: No 500 error, {len(resultados)} results returned")
-            return True
-        
-        # Check all results match this empresa
-        mismatched = []
-        for item in resultados:
-            if item.get("empresa") != expected_empresa_name:
-                mismatched.append(item)
-        
-        if mismatched:
-            print(f"❌ FAIL: Found {len(mismatched)} items not matching empresa")
-            for item in mismatched[:3]:
-                print(f"  - {item['tipo']}: {item['label']} (empresa: {item['empresa']})")
+        if "propio" not in error_message.lower():
+            print(f"❌ FAILED: Expected error message about deleting own user")
+            print(f"   Got: {error_message}")
             return False
         
-        print(f"✅ PASS: All {len(resultados)} results match ADMIN_EMPRESA's empresa (empresa-scoped)")
+        print(f"✅ PASSED: Correctly returned 400 with message about not deleting own user")
+        print(f"   Error message: {error_message}")
+        
+        # ========================================================================
+        # ALL TESTS PASSED
+        # ========================================================================
+        print("\n" + "=" * 80)
+        print("✅ ALL TESTS PASSED (5/5 steps)")
+        print("=" * 80)
+        print("\nSummary:")
+        print("  1. GET /api/usuarios - Structure verified ✅")
+        print("  2. POST /api/usuarios - Test user created ✅")
+        print("  3. PUT /api/usuarios/:id - Test user updated ✅")
+        print("  4. DELETE /api/usuarios/:id - Test user deleted ✅")
+        print("  5. Negative checks - 401 without auth, 400 on self-delete ✅")
+        print("\nCleanup: Test user successfully deleted")
+        print("=" * 80)
+        
         return True
-    except Exception as e:
-        print(f"❌ FAIL: Exception - {e}")
+        
+    except requests.exceptions.Timeout as e:
+        print(f"\n❌ TIMEOUT ERROR: {e}")
         return False
-
-def main():
-    print("=" * 80)
-    print("BACKEND API TESTING: /api/buscar (Unified Search Endpoint)")
-    print("=" * 80)
-    
-    # Login as admin
-    print("\n=== Logging in as ADMIN ===")
-    admin_token, admin_profile = login(ADMIN_EMAIL, ADMIN_PASSWORD)
-    if not admin_token:
-        print("❌ CRITICAL: Could not login as admin")
-        sys.exit(1)
-    print(f"✅ Logged in as {admin_profile.get('email')} (role: {admin_profile.get('role_codigo')})")
-    
-    # Login as empresa admin
-    print("\n=== Logging in as ADMIN_EMPRESA ===")
-    empresa_token, empresa_profile = login(EMPRESA_EMAIL, EMPRESA_PASSWORD)
-    if not empresa_token:
-        print("❌ WARNING: Could not login as ADMIN_EMPRESA")
-    else:
-        print(f"✅ Logged in as {empresa_profile.get('email')} (role: {empresa_profile.get('role_codigo')})")
-    
-    # Run tests
-    results = []
-    
-    # Test 1: Minimum chars
-    results.append(("Test 1: Minimum 2 chars", test_buscar_minimum_chars(admin_token)))
-    
-    # Test 2: Search by name
-    test2_result, trabajador_id = test_buscar_worker_by_name(admin_token)
-    results.append(("Test 2: Search by name", test2_result))
-    
-    # Test 3: Search by RUT
-    results.append(("Test 3: Search by RUT", test_buscar_worker_by_rut(admin_token)))
-    
-    # Test 4: Trabajador ID usable
-    results.append(("Test 4: Trabajador ID usable", test_trabajador_id_usable(admin_token, trabajador_id)))
-    
-    # Test 5: Search vehiculo
-    results.append(("Test 5: Search vehiculo", test_buscar_vehiculo(admin_token)))
-    
-    # Test 6: Search equipo
-    results.append(("Test 6: Search equipo", test_buscar_equipo(admin_token)))
-    
-    # Test 7: No auth
-    results.append(("Test 7: No authorization", test_buscar_no_auth()))
-    
-    # Test 8: Empresa scoped
-    if empresa_token:
-        results.append(("Test 8: Empresa-scoped", test_buscar_empresa_scoped(empresa_token, empresa_profile)))
-    else:
-        results.append(("Test 8: Empresa-scoped", False))
-    
-    # Summary
-    print("\n" + "=" * 80)
-    print("TEST SUMMARY")
-    print("=" * 80)
-    passed = sum(1 for _, result in results if result)
-    total = len(results)
-    
-    for test_name, result in results:
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status}: {test_name}")
-    
-    print(f"\nTotal: {passed}/{total} tests passed")
-    
-    if passed == total:
-        print("\n🎉 ALL TESTS PASSED!")
-        sys.exit(0)
-    else:
-        print(f"\n⚠️  {total - passed} test(s) failed")
-        sys.exit(1)
+    except requests.exceptions.RequestException as e:
+        print(f"\n❌ REQUEST ERROR: {e}")
+        return False
+    except Exception as e:
+        print(f"\n❌ UNEXPECTED ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    finally:
+        # Cleanup: Try to delete test user if it still exists
+        if test_user_perfil_id and token:
+            try:
+                print(f"\n[CLEANUP] Attempting to delete test user {test_user_perfil_id}...")
+                response = requests.delete(
+                    f"{BASE_URL}/usuarios/{test_user_perfil_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30
+                )
+                if response.status_code == 200:
+                    print(f"✅ Cleanup successful: Test user deleted")
+                else:
+                    print(f"⚠️ Cleanup warning: Could not delete test user (status {response.status_code})")
+            except Exception as e:
+                print(f"⚠️ Cleanup warning: {e}")
 
 if __name__ == "__main__":
-    main()
+    success = test_usuarios_crud()
+    sys.exit(0 if success else 1)
