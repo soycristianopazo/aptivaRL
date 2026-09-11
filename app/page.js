@@ -1681,7 +1681,8 @@ function QRDialog({ id, titulo, rut, onClose }) {
   const [url, setUrl] = useState('');
   useEffect(() => {
     let alive = true;
-    const u = `${window.location.origin}/validar/${id}`;
+    // Los QR son públicos e impresos: siempre apuntan al dominio de producción.
+    const u = `https://aptiva-rl.cl/validar/${id}`;
     setUrl(u);
     (async () => {
       try {
