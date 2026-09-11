@@ -25,6 +25,22 @@ async function getProfile(request) {
 const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
 const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
 
+// Operador vigente (para listados): JSON del trabajador que ocupa hoy el recurso
+const OPERADOR_ACTUAL_SQL = (tipo, idCol) => `(
+  select json_build_object('nombre', t.nombre, 'apellido', t.apellido, 'rut', t.rut, 'fecha_inicio', ro.fecha_inicio, 'fecha_fin', ro.fecha_fin)
+  from recurso_operadores ro join trabajadores t on t.trabajador_id=ro.trabajador_id
+  where ro.recurso_tipo='${tipo}' and ro.recurso_id=${idCol} and ro.estado='activo'
+    and ro.fecha_inicio<=current_date and (ro.fecha_fin is null or ro.fecha_fin>=current_date)
+  order by ro.fecha_inicio desc limit 1)`;
+
+// Historial de operadores de un recurso (con marca de vigencia)
+async function operadoresRecurso(tipo, id) {
+  return (await query(`select ro.*, t.nombre, t.apellido, t.rut, t.cargo,
+      (ro.estado='activo' and ro.fecha_inicio<=current_date and (ro.fecha_fin is null or ro.fecha_fin>=current_date)) as vigente
+    from recurso_operadores ro join trabajadores t on t.trabajador_id=ro.trabajador_id
+    where ro.recurso_tipo=$1 and ro.recurso_id=$2 order by ro.fecha_inicio desc, ro.created_at desc`, [tipo, id])).rows;
+}
+
 const titleCase = (s) => {
   if (s == null) return s;
   return String(s).trim().toLowerCase().replace(/([\p{L}][\p{L}'’-]*)/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1)) || null;
@@ -232,7 +248,29 @@ export async function GET(request, { params }) {
     // Endpoint público (sin auth) para validación por QR en terreno. Solo trabajadores, datos resumidos.
     if (p[0] === 'public' && p[1] === 'expediente' && p[2]) {
       const t = (await query('select t.nombre, t.apellido, t.rut, t.cargo, t.estado, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.trabajador_id=$1 and t.deleted_at is null', [p[2]])).rows[0];
-      if (!t) return json({ error: 'No encontrado' }, 404);
+      if (!t) {
+        // Fallback: puede ser un vehículo o equipo
+        const veh = (await query('select v.vehiculo_id as id, v.patente as titulo, v.tipo, v.marca, v.modelo, v.anio, v.estado_operativo, e.razon_social as empresa from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.vehiculo_id=$1 and v.deleted_at is null', [p[2]])).rows[0];
+        const equ = veh ? null : (await query('select q.equipo_id as id, q.codigo_interno as titulo, q.tipo, q.marca, q.modelo, q.anio, q.estado_operativo, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.equipo_id=$1 and q.deleted_at is null', [p[2]])).rows[0];
+        const rec = veh || equ;
+        if (!rec) return json({ error: 'No encontrado' }, 404);
+        const rtipo = veh ? 'vehiculo' : 'equipo';
+        const acreditacion = await acreditacionRecurso(rtipo, p[2]);
+        const operadores = await operadoresRecurso(rtipo, p[2]);
+        const op = operadores.find((o) => o.vigente) || null;
+        const disponibilidad = rec.estado_operativo === 'mantencion' ? 'En mantención' : rec.estado_operativo === 'fuera_servicio' ? 'Fuera de servicio' : op ? 'En uso' : 'Disponible';
+        let tot = 0, ok = 0; const now = new Date();
+        const docSummary = { aprobado: 0, por_vencer: 0, vencido: 0, en_revision: 0, rechazado: 0, faltante: 0 };
+        const perMandante = [];
+        acreditacion.forEach((a) => {
+          tot += a.docs_total || 0; ok += a.docs_ok || 0;
+          perMandante.push({ mandante: a.mandante, contrato: a.contrato, estado: a.estado, ok: a.docs_ok || 0, total: a.docs_total || 0, pct: a.docs_total ? Math.round((a.docs_ok / a.docs_total) * 100) : 100 });
+          (a.detalle || []).forEach((d) => { let st = d.estado; if (st === 'aprobado' && d.fecha_vencimiento) { const dd = Math.ceil((new Date(d.fecha_vencimiento) - now) / 86400000); if (dd < 0) st = 'vencido'; else if (dd <= 30) st = 'por_vencer'; } if (st === 'pendiente') st = 'en_revision'; if (docSummary[st] !== undefined) docSummary[st]++; });
+        });
+        const pctTotal = tot ? Math.round((ok / tot) * 100) : 100;
+        const estadoGlobal = perMandante.some((m) => m.estado === 'BLOQUEADO') ? 'BLOQUEADO' : perMandante.some((m) => m.estado === 'EN_REVISION') ? 'EN_REVISION' : 'ACREDITADO';
+        return json({ tipoEntidad: 'recurso', nombre: rec.titulo, apellido: '', rut: [rec.tipo, rec.marca, rec.modelo, rec.anio].filter(Boolean).join(' ') || (rtipo === 'vehiculo' ? 'Vehículo' : 'Equipo'), cargo: op ? `${op.nombre} ${op.apellido}` : 'Sin operador asignado', empresa: rec.empresa, disponibilidad, estadoGlobal, pctTotal, docSummary, perMandante });
+      }
       const acreditacion = await acreditacionTrabajador(p[2]);
       let tot = 0, ok = 0; const now = new Date();
       const docSummary = { aprobado: 0, por_vencer: 0, vencido: 0, en_revision: 0, rechazado: 0, faltante: 0 };
@@ -414,17 +452,19 @@ export async function GET(request, { params }) {
       if (!v) return json({ error: 'No encontrado' }, 404);
       const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from vehiculo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.vehiculo_id=$1 order by a.created_at desc', [p[1]])).rows;
       const acreditacion = await acreditacionRecurso('vehiculo', p[1]);
-      return json({ recurso: v, asignaciones, acreditacion });
+      const operadores = await operadoresRecurso('vehiculo', p[1]);
+      return json({ recurso: v, asignaciones, acreditacion, operadores, operador_actual: operadores.find((o) => o.vigente) || null });
     }
-    if (p[0] === 'vehiculos') return json({ vehiculos: (await query('select v.*, e.razon_social as empresa from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null order by v.patente')).rows });
+    if (p[0] === 'vehiculos') return json({ vehiculos: (await query(`select v.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('vehiculo', 'v.vehiculo_id')} as operador_actual from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null order by v.patente`)).rows });
     if (p[0] === 'equipos' && p[1]) {
       const q = (await query('select q.*, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.equipo_id=$1', [p[1]])).rows[0];
       if (!q) return json({ error: 'No encontrado' }, 404);
       const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from equipo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.equipo_id=$1 order by a.created_at desc', [p[1]])).rows;
       const acreditacion = await acreditacionRecurso('equipo', p[1]);
-      return json({ recurso: q, asignaciones, acreditacion });
+      const operadores = await operadoresRecurso('equipo', p[1]);
+      return json({ recurso: q, asignaciones, acreditacion, operadores, operador_actual: operadores.find((o) => o.vigente) || null });
     }
-    if (p[0] === 'equipos') return json({ equipos: (await query('select q.*, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null order by q.codigo_interno')).rows });
+    if (p[0] === 'equipos') return json({ equipos: (await query(`select q.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('equipo', 'q.equipo_id')} as operador_actual from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null order by q.codigo_interno`)).rows });
 
     if (p[0] === 'documentos' && p[1] === 'pendientes') {
       const r = await query("select d.*, r.nombre as requisito, t.nombre as trab_nombre, t.apellido as trab_apellido, m.razon_social as mandante from documentos d left join requisitos_documentales r on r.requisito_id=d.requisito_id left join trabajadores t on t.trabajador_id=d.recurso_id left join mandantes m on m.mandante_id=d.mandante_id where d.estado='en_revision' and d.deleted_at is null order by d.fecha_subida desc");
@@ -798,6 +838,38 @@ export async function POST(request, { params }) {
       await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, empId, rutFmt, titleCase(nombre), titleCase(apellido), titleCase(cargo), genero || null, region || null, comuna || null, telefono || null, email || null]);
       await audit(profile, 'crear_trabajador', 'trabajador', id, { rut: rutFmt, nombre, apellido });
       return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [id])).rows[0] }, 201);
+    }
+
+    if ((p[0] === 'vehiculos' || p[0] === 'equipos') && p[1] && p[2] === 'operador' && !p[3]) {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const tipo = p[0] === 'vehiculos' ? 'vehiculo' : 'equipo';
+      const { trabajador_id, fecha_inicio, fecha_fin, observacion } = body;
+      if (!trabajador_id || !fecha_inicio) return json({ error: 'Operador y fecha de inicio son obligatorios' }, 400);
+      if (fecha_fin && fecha_fin < fecha_inicio) return json({ error: 'La fecha de término no puede ser anterior a la de inicio' }, 400);
+      // Finaliza cualquier operador activo previo (un recurso lo opera una persona a la vez)
+      await query("update recurso_operadores set estado='finalizado', finalizado_at=now(), fecha_fin=coalesce(fecha_fin, current_date) where recurso_tipo=$1 and recurso_id=$2 and estado='activo'", [tipo, p[1]]);
+      const id = uuid();
+      await query('insert into recurso_operadores (id, recurso_tipo, recurso_id, trabajador_id, fecha_inicio, fecha_fin, observacion) values ($1,$2,$3,$4,$5,$6,$7)', [id, tipo, p[1], trabajador_id, fecha_inicio, fecha_fin || null, observacion || null]);
+      await audit(profile, 'asignar_operador', tipo, p[1], { trabajador_id, fecha_inicio, fecha_fin });
+      return json({ ok: true, id }, 201);
+    }
+
+    if ((p[0] === 'vehiculos' || p[0] === 'equipos') && p[1] && p[2] === 'operador' && p[3] === 'liberar') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const tipo = p[0] === 'vehiculos' ? 'vehiculo' : 'equipo';
+      await query("update recurso_operadores set estado='finalizado', finalizado_at=now(), fecha_fin=current_date where recurso_tipo=$1 and recurso_id=$2 and estado='activo'", [tipo, p[1]]);
+      await audit(profile, 'liberar_operador', tipo, p[1], {});
+      return json({ ok: true });
+    }
+
+    if ((p[0] === 'vehiculos' || p[0] === 'equipos') && p[1] && p[2] === 'estado-operativo') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const tipo = p[0] === 'vehiculos' ? 'vehiculo' : 'equipo';
+      const { estado_operativo } = body;
+      if (!['disponible', 'mantencion', 'fuera_servicio'].includes(estado_operativo)) return json({ error: 'Estado inválido' }, 400);
+      await query(`update ${tipo}s set estado_operativo=$2 where ${tipo}_id=$1`, [p[1], estado_operativo]);
+      await audit(profile, 'estado_operativo', tipo, p[1], { estado_operativo });
+      return json({ ok: true });
     }
 
     if (p[0] === 'trabajadores' && p[1] === 'asignar') {

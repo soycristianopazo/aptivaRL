@@ -80,9 +80,10 @@ export default function ValidarPage() {
               <div className="p-5">
                 <h1 className="text-xl font-bold text-slate-800">{d.nombre} {d.apellido}</h1>
                 <div className="mt-2 grid grid-cols-2 gap-y-1.5 gap-x-3 text-sm">
-                  <div><span className="text-slate-400">RUT</span><p className="font-medium text-slate-700">{d.rut}</p></div>
-                  <div><span className="text-slate-400">Cargo</span><p className="font-medium text-slate-700">{d.cargo || '—'}</p></div>
+                  <div><span className="text-slate-400">{d.tipoEntidad === 'recurso' ? 'Detalle' : 'RUT'}</span><p className="font-medium text-slate-700">{d.rut}</p></div>
+                  <div><span className="text-slate-400">{d.tipoEntidad === 'recurso' ? 'Operador actual' : 'Cargo'}</span><p className="font-medium text-slate-700">{d.cargo || '—'}</p></div>
                   <div className="col-span-2"><span className="text-slate-400">Empresa</span><p className="font-medium text-slate-700">{d.empresa}</p></div>
+                  {d.tipoEntidad === 'recurso' && d.disponibilidad && <div className="col-span-2"><span className="text-slate-400">Disponibilidad</span><p className="font-medium text-slate-700">{d.disponibilidad}</p></div>}
                 </div>
                 <div className="mt-4 flex items-center gap-4">
                   <div className="relative shrink-0" style={{ width: 84, height: 84 }}>

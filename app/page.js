@@ -1749,6 +1749,13 @@ function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, o
 }
 
 /* ------------ Vehiculos / Equipos ------------ */
+function DispoBadge({ r }) {
+  const d = r.estado_operativo === 'mantencion' ? { txt: 'En mantención', cls: 'bg-amber-100 text-amber-700' }
+    : r.estado_operativo === 'fuera_servicio' ? { txt: 'Fuera de servicio', cls: 'bg-red-100 text-red-700' }
+    : r.operador_actual ? { txt: 'En uso', cls: 'bg-orange-100 text-orange-700' }
+    : { txt: 'Disponible', cls: 'bg-emerald-100 text-emerald-700' };
+  return <div className="flex flex-col gap-0.5"><Badge className={`${d.cls} w-fit`}>{d.txt}</Badge>{r.operador_actual && <span className="text-[11px] text-slate-400">{r.operador_actual.nombre} {r.operador_actual.apellido}</span>}</div>;
+}
 function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
   const [data, reload] = useData(api, `/${kind}`);
   const [empresas] = useData(api, '/empresas');
@@ -1763,9 +1770,9 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
     <div>
       <PageHead title={isVeh ? 'Vehículos' : 'Equipos'} sub={`Cada ${isVeh ? 'vehículo' : 'equipo'} pertenece a una empresa del Holding`} action={canManage && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo</Button>} />
       <Table columns={isVeh ? [
-        { key: 'patente', label: 'Patente', render: (r) => <span className="font-medium">{r.patente}</span> }, { key: 'numero_interno', label: 'Nº INT', render: (r) => r.numero_interno || <span className="text-slate-300">—</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' },
+        { key: 'patente', label: 'Patente', render: (r) => <span className="font-medium">{r.patente}</span> }, { key: 'numero_interno', label: 'Nº INT', render: (r) => r.numero_interno || <span className="text-slate-300">—</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' }, { key: 'dispo', label: 'Disponibilidad', render: (r) => <DispoBadge r={r} /> },
       ] : [
-        { key: 'codigo_interno', label: 'Código', render: (r) => <span className="font-medium">{r.codigo_interno}</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' },
+        { key: 'codigo_interno', label: 'Código', render: (r) => <span className="font-medium">{r.codigo_interno}</span> }, { key: 'tipo', label: 'Tipo' }, { key: 'marca', label: 'Marca' }, { key: 'modelo', label: 'Modelo' }, { key: 'anio', label: 'Año' }, { key: 'empresa', label: 'Empresa' }, { key: 'dispo', label: 'Disponibilidad', render: (r) => <DispoBadge r={r} /> },
       ]} rows={rows} onRow={(r) => openDetail(isVeh ? 'vehiculo' : 'equipo', isVeh ? r.vehiculo_id : r.equipo_id)} />
       <Dialog open={open} onOpenChange={setOpen}><DialogContent>
         <DialogHeader><DialogTitle>Nuevo {isVeh ? 'vehículo' : 'equipo'}</DialogTitle></DialogHeader>
@@ -1796,17 +1803,28 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
   const [contratos] = useData(api, '/contratos');
   const [tiposVeh] = useData(api, '/tipos-vehiculo');
   const [marcasVeh] = useData(api, '/marcas-vehiculo');
+  const [trabajadores] = useData(api, '/trabajadores');
   const [upload, setUpload] = useState(null);
   const [asig, setAsig] = useState('');
   const [edit, setEdit] = useState(false);
   const [ef, setEf] = useState({});
+  const [qrOpen, setQrOpen] = useState(false);
+  const [opForm, setOpForm] = useState({ trabajador_id: '', fecha_inicio: '', fecha_fin: '', observacion: '' });
   if (!data) return <p className="text-slate-400">Cargando…</p>;
-  const { recurso: r, asignaciones, acreditacion } = data;
+  const { recurso: r, asignaciones, acreditacion, operadores = [], operador_actual = null } = data;
   const titulo = tipo === 'vehiculo' ? r.patente : r.codigo_interno;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === r.empresa_id);
   const openEdit = () => { setEf({ [tipo === 'vehiculo' ? 'patente' : 'codigo_interno']: titulo, numero_interno: r.numero_interno || '', tipo: r.tipo || '', marca: r.marca || '', modelo: r.modelo || '', anio: r.anio || '' }); setEdit(true); };
   const saveEdit = async () => { try { await api(`/${tipo}s/${id}`, { method: 'PUT', body: JSON.stringify({ ...ef, anio: ef.anio ? Number(ef.anio) : null }) }); toast.success(`${tipo === 'vehiculo' ? 'Vehículo' : 'Equipo'} actualizado`); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
   const doAsignar = async () => { if (!asig) return; try { await api(`/${tipo}s/asignar`, { method: 'POST', body: JSON.stringify({ recurso_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
+  const trabsEmp = (trabajadores?.trabajadores || []).filter((t) => t.empresa_id === r.empresa_id);
+  const dispo = r.estado_operativo === 'mantencion' ? { txt: 'En mantención', cls: 'bg-amber-100 text-amber-700' } : r.estado_operativo === 'fuera_servicio' ? { txt: 'Fuera de servicio', cls: 'bg-red-100 text-red-700' } : operador_actual ? { txt: 'En uso', cls: 'bg-orange-100 text-orange-700' } : { txt: 'Disponible', cls: 'bg-emerald-100 text-emerald-700' };
+  const asignarOperador = async () => {
+    if (!opForm.trabajador_id || !opForm.fecha_inicio) { toast.error('Selecciona operador y fecha de inicio'); return; }
+    try { await api(`/${tipo}s/${id}/operador`, { method: 'POST', body: JSON.stringify(opForm) }); toast.success('Operador asignado'); setOpForm({ trabajador_id: '', fecha_inicio: '', fecha_fin: '', observacion: '' }); reload(); } catch (e) { toast.error(e.message); }
+  };
+  const liberarOperador = async () => { if (!(await confirmDialog({ title: 'Liberar recurso', description: 'Se finalizará la asignación del operador actual y el recurso quedará disponible.', confirmText: 'Liberar', destructive: false }))) return; try { await api(`/${tipo}s/${id}/operador/liberar`, { method: 'POST', body: '{}' }); toast.success('Recurso liberado'); reload(); } catch (e) { toast.error(e.message); } };
+  const setEstadoOperativo = async (estado_operativo) => { try { await api(`/${tipo}s/${id}/estado-operativo`, { method: 'POST', body: JSON.stringify({ estado_operativo }) }); toast.success('Estado actualizado'); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
       <button onClick={onBack} className="text-sm text-[#1789bf] mb-3">← Volver</button>
@@ -1814,11 +1832,14 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
         icon={tipo === 'vehiculo' ? <Truck className="h-7 w-7" /> : <Wrench className="h-7 w-7" />}
         title={titulo}
         meta={[{ label: 'Tipo', value: r.tipo || '—' }, { label: 'Detalle', value: [r.marca, r.modelo, r.anio].filter(Boolean).join(' ') || '—' }, { label: 'Empresa', value: r.empresa }]}
-        actions={<>{canManage && <Button variant="outline" onClick={openEdit}>Editar</Button>}{isSuper && <CascadeDelete api={api} tipo={`${tipo}s`} id={id} nombre={titulo} onDone={onBack} />}</>}
+        actions={<><Button variant="outline" onClick={() => setQrOpen(true)}><QrCode className="h-4 w-4 mr-1" />QR</Button>{canManage && <Button variant="outline" onClick={openEdit}>Editar</Button>}{isSuper && <CascadeDelete api={api} tipo={`${tipo}s`} id={id} nombre={titulo} onDone={onBack} />}</>}
       />
-      {acreditacion.length > 0 && <div className="flex gap-3 flex-wrap mb-4 -mt-2">{acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}</div>}
+      <div className="flex gap-3 flex-wrap mb-4 -mt-2 items-center">
+        <div className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">Disponibilidad</span><Badge className={dispo.cls}>{dispo.txt}</Badge>{operador_actual && <span className="text-xs text-slate-500">· {operador_actual.nombre} {operador_actual.apellido}</span>}</div>
+        {acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}
+      </div>
       <Tabs defaultValue="documentacion">
-        <TabsList><TabsTrigger value="documentacion">Documentación</TabsTrigger><TabsTrigger value="asignaciones">Asignaciones</TabsTrigger><TabsTrigger value="info">Información</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="documentacion">Documentación</TabsTrigger><TabsTrigger value="asignaciones">Asignaciones</TabsTrigger><TabsTrigger value="operador">Operador</TabsTrigger><TabsTrigger value="info">Información</TabsTrigger></TabsList>
         <TabsContent value="documentacion">
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes. Asigna este {tipo} a un contrato para ver sus requisitos documentales.</p>}
           {acreditacion.map((a) => (
@@ -1829,13 +1850,50 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
         </TabsContent>
         <TabsContent value="asignaciones">
           {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={doAsignar}>Asignar</Button></div>}
-          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'estado', label: 'Estado', render: (x) => <Badge className={x.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100'}>{x.estado}</Badge> }]} rows={asignaciones} />
+          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'estado', label: 'Estado', render: (x) => <Badge className={x.estado === 'activo' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{x.estado}</Badge> }]} rows={asignaciones} />
+        </TabsContent>
+        <TabsContent value="operador">
+          <Card className="mb-4">
+            <CardHeader className="pb-2"><CardTitle className="text-base">Operador / conductor actual</CardTitle><CardDescription>Quién opera este {tipo === 'vehiculo' ? 'vehículo' : 'equipo'} y su disponibilidad</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge className={dispo.cls}>{dispo.txt}</Badge>
+                {operador_actual
+                  ? <span className="text-sm text-slate-700">{operador_actual.nombre} {operador_actual.apellido} · {operador_actual.rut} · desde {fdate(operador_actual.fecha_inicio)}{operador_actual.fecha_fin ? ` hasta ${fdate(operador_actual.fecha_fin)}` : ''}</span>
+                  : <span className="text-sm text-slate-400">Sin operador asignado</span>}
+                {canManage && operador_actual && <Button size="sm" variant="outline" className="text-red-600 border-red-200" onClick={liberarOperador}>Liberar</Button>}
+              </div>
+              {canManage && <div className="flex flex-wrap gap-2 items-center">
+                <span className="text-xs text-slate-500 mr-1">Marcar como:</span>
+                {[['disponible', 'Disponible'], ['mantencion', 'En mantención'], ['fuera_servicio', 'Fuera de servicio']].map(([k, l]) => <Button key={k} size="sm" variant="outline" className={r.estado_operativo === k ? 'bg-slate-800 text-white border-slate-800 hover:bg-slate-700 hover:text-white' : ''} onClick={() => setEstadoOperativo(k)}>{l}</Button>)}
+              </div>}
+            </CardContent>
+          </Card>
+          {canManage && <Card className="mb-4">
+            <CardHeader className="pb-2"><CardTitle className="text-base">Asignar operador</CardTitle><CardDescription>Se finaliza el operador anterior automáticamente</CardDescription></CardHeader>
+            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5 sm:col-span-2"><Label>Operador (trabajador de {r.empresa})</Label><Select value={opForm.trabajador_id} onValueChange={(v) => setOpForm({ ...opForm, trabajador_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona operador" /></SelectTrigger><SelectContent className="max-h-72">{trabsEmp.length === 0 ? <div className="px-3 py-2 text-sm text-slate-400">No hay trabajadores de esta empresa</div> : trabsEmp.map((t) => <SelectItem key={t.trabajador_id} value={t.trabajador_id}>{t.nombre} {t.apellido} · {t.rut}</SelectItem>)}</SelectContent></Select></div>
+              <div className="space-y-1.5"><Label>Desde</Label><Input type="date" value={opForm.fecha_inicio} onChange={(e) => setOpForm({ ...opForm, fecha_inicio: e.target.value })} /></div>
+              <div className="space-y-1.5"><Label>Hasta (opcional)</Label><Input type="date" value={opForm.fecha_fin} onChange={(e) => setOpForm({ ...opForm, fecha_fin: e.target.value })} /></div>
+              <div className="space-y-1.5 sm:col-span-2"><Label>Observación (opcional)</Label><Input value={opForm.observacion} onChange={(e) => setOpForm({ ...opForm, observacion: e.target.value })} placeholder="Turno, faena, etc." /></div>
+              <div className="sm:col-span-2"><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={asignarOperador}>Asignar operador</Button></div>
+            </CardContent>
+          </Card>}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Historial de operadores</p>
+          <Table columns={[
+            { key: 'op', label: 'Operador', render: (o) => <div><p className="font-medium text-slate-800">{o.nombre} {o.apellido}</p><p className="text-xs text-slate-400">{o.rut}{o.cargo ? ` · ${o.cargo}` : ''}</p></div> },
+            { key: 'fecha_inicio', label: 'Desde', render: (o) => fdate(o.fecha_inicio) },
+            { key: 'fecha_fin', label: 'Hasta', render: (o) => o.fecha_fin ? fdate(o.fecha_fin) : '—' },
+            { key: 'observacion', label: 'Observación', render: (o) => o.observacion || '—' },
+            { key: 'vigente', label: 'Estado', render: (o) => <Badge className={o.vigente ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-600'}>{o.vigente ? 'Vigente' : 'Finalizado'}</Badge> },
+          ]} rows={operadores} empty="Aún no hay operadores registrados" />
         </TabsContent>
         <TabsContent value="info"><Card><CardContent className="p-5 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           {Object.entries({ [tipo === 'vehiculo' ? 'Patente' : 'Código']: titulo, Tipo: r.tipo, Marca: r.marca, Modelo: r.modelo, Año: r.anio, Empresa: r.empresa, Estado: r.estado }).map(([k, v]) => <div key={k}><p className="text-slate-400">{k}</p><p className="font-medium">{v || '—'}</p></div>)}
         </CardContent></Card></TabsContent>
       </Tabs>
       {upload && <UploadDialog api={api} recurso_tipo={tipo} recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
+      {qrOpen && <QRDialog id={id} titulo={titulo} rut={[r.marca, r.modelo].filter(Boolean).join(' ') || r.empresa} onClose={() => setQrOpen(false)} />}
       <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
         <DialogHeader><DialogTitle>Editar {tipo === 'vehiculo' ? 'vehículo' : 'equipo'}</DialogTitle></DialogHeader>
         <div className="grid grid-cols-2 gap-3">
