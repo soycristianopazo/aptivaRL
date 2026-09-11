@@ -1244,7 +1244,7 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
   const [addEmp, setAddEmp] = useState('');
   const [newGer, setNewGer] = useState('');
   if (!data) return <p className="text-slate-400">Cargando…</p>;
-  const { mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores } = data;
+  const { mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores, usuarios } = data;
   const noAsoc = (allEmp?.empresas || []).filter((e) => !empresas.some((x) => x.empresa_id === e.empresa_id));
 
   const openEdit = () => { setEf({ razon_social: mandante.razon_social, rut: mandante.rut, region: mandante.region, comuna: mandante.comuna, direccion: mandante.direccion }); setEdit(true); };
@@ -1265,7 +1265,7 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
         actions={canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className={mandante.activo ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200'} onClick={toggleActivo}>{mandante.activo ? 'Desactivar' : 'Activar'}</Button>{isSuper && <CascadeDelete api={api} tipo="mandantes" id={id} nombre={mandante.razon_social} onDone={onBack} />}</>}
       />
       <Tabs defaultValue="resumen">
-        <TabsList className="flex flex-wrap h-auto gap-0 bg-transparent p-0 mb-6 border-b border-slate-200 rounded-none w-full justify-start">{['resumen','empresas','gerencias','contratos','trabajadores','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-slate-500 data-[state=active]:border-blue-600 data-[state=active]:text-blue-700 data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-slate-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
+        <TabsList className="flex flex-wrap h-auto gap-0 bg-transparent p-0 mb-6 border-b border-slate-200 rounded-none w-full justify-start">{['resumen','empresas','gerencias','contratos','trabajadores','usuarios','estandar'].map((v) => <TabsTrigger key={v} value={v} className="rounded-none border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-slate-500 data-[state=active]:border-blue-600 data-[state=active]:text-blue-700 data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-slate-700">{{resumen:'Resumen',empresas:'Empresas',gerencias:'Gerencias',contratos:'Contratos',trabajadores:'Trabajadores',usuarios:'Usuarios Holding Río Loa',estandar:'Estándar Documental'}[v]}</TabsTrigger>)}</TabsList>
         <TabsContent value="resumen"><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Kpi label="Empresas Holding" value={empresas.length} icon={Building} color="bg-blue-50 text-blue-600" />
           <Kpi label="Contratos" value={contratos.length} icon={FileSignature} color="bg-indigo-50 text-indigo-600" />
@@ -1286,6 +1286,15 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper }) {
           { key: 'estado', label: 'Estado', render: (r) => <Badge className="bg-emerald-100 text-emerald-700">{r.estado}</Badge> },
         ]} rows={contratos} /></TabsContent>
         <TabsContent value="trabajadores"><Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[{ key: 'nombre', label: 'Nombre', render: (r) => `${r.nombre} ${r.apellido}` }, { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }]} rows={trabajadores} /></TabsContent>
+        <TabsContent value="usuarios">
+          <p className="text-sm text-slate-500 mb-3">Usuarios del Holding Río Loa con acceso asignado a este mandante.</p>
+          <Table columns={[
+            { key: 'nombre', label: 'Nombre', render: (r) => <div><p className="font-medium text-slate-800">{r.nombre || '—'}</p><p className="text-xs text-slate-400">{r.email}</p></div> },
+            { key: 'telefono', label: 'Teléfono', render: (r) => r.telefono || '—' },
+            { key: 'role_codigo', label: 'Rol', render: (r) => <Badge variant="outline" className={roleBadgeClass(r.role_codigo)}>{roleLabel[r.role_codigo] || r.role_codigo}</Badge> },
+            { key: 'activo', label: 'Estado', render: (r) => <Badge className={r.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}>{r.activo ? 'Activo' : 'Inactivo'}</Badge> },
+          ]} rows={usuarios} empty="Sin usuarios asignados a este mandante" />
+        </TabsContent>
         <TabsContent value="estandar">
           <EstandarDocumental id={id} api={api} categorias={categorias} requisitos={requisitos} canManage={canManage} reload={reload} mandante={mandante} />
         </TabsContent>

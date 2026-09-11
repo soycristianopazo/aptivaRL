@@ -314,7 +314,8 @@ export async function GET(request, { params }) {
       const requisitos = (await query('select r.*, cat.nombre as categoria from requisitos_documentales r left join categorias_documentales cat on cat.categoria_id=r.categoria_id where r.mandante_id=$1 and r.activo=true order by r.tipo_recurso, r.orden', [mid])).rows;
       const categorias = (await query("select c.*, (select count(*)::int from requisitos_documentales r where r.categoria_id=c.categoria_id and r.activo=true) as docs_count from categorias_documentales c where c.mandante_id=$1 and c.activo=true order by c.orden", [mid])).rows;
       const trabajadores = (await query("select distinct t.trabajador_id, t.nombre, t.apellido, t.rut, t.cargo from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.mandante_id=$1 and a.estado='activo'", [mid])).rows;
-      return json({ mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores });
+      const usuarios = (await query("select up.perfil_id, up.nombre, up.email, up.telefono, up.role_codigo, up.activo from usuario_mandantes um join usuarios_perfiles up on up.perfil_id=um.perfil_id where um.mandante_id=$1 order by up.activo desc, up.nombre", [mid])).rows;
+      return json({ mandante, empresas, gerencias, contratos, requisitos, categorias, trabajadores, usuarios });
     }
 
     if (p[0] === 'contratos' && !p[1]) {
