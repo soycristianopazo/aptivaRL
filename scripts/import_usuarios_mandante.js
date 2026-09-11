@@ -81,15 +81,16 @@ async function ensureAuthUser(email, password, meta) {
       if (!email) continue;
       if (!users.has(email)) users.set(email, { email, nombre: (r[idx['NOMBRE_COMPLETO']] || '').trim(), tipos: [], mandRuts: new Set() });
       const u = users.get(email);
-      u.tipos.push((r[idx['TIPO_USUARIO_MANDANTE']] || '').trim().toUpperCase());
+      u.tipos.push((r[idx['ID_TIPO_MANDANTE']] || '').trim());
       const mr = normRut(r[idx['RUT_MANDANTE']]);
       if (mandByRut.has(mr)) u.mandRuts.add(mr); else mandanteMisses.add((r[idx['MANDANTE']] || '') + ' [' + r[idx['RUT_MANDANTE']] + ']');
     }
 
+    const CAT = { '1': 'MANDANTE_ADMIN', '2': 'MANDANTE_VISOR', '3': 'MANDANTE_RRHH', '4': 'MANDANTE_PREVENCION' };
     const mapRole = (tipos) => {
-      const cnt = { MANDANTE_RRHH: 0, MANDANTE_VISOR: 0 };
-      tipos.forEach((t) => { if (t === 'RRHH') cnt.MANDANTE_RRHH++; else cnt.MANDANTE_VISOR++; });
-      return cnt.MANDANTE_RRHH >= cnt.MANDANTE_VISOR && cnt.MANDANTE_RRHH > 0 ? 'MANDANTE_RRHH' : 'MANDANTE_VISOR';
+      const cnt = {};
+      tipos.forEach((t) => { const r = CAT[t] || 'MANDANTE_VISOR'; cnt[r] = (cnt[r] || 0) + 1; });
+      return Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0];
     };
 
     console.log('Usuarios únicos:', users.size);
