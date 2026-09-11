@@ -7,7 +7,6 @@ const montserrat = Montserrat({ subsets: ['latin'], weight: ['400', '500', '600'
 export const metadata = {
   title: 'Aptiva RL · Gestión Documental y Acreditación',
   description: 'Plataforma corporativa multiempresa del Holding Río Loa: gestión documental, acreditación y administración de recursos.',
-  icons: { icon: '/favicon-aptiva.png', shortcut: '/favicon-aptiva.png', apple: '/favicon-aptiva.png' },
 };
 
 export default function RootLayout({ children }) {
