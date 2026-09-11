@@ -2071,7 +2071,7 @@ function Vencimientos({ api }) {
         { key: 'mandante', label: 'Mandante' },
         { key: 'empresa', label: 'Empresa' },
         { key: 'fecha_vencimiento', label: 'Vence', render: (r) => fdate(r.fecha_vencimiento) },
-        { key: 'dias_restantes', label: 'Días', render: (r) => <Badge className={r.dias_restantes < 0 ? 'bg-red-100 text-red-700' : r.dias_restantes <= 7 ? 'bg-orange-100 text-orange-700' : r.dias_restantes <= 15 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100'}>{r.dias_restantes < 0 ? `Vencido ${Math.abs(r.dias_restantes)}d` : `${r.dias_restantes} días`}</Badge> },
+        { key: 'dias_restantes', label: 'Días', render: (r) => <Badge className={r.dias_restantes < 0 ? 'bg-red-100 text-red-700' : r.dias_restantes <= 7 ? 'bg-orange-100 text-orange-700' : r.dias_restantes <= 15 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}>{r.dias_restantes < 0 ? `Vencido ${Math.abs(r.dias_restantes)}d` : `${r.dias_restantes} días`}</Badge> },
       ]} rows={rows === null ? null : visible} empty={`Sin documentos en: ${bucketLabel}`} />
 
       {verDoc && <DocViewerModal api={api} doc={verDoc} onClose={() => setVerDoc(null)} />}
