@@ -1982,43 +1982,56 @@ function Desvinculaciones({ api }) {
 }
 
 function Vencimientos({ api }) {
-  const [dias, setDias] = useState(30);
+  const [bucket, setBucket] = useState(30); // 'vencidos' | 15 | 30 | 60 | 90 | 'mas90'
   const [rows, setRows] = useState(null);
   const [fEmp, setFEmp] = useState('all');
   const [fMan, setFMan] = useState('all');
   const [fTipo, setFTipo] = useState('all');
   const [q, setQ] = useState('');
+  const [verDoc, setVerDoc] = useState(null);
   const [empresas] = useData(api, '/empresas');
   const [mandantes] = useData(api, '/mandantes');
   useEffect(() => {
     let alive = true; setRows(null);
-    api(`/vencimientos?dias=${dias}`).then((r) => { if (alive) setRows(r.documentos || []); }).catch((e) => toast.error(e.message));
+    // Traemos una ventana amplia (vencidos + futuros) y filtramos por rango en el cliente.
+    api(`/vencimientos?dias=3650`).then((r) => { if (alive) setRows(r.documentos || []); }).catch((e) => toast.error(e.message));
     return () => { alive = false; };
-  }, [api, dias]);
+  }, [api]);
 
-  const filtered = (rows || []).filter((r) =>
+  // Filtros de empresa/mandante/tipo/búsqueda
+  const base = (rows || []).filter((r) =>
     (fEmp === 'all' || r.empresa_id === fEmp) &&
     (fMan === 'all' || r.mandante === (mandantes?.mandantes || []).find((m) => m.mandante_id === fMan)?.razon_social) &&
     (fTipo === 'all' || r.recurso_tipo === fTipo) &&
     (!q.trim() || `${r.recurso || ''} ${r.requisito || ''}`.toLowerCase().includes(q.trim().toLowerCase()))
   );
+  // Filtro por bucket de días
+  const inBucket = (r) => {
+    const d = r.dias_restantes;
+    if (bucket === 'vencidos') return d < 0;
+    if (bucket === 'mas90') return d > 90;
+    return d >= 0 && d <= bucket; // 15/30/60/90 → solo los que vencen dentro de ese rango
+  };
+  const visible = base.filter(inBucket);
+  const bucketLabel = bucket === 'vencidos' ? 'Vencidos' : bucket === 'mas90' ? 'Por vencer > 90d' : `Por vencer ≤ ${bucket}d`;
   const kpis = {
-    vencidos: filtered.filter((r) => r.dias_restantes < 0).length,
-    semana: filtered.filter((r) => r.dias_restantes >= 0 && r.dias_restantes <= 7).length,
-    treinta: filtered.filter((r) => r.dias_restantes >= 0 && r.dias_restantes <= 30).length,
-    total: filtered.length,
+    vencidos: base.filter((r) => r.dias_restantes < 0).length,
+    semana: base.filter((r) => r.dias_restantes >= 0 && r.dias_restantes <= 7).length,
+    treinta: base.filter((r) => r.dias_restantes >= 0 && r.dias_restantes <= 30).length,
+    mostrados: visible.length,
   };
   const hasFilters = fEmp !== 'all' || fMan !== 'all' || fTipo !== 'all' || q.trim();
+  const buckets = [{ k: 'vencidos', l: 'Vencidos' }, { k: 15, l: '≤15d' }, { k: 30, l: '≤30d' }, { k: 60, l: '≤60d' }, { k: 90, l: '≤90d' }, { k: 'mas90', l: '>90d' }];
 
   return (
     <div>
-      <PageHead title="Vencimientos" sub="Documentos aprobados próximos a vencer" action={<div className="flex gap-2 items-center flex-wrap">{[15, 30, 60, 90].map((d) => <Button key={d} size="sm" variant={dias === d ? 'default' : 'outline'} className={dias === d ? 'bg-[#1c9dd7]' : ''} onClick={() => setDias(d)}>{d}d</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Recurso', 'Tipo', 'Mandante', 'Empresa', 'Vence', 'Dias'], filtered.map((r) => [r.requisito || '', r.recurso || '', VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo, r.mandante || '', r.empresa || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
+      <PageHead title="Vencimientos" sub="Documentos aprobados por vencer o vencidos" action={<div className="flex gap-1.5 items-center flex-wrap">{buckets.map((b) => <Button key={String(b.k)} size="sm" variant={bucket === b.k ? 'default' : 'outline'} className={bucket === b.k ? (b.k === 'vencidos' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#1c9dd7] hover:bg-[#1789bf]') : ''} onClick={() => setBucket(b.k)}>{b.l}</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Recurso', 'Tipo', 'Mandante', 'Empresa', 'Vence', 'Dias'], visible.map((r) => [r.requisito || '', r.recurso || '', VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo, r.mandante || '', r.empresa || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <VencKpi label="Vencidos" value={kpis.vencidos} accent="red" icon={AlertTriangle} />
         <VencKpi label="Vence ≤ 7 días" value={kpis.semana} accent="orange" icon={Clock} />
         <VencKpi label="Vence ≤ 30 días" value={kpis.treinta} accent="amber" icon={CalendarClock} />
-        <VencKpi label={`Total en rango (${dias}d)`} value={kpis.total} accent="slate" icon={FileClock} />
+        <VencKpi label={`Mostrando: ${bucketLabel}`} value={kpis.mostrados} accent="slate" icon={FileClock} />
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
@@ -2030,14 +2043,16 @@ function Vencimientos({ api }) {
       </div>
 
       <Table columns={[
-        { key: 'requisito', label: 'Documento' },
+        { key: 'requisito', label: 'Documento', render: (r) => <button onClick={() => setVerDoc({ documento_id: r.documento_id, nombre: r.requisito || 'Documento' })} className="text-left font-medium text-[#1789bf] hover:text-[#136699] hover:underline inline-flex items-center gap-1.5"><Eye className="h-3.5 w-3.5 shrink-0" />{r.requisito || 'Documento'}</button> },
         { key: 'recurso', label: 'Recurso', render: (r) => <span className="font-medium text-slate-800">{r.recurso}</span> },
         { key: 'tipo', label: 'Tipo', render: (r) => <Badge className="bg-slate-100 text-slate-600 border-0">{VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo}</Badge> },
         { key: 'mandante', label: 'Mandante' },
         { key: 'empresa', label: 'Empresa' },
         { key: 'fecha_vencimiento', label: 'Vence', render: (r) => fdate(r.fecha_vencimiento) },
         { key: 'dias_restantes', label: 'Días', render: (r) => <Badge className={r.dias_restantes < 0 ? 'bg-red-100 text-red-700' : r.dias_restantes <= 7 ? 'bg-orange-100 text-orange-700' : r.dias_restantes <= 15 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100'}>{r.dias_restantes < 0 ? `Vencido ${Math.abs(r.dias_restantes)}d` : `${r.dias_restantes} días`}</Badge> },
-      ]} rows={rows === null ? null : filtered} empty="Sin vencimientos en el rango" />
+      ]} rows={rows === null ? null : visible} empty={`Sin documentos en: ${bucketLabel}`} />
+
+      {verDoc && <DocViewerModal api={api} doc={verDoc} onClose={() => setVerDoc(null)} />}
     </div>
   );
 }
