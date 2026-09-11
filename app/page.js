@@ -72,6 +72,18 @@ const formatRut = (rut) => {
 
 
 const roleLabel = { SUPER_ADMIN_HOLDING: 'Super Admin Holding', ADMIN_EMPRESA: 'Admin Empresa', USUARIO_MANDANTE: 'Usuario Mandante', REVISOR: 'Revisor Documental', MANDANTE_ADMIN: 'Administrador', MANDANTE_VISOR: 'Visor', MANDANTE_RRHH: 'RRHH', MANDANTE_PREVENCION: 'Prevención' };
+// Color por importancia/jerarquía del rol (más alto = más privilegios)
+const roleColor = {
+  SUPER_ADMIN_HOLDING: 'bg-purple-100 text-purple-700 border-purple-200',
+  ADMIN_EMPRESA: 'bg-rose-100 text-rose-700 border-rose-200',
+  MANDANTE_ADMIN: 'bg-amber-100 text-amber-700 border-amber-200',
+  REVISOR: 'bg-blue-100 text-blue-700 border-blue-200',
+  MANDANTE_RRHH: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  MANDANTE_PREVENCION: 'bg-cyan-100 text-cyan-700 border-cyan-200',
+  MANDANTE_VISOR: 'bg-slate-100 text-slate-600 border-slate-200',
+  USUARIO_MANDANTE: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+const roleBadgeClass = (code) => `border font-medium ${roleColor[code] || 'bg-slate-100 text-slate-600 border-slate-200'}`;
 
 const semaforo = {
   ACREDITADO: { c: 'bg-emerald-100 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500', label: 'Acreditado' },
@@ -2110,7 +2122,7 @@ function Usuarios({ api, isSuper }) {
       <Table columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <div><p className="font-medium text-slate-800">{r.nombre}</p><p className="text-xs text-slate-400">{r.email}</p></div> },
         { key: 'telefono', label: 'Teléfono', render: (r) => r.telefono || <span className="text-slate-300">—</span> },
-        { key: 'role_codigo', label: 'Rol', render: (r) => <Badge variant="secondary">{roleLabel[r.role_codigo] || r.role_codigo}</Badge> },
+        { key: 'role_codigo', label: 'Rol', render: (r) => <Badge variant="outline" className={roleBadgeClass(r.role_codigo)}>{roleLabel[r.role_codigo] || r.role_codigo}</Badge> },
         { key: 'mandantes', label: 'Mandantes', render: (r) => (r.mandantes && r.mandantes.length) ? <span className="text-slate-600" title={r.mandantes.map((m) => m.razon_social).join(', ')}>{r.mandantes.length === 1 ? r.mandantes[0].razon_social : `${r.mandantes.length} mandantes`}</span> : (r.mandante || <span className="text-slate-300">—</span>) },
         { key: 'activo', label: 'Estado', render: (r) => r.activo ? <Badge className="bg-emerald-100 text-emerald-700 border-0">Activo</Badge> : <Badge className="bg-slate-100 text-slate-500 border-0">Inactivo</Badge> },
         { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}><Settings className="h-3.5 w-3.5 mr-1" />Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" onClick={() => del(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
