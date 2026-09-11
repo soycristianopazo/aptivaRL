@@ -362,6 +362,17 @@ function csvDownload(filename, headers, rows) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
 }
 
+async function xlsxDownload(filename, headers, rows, sheetName = 'Datos') {
+  try {
+    const XLSX = await import('xlsx');
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = headers.map((h, i) => ({ wch: Math.min(55, Math.max(String(h).length, ...rows.map((r) => String(r[i] ?? '').length), 6)) + 2 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, filename);
+  } catch (e) { toast.error('No se pudo generar el Excel: ' + e.message); }
+}
+
 function NotificationsBell({ api, onGo }) {
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(false);
@@ -1982,7 +1993,7 @@ function Desvinculaciones({ api }) {
 }
 
 function Vencimientos({ api }) {
-  const [bucket, setBucket] = useState(30); // 'vencidos' | 15 | 30 | 60 | 90 | 'mas90'
+  const [bucket, setBucket] = useState('0-15'); // 'vencidos' | '0-15' | '16-30' | '31-60' | '61-90' | 'mas90'
   const [rows, setRows] = useState(null);
   const [fEmp, setFEmp] = useState('all');
   const [fMan, setFMan] = useState('all');
@@ -2005,15 +2016,24 @@ function Vencimientos({ api }) {
     (fTipo === 'all' || r.recurso_tipo === fTipo) &&
     (!q.trim() || `${r.recurso || ''} ${r.requisito || ''}`.toLowerCase().includes(q.trim().toLowerCase()))
   );
-  // Filtro por bucket de días
+  // Buckets EXCLUSIVOS (cada rango no se solapa con el anterior)
+  const buckets = [
+    { k: 'vencidos', l: 'Vencidos' },
+    { k: '0-15', l: '1–15d', min: 0, max: 15 },
+    { k: '16-30', l: '16–30d', min: 16, max: 30 },
+    { k: '31-60', l: '31–60d', min: 31, max: 60 },
+    { k: '61-90', l: '61–90d', min: 61, max: 90 },
+    { k: 'mas90', l: '>90d' },
+  ];
+  const activeB = buckets.find((b) => b.k === bucket) || buckets[1];
   const inBucket = (r) => {
     const d = r.dias_restantes;
     if (bucket === 'vencidos') return d < 0;
     if (bucket === 'mas90') return d > 90;
-    return d >= 0 && d <= bucket; // 15/30/60/90 → solo los que vencen dentro de ese rango
+    return d >= activeB.min && d <= activeB.max;
   };
   const visible = base.filter(inBucket);
-  const bucketLabel = bucket === 'vencidos' ? 'Vencidos' : bucket === 'mas90' ? 'Por vencer > 90d' : `Por vencer ≤ ${bucket}d`;
+  const bucketLabel = bucket === 'vencidos' ? 'Vencidos' : bucket === 'mas90' ? 'Por vencer > 90d' : `Por vencer ${activeB.l}`;
   const kpis = {
     vencidos: base.filter((r) => r.dias_restantes < 0).length,
     semana: base.filter((r) => r.dias_restantes >= 0 && r.dias_restantes <= 7).length,
@@ -2021,11 +2041,13 @@ function Vencimientos({ api }) {
     mostrados: visible.length,
   };
   const hasFilters = fEmp !== 'all' || fMan !== 'all' || fTipo !== 'all' || q.trim();
-  const buckets = [{ k: 'vencidos', l: 'Vencidos' }, { k: 15, l: '≤15d' }, { k: 30, l: '≤30d' }, { k: 60, l: '≤60d' }, { k: 90, l: '≤90d' }, { k: 'mas90', l: '>90d' }];
+  const btnCls = (b) => bucket === b.k
+    ? (b.k === 'vencidos' ? 'bg-red-600 text-white border-red-600 hover:bg-red-700 hover:text-white' : 'bg-[#1c9dd7] text-white border-[#1c9dd7] hover:bg-[#1789bf] hover:text-white')
+    : '';
 
   return (
     <div>
-      <PageHead title="Vencimientos" sub="Documentos aprobados por vencer o vencidos" action={<div className="flex gap-1.5 items-center flex-wrap">{buckets.map((b) => <Button key={String(b.k)} size="sm" variant={bucket === b.k ? 'default' : 'outline'} className={bucket === b.k ? (b.k === 'vencidos' ? 'bg-red-600 hover:bg-red-700' : 'bg-[#1c9dd7] hover:bg-[#1789bf]') : ''} onClick={() => setBucket(b.k)}>{b.l}</Button>)}<Button size="sm" variant="outline" onClick={() => csvDownload('vencimientos.csv', ['Documento', 'Recurso', 'Tipo', 'Mandante', 'Empresa', 'Vence', 'Dias'], visible.map((r) => [r.requisito || '', r.recurso || '', VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo, r.mandante || '', r.empresa || '', fdate(r.fecha_vencimiento), r.dias_restantes]))}><Download className="h-4 w-4 mr-1" />CSV</Button></div>} />
+      <PageHead title="Vencimientos" sub="Documentos aprobados por vencer o vencidos" action={<div className="flex gap-1.5 items-center flex-wrap">{buckets.map((b) => <Button key={String(b.k)} size="sm" variant="outline" className={btnCls(b)} onClick={() => setBucket(b.k)}>{b.l}</Button>)}<Button size="sm" variant="outline" className="border-emerald-300 text-emerald-700 hover:bg-emerald-50" onClick={() => xlsxDownload('vencimientos.xlsx', ['Documento', 'Recurso', 'Tipo', 'Mandante', 'Empresa', 'Vence', 'Días'], visible.map((r) => [r.requisito || '', r.recurso || '', VENC_TIPO_LABEL[r.recurso_tipo] || r.recurso_tipo, r.mandante || '', r.empresa || '', fdate(r.fecha_vencimiento), r.dias_restantes]), 'Vencimientos')}><Download className="h-4 w-4 mr-1" />Excel</Button></div>} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <VencKpi label="Vencidos" value={kpis.vencidos} accent="red" icon={AlertTriangle} />
