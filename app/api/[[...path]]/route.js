@@ -18,12 +18,61 @@ async function getProfile(request) {
   if (!authUser?.id) return null;
   const r = await query('select * from usuarios_perfiles where auth_user_id=$1 and activo=true', [authUser.id]);
   const profile = r.rows[0] || null;
+  if (profile && MANDANTE_ROLES.includes(profile.role_codigo)) {
+    const ms = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [profile.perfil_id])).rows.map((x) => x.mandante_id);
+    profile.mandante_ids = ms;
+    profile.is_mandante = true;
+  } else if (profile) {
+    profile.is_mandante = false;
+  }
   profileCache.set(token, { profile, exp: Date.now() + 30000 }); // cache 30s
   if (profileCache.size > 500) { const now = Date.now(); for (const [k, v] of profileCache) if (v.exp <= now) profileCache.delete(k); }
   return profile;
 }
+const MANDANTE_ROLES = ['MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_VISOR', 'MANDANTE_PREVENCION'];
+const ROLE_PERMS = {
+  MANDANTE_ADMIN: { upload: true, review: true, del: true, desvincular: true, manage: true },
+  MANDANTE_RRHH: { upload: true, review: true, del: true, desvincular: true, manage: false },
+  MANDANTE_PREVENCION: { upload: true, review: false, del: false, desvincular: false, manage: false },
+  MANDANTE_VISOR: { upload: false, review: false, del: false, desvincular: false, manage: false },
+};
+// ¿Puede el usuario realizar 'action'? Holding (super/admin_empresa) siempre; mandante según su rol.
+const can = (p, action) => {
+  if (!p) return false;
+  if (['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo)) return true;
+  return !!ROLE_PERMS[p.role_codigo]?.[action];
+};
+// ¿El usuario tiene acceso a este mandante?
+const inScope = (p, mandanteId) => {
+  if (!p?.is_mandante) return true; // Holding ve todo
+  return (p.mandante_ids || []).includes(mandanteId);
+};
+// Fragmento SQL para acotar por mandantes del usuario. Devuelve '' si no aplica.
+const scopeSql = (p, col, args) => {
+  if (!p?.is_mandante) return '';
+  const ids = p.mandante_ids || [];
+  if (ids.length === 0) return ' and false'; // sin mandantes => no ve nada
+  args.push(ids);
+  return ` and ${col} = any($${args.length}::uuid[])`;
+};
 const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
 const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
+// Visor no puede ver el documento "Contrato de trabajo" en ningún mandante
+const isContratoTrabajo = (nombre) => /contrato\s+de\s+trabajo/i.test(nombre || '');
+const hideContratoForVisor = (p) => p?.role_codigo === 'MANDANTE_VISOR';
+// Limpia el string leído desde el QR/2D de la cédula chilena y devuelve el RUT normalizado (dígitos+DV, K mayúscula)
+function limpiarRutScan(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  if (s[0] === '*') return s.replace(/\*/g, '').replace(/-/g, '').replace(/[^0-9kK]/g, '').toUpperCase(); // barra credencial
+  const i = s.toUpperCase().indexOf('RUN=');
+  if (i !== -1) s = s.substring(i + 4); // URL cédula nueva: ...docstatus?RUN=12345678-9&...
+  const first = s.split('&')[0].split('?')[0];
+  if (first.includes('-')) return first.replace(/[^0-9kK]/g, '').toUpperCase(); // cédula nueva (tiene guión)
+  // cédula antigua: primeros 9 caracteres del string crudo (sin espacios/saltos)
+  const v = String(raw || '').replace(/[\n\r]/g, '').trim().substring(0, 9).replace(/\s/g, '');
+  return v.replace(/[^0-9kK]/g, '').toUpperCase();
+}
 
 // Operador vigente (para listados): JSON del trabajador que ocupa hoy el recurso
 const OPERADOR_ACTUAL_SQL = (tipo, idCol) => `(
@@ -45,6 +94,13 @@ const titleCase = (s) => {
   if (s == null) return s;
   return String(s).trim().toLowerCase().replace(/([\p{L}][\p{L}'’-]*)/gu, (w) => w.charAt(0).toUpperCase() + w.slice(1)) || null;
 };
+// Genera un slug legible a partir del nombre del punto de acceso
+const slugify = (s) => (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'punto';
+async function slugUnico(base) {
+  let slug = base; let n = 2;
+  while ((await query('select 1 from puntos_acceso where slug=$1', [slug])).rows.length) { slug = `${base}-${n++}`; }
+  return slug;
+}
 // Valida RUT chileno (módulo 11). Acepta con o sin puntos/guión.
 function validarRut(rut) {
   if (!rut) return false;
@@ -246,6 +302,20 @@ export async function GET(request, { params }) {
     if (p.length === 0 || p[0] === 'health') return json({ ok: true, service: 'aptiva-rl' });
 
     // Endpoint público (sin auth) para validación por QR en terreno. Solo trabajadores, datos resumidos.
+    if (p[0] === 'public' && p[1] === 'puntos') {
+      return json({ puntos: (await query('select id, nombre, ubicacion, slug from puntos_acceso where activo=true order by nombre')).rows });
+    }
+    if (p[0] === 'public' && p[1] === 'punto') {
+      const slug = searchParams.get('slug');
+      if (!slug) return json({ error: 'La URL no indica el punto de acceso' }, 400);
+      const pt = (await query('select id, nombre, ubicacion, activo, slug from puntos_acceso where slug=$1', [slug])).rows[0];
+      if (!pt) return json({ error: 'Punto de acceso no encontrado' }, 404);
+      if (!pt.activo) return json({ error: 'Este punto de acceso está inactivo' }, 403);
+      return json({ punto: pt });
+    }
+    if (p[0] === 'public' && p[1] === 'accesos') {
+      return json({ accesos: (await query('select id, rut, nombre, tipo, punto_nombre, marcado_at, created_at from accesos order by marcado_at desc, created_at desc limit 15')).rows });
+    }
     if (p[0] === 'public' && p[1] === 'expediente' && p[2]) {
       const t = (await query('select t.nombre, t.apellido, t.rut, t.cargo, t.estado, e.razon_social as empresa from trabajadores t join empresas_grupo e on e.empresa_id=t.empresa_id where t.trabajador_id=$1 and t.deleted_at is null', [p[2]])).rows[0];
       if (!t) {
@@ -330,6 +400,7 @@ export async function GET(request, { params }) {
       const args = []; let sql = 'select * from desvinculaciones where 1=1';
       if (profile.role_codigo === 'ADMIN_EMPRESA') { args.push(profile.empresa_id); sql += ` and empresa_id=$${args.length}`; }
       if (profile.role_codigo === 'USUARIO_MANDANTE') { args.push(profile.mandante_id); sql += ` and mandante_id=$${args.length}`; }
+      sql += scopeSql(profile, 'mandante_id', args);
       if (qq.length >= 2) { args.push(`%${qq}%`); const n = args.length; sql += ` and (nombre ilike $${n} or rut ilike $${n} or contrato_numero ilike $${n} or causal ilike $${n} or empresa_nombre ilike $${n})`; }
       sql += ' order by created_at desc limit 1000';
       return json({ desvinculaciones: (await query(sql, args)).rows });
@@ -344,12 +415,14 @@ export async function GET(request, { params }) {
       let sql = 'select m.*, (select count(*)::int from contratos c where c.mandante_id=m.mandante_id and c.deleted_at is null) as contratos_count from mandantes m where m.deleted_at is null';
       const args = [];
       if (profile.role_codigo === 'USUARIO_MANDANTE') { sql += ' and m.mandante_id=$1'; args.push(profile.mandante_id); }
+      sql += scopeSql(profile, 'm.mandante_id', args);
       sql += ' order by m.razon_social';
       return json({ mandantes: (await query(sql, args)).rows });
     }
 
     if (p[0] === 'mandantes' && p[1]) {
       const mid = p[1];
+      if (!inScope(profile, mid)) return json({ error: 'No autorizado' }, 403);
       const mandante = (await query('select * from mandantes where mandante_id=$1', [mid])).rows[0];
       if (!mandante) return json({ error: 'No encontrado' }, 404);
       const empresas = (await query('select e.* from mandante_empresas me join empresas_grupo e on e.empresa_id=me.empresa_id where me.mandante_id=$1 and me.activo=true', [mid])).rows;
@@ -367,6 +440,7 @@ export async function GET(request, { params }) {
       const args = [];
       if (profile.role_codigo === 'ADMIN_EMPRESA') { sql += ` and c.empresa_id=$${args.length + 1}`; args.push(profile.empresa_id); }
       if (profile.role_codigo === 'USUARIO_MANDANTE') { sql += ` and c.mandante_id=$${args.length + 1}`; args.push(profile.mandante_id); }
+      sql += scopeSql(profile, 'c.mandante_id', args);
       sql += ' order by c.numero_oc';
       return json({ contratos: (await query(sql, args)).rows });
     }
@@ -374,6 +448,7 @@ export async function GET(request, { params }) {
     if (p[0] === 'contratos' && p[1]) {
       const c = (await query('select c.*, m.razon_social as mandante, e.razon_social as empresa, g.nombre as gerencia from contratos c join mandantes m on m.mandante_id=c.mandante_id join empresas_grupo e on e.empresa_id=c.empresa_id left join mandante_gerencias g on g.gerencia_id=c.gerencia_id where c.contrato_id=$1', [p[1]])).rows[0];
       if (!c) return json({ error: 'No encontrado' }, 404);
+      if (!inScope(profile, c.mandante_id)) return json({ error: 'No autorizado' }, 403);
       const trabajadores = (await query("select t.trabajador_id, t.nombre, t.apellido, t.rut, t.cargo from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.contrato_id=$1 and a.estado='activo'", [p[1]])).rows;
       c.dotacion = trabajadores.length;
       const documentacion = await acreditacionContrato(p[1], c.mandante_id);
@@ -387,6 +462,7 @@ export async function GET(request, { params }) {
       const args = [];
       if (profile.role_codigo === 'ADMIN_EMPRESA') { args.push(profile.empresa_id); sql += ` and t.empresa_id=$${args.length}`; }
       else if (empresaFilter) { args.push(empresaFilter); sql += ` and t.empresa_id=$${args.length}`; }
+      if (profile.is_mandante) { const ids = profile.mandante_ids || []; if (ids.length === 0) { sql += ' and false'; } else { args.push(ids); sql += ` and exists(select 1 from trabajador_asignaciones a where a.trabajador_id=t.trabajador_id and a.estado='activo' and a.mandante_id = any($${args.length}::uuid[]))`; } }
       if (search) {
         const tokens = search.trim().split(/\s+/).filter(Boolean);
         for (const tk of tokens) {
@@ -444,31 +520,49 @@ export async function GET(request, { params }) {
       const acreditacion = await acreditacionTrabajador(p[1]);
       const historial = (await query("select * from auditoria where entidad='trabajador' and entidad_id=$1 order by created_at desc limit 50", [p[1]])).rows;
       const historialDocumental = await historialDocumentalTrabajador(p[1]);
-      return json({ trabajador: t, asignaciones, acreditacion, historial, historialDocumental });
+      // Scoping por mandante para usuarios de mandante
+      let asig2 = asignaciones, acred2 = acreditacion, hist2 = historialDocumental;
+      if (profile.is_mandante) {
+        const ids = new Set(profile.mandante_ids || []);
+        asig2 = asignaciones.filter((a) => ids.has(a.mandante_id));
+        acred2 = acreditacion.filter((a) => ids.has(a.mandante_id));
+        hist2 = (historialDocumental || []).filter((h) => ids.has(h.mandante_id));
+        if (asig2.length === 0 && acred2.length === 0 && hist2.length === 0) return json({ error: 'No autorizado' }, 403);
+      }
+      // Visor: ocultar documento "Contrato de trabajo"
+      if (hideContratoForVisor(profile)) acred2 = acred2.map((a) => ({ ...a, detalle: (a.detalle || []).filter((d) => !isContratoTrabajo(d.nombre)) }));
+      return json({ trabajador: t, asignaciones: asig2, acreditacion: acred2, historial, historialDocumental: hist2 });
     }
 
     if (p[0] === 'vehiculos' && p[1]) {
       const v = (await query('select v.*, e.razon_social as empresa from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.vehiculo_id=$1', [p[1]])).rows[0];
       if (!v) return json({ error: 'No encontrado' }, 404);
-      const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from vehiculo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.vehiculo_id=$1 order by a.created_at desc', [p[1]])).rows;
-      const acreditacion = await acreditacionRecurso('vehiculo', p[1]);
+      let asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from vehiculo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.vehiculo_id=$1 order by a.created_at desc', [p[1]])).rows;
+      let acreditacion = await acreditacionRecurso('vehiculo', p[1]);
+      if (profile.is_mandante) { const ids = new Set(profile.mandante_ids || []); asignaciones = asignaciones.filter((a) => ids.has(a.mandante_id)); acreditacion = (acreditacion || []).filter((a) => ids.has(a.mandante_id)); if (asignaciones.length === 0 && acreditacion.length === 0) return json({ error: 'No autorizado' }, 403); }
       const operadores = await operadoresRecurso('vehiculo', p[1]);
       return json({ recurso: v, asignaciones, acreditacion, operadores, operador_actual: operadores.find((o) => o.vigente) || null });
     }
-    if (p[0] === 'vehiculos') return json({ vehiculos: (await query(`select v.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('vehiculo', 'v.vehiculo_id')} as operador_actual, (select coalesce(array_agg(distinct m.razon_social) filter (where m.razon_social is not null), '{}') from vehiculo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.vehiculo_id=v.vehiculo_id and a.estado='activo') as mandantes from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null order by v.patente`)).rows });
+    if (p[0] === 'vehiculos') { const args = []; const sc = scopeSql(profile, 'a2.mandante_id', args); const scw = profile.is_mandante ? ` and exists(select 1 from vehiculo_asignaciones a2 where a2.vehiculo_id=v.vehiculo_id and a2.estado='activo'${sc})` : ''; return json({ vehiculos: (await query(`select v.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('vehiculo', 'v.vehiculo_id')} as operador_actual, (select coalesce(array_agg(distinct m.razon_social) filter (where m.razon_social is not null), '{}') from vehiculo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.vehiculo_id=v.vehiculo_id and a.estado='activo') as mandantes from vehiculos v join empresas_grupo e on e.empresa_id=v.empresa_id where v.deleted_at is null${scw} order by v.patente`, args)).rows }); }
     if (p[0] === 'equipos' && p[1]) {
       const q = (await query('select q.*, e.razon_social as empresa from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.equipo_id=$1', [p[1]])).rows[0];
       if (!q) return json({ error: 'No encontrado' }, 404);
-      const asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from equipo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.equipo_id=$1 order by a.created_at desc', [p[1]])).rows;
-      const acreditacion = await acreditacionRecurso('equipo', p[1]);
+      let asignaciones = (await query('select a.*, m.razon_social as mandante, c.numero_oc from equipo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join contratos c on c.contrato_id=a.contrato_id where a.equipo_id=$1 order by a.created_at desc', [p[1]])).rows;
+      let acreditacion = await acreditacionRecurso('equipo', p[1]);
+      if (profile.is_mandante) { const ids = new Set(profile.mandante_ids || []); asignaciones = asignaciones.filter((a) => ids.has(a.mandante_id)); acreditacion = (acreditacion || []).filter((a) => ids.has(a.mandante_id)); if (asignaciones.length === 0 && acreditacion.length === 0) return json({ error: 'No autorizado' }, 403); }
       const operadores = await operadoresRecurso('equipo', p[1]);
       return json({ recurso: q, asignaciones, acreditacion, operadores, operador_actual: operadores.find((o) => o.vigente) || null });
     }
-    if (p[0] === 'equipos') return json({ equipos: (await query(`select q.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('equipo', 'q.equipo_id')} as operador_actual, (select coalesce(array_agg(distinct m.razon_social) filter (where m.razon_social is not null), '{}') from equipo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.equipo_id=q.equipo_id and a.estado='activo') as mandantes from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null order by q.codigo_interno`)).rows });
+    if (p[0] === 'equipos') { const args = []; const sc = scopeSql(profile, 'a2.mandante_id', args); const scw = profile.is_mandante ? ` and exists(select 1 from equipo_asignaciones a2 where a2.equipo_id=q.equipo_id and a2.estado='activo'${sc})` : ''; return json({ equipos: (await query(`select q.*, e.razon_social as empresa, ${OPERADOR_ACTUAL_SQL('equipo', 'q.equipo_id')} as operador_actual, (select coalesce(array_agg(distinct m.razon_social) filter (where m.razon_social is not null), '{}') from equipo_asignaciones a join mandantes m on m.mandante_id=a.mandante_id where a.equipo_id=q.equipo_id and a.estado='activo') as mandantes from equipos q join empresas_grupo e on e.empresa_id=q.empresa_id where q.deleted_at is null${scw} order by q.codigo_interno`, args)).rows }); }
 
     if (p[0] === 'documentos' && p[1] === 'pendientes') {
-      const r = await query("select d.*, r.nombre as requisito, t.nombre as trab_nombre, t.apellido as trab_apellido, m.razon_social as mandante from documentos d left join requisitos_documentales r on r.requisito_id=d.requisito_id left join trabajadores t on t.trabajador_id=d.recurso_id left join mandantes m on m.mandante_id=d.mandante_id where d.estado='en_revision' and d.deleted_at is null order by d.fecha_subida desc");
-      return json({ documentos: r.rows });
+      const args = [];
+      let sql = "select d.*, r.nombre as requisito, t.nombre as trab_nombre, t.apellido as trab_apellido, m.razon_social as mandante from documentos d left join requisitos_documentales r on r.requisito_id=d.requisito_id left join trabajadores t on t.trabajador_id=d.recurso_id left join mandantes m on m.mandante_id=d.mandante_id where d.estado='en_revision' and d.deleted_at is null";
+      sql += scopeSql(profile, 'd.mandante_id', args);
+      sql += ' order by d.fecha_subida desc';
+      let rows = (await query(sql, args)).rows;
+      if (hideContratoForVisor(profile)) rows = rows.filter((d) => !isContratoTrabajo(d.requisito));
+      return json({ documentos: rows });
     }
     if (p[0] === 'documentos' && p[1] && p[2] === 'url') {
       const d = (await query('select * from documentos where documento_id=$1', [p[1]])).rows[0];
@@ -503,7 +597,8 @@ export async function GET(request, { params }) {
       let empF = searchParams.get('empresa_id');
       if (profile.role_codigo === 'ADMIN_EMPRESA') empF = profile.empresa_id;
       if (profile.role_codigo === 'USUARIO_MANDANTE') { args.push(profile.mandante_id); sql += ` and d.mandante_id=$${args.length}`; }
-      else { const manF = searchParams.get('mandante_id'); if (manF) { args.push(manF); sql += ` and d.mandante_id=$${args.length}`; } }
+      else { const manF = searchParams.get('mandante_id'); if (manF && inScope(profile, manF)) { args.push(manF); sql += ` and d.mandante_id=$${args.length}`; } else { sql += scopeSql(profile, 'd.mandante_id', args); } }
+      if (hideContratoForVisor(profile)) sql += " and coalesce(r.nombre, d.nombre_archivo) !~* 'contrato\\s+de\\s+trabajo'";
       if (empF) { args.push(empF); sql += ` and coalesce(t.empresa_id, v.empresa_id, q.empresa_id, ct.empresa_id)=$${args.length}`; }
       const tipo = searchParams.get('tipo');
       if (tipo && ['trabajador', 'vehiculo', 'equipo', 'contrato'].includes(tipo)) { args.push(tipo); sql += ` and d.recurso_tipo=$${args.length}`; }
@@ -514,7 +609,19 @@ export async function GET(request, { params }) {
       return json({ documentos: r.rows });
     }
 
-    if (p[0] === 'auditoria') return json({ eventos: (await query('select * from auditoria order by created_at desc limit 200')).rows });
+    if (p[0] === 'puntos-acceso') { if (!canManage(profile)) return json({ error: 'No autorizado' }, 403); return json({ puntos: (await query('select * from puntos_acceso order by nombre')).rows }); }
+    if (p[0] === 'accesos') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      const args = []; let sql = 'select a.* from accesos a where 1=1';
+      const desde = searchParams.get('desde'); const hasta = searchParams.get('hasta'); const punto = searchParams.get('punto_id'); const q = searchParams.get('q');
+      if (desde) { args.push(desde); sql += ` and a.marcado_at >= $${args.length}`; }
+      if (hasta) { args.push(hasta); sql += ` and a.marcado_at < ($${args.length}::date + interval '1 day')`; }
+      if (punto) { args.push(punto); sql += ` and a.punto_id = $${args.length}`; }
+      if (q && q.trim()) { args.push(`%${q.trim().toLowerCase()}%`); sql += ` and (lower(a.nombre) like $${args.length} or regexp_replace(a.rut,'[^0-9kK]','','g') like $${args.length})`; }
+      sql += ' order by a.marcado_at desc, a.created_at desc limit 2000';
+      return json({ accesos: (await query(sql, args)).rows });
+    }
+    if (p[0] === 'auditoria') { if (!canManage(profile)) return json({ error: 'No autorizado' }, 403); return json({ eventos: (await query('select * from auditoria order by created_at desc limit 200')).rows }); }
 
     if (p[0] === 'notificaciones') {
       const rows = (await query(`select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento, coalesce(r.nombre, d.nombre_archivo) as documento, coalesce(r.dias_alerta,30) as dias_alerta, m.razon_social as mandante, (d.fecha_vencimiento - current_date) as dias_restantes,
@@ -534,21 +641,24 @@ export async function GET(request, { params }) {
     }
 
     if (p[0] === 'dashboard') {
-      const empF = searchParams.get('empresa_id') || null;
-      const manF = searchParams.get('mandante_id') || null;
+      const empF = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : (searchParams.get('empresa_id') || null);
+      let manF = searchParams.get('mandante_id') || null;
+      if (profile.is_mandante && manF && !inScope(profile, manF)) manF = null;
+      // Lista efectiva de mandantes a considerar: filtro puntual, o scope del usuario de mandante, o todos
+      const manList = manF ? [manF] : (profile.is_mandante ? (profile.mandante_ids || ['00000000-0000-0000-0000-000000000000']) : null);
       const q1 = async (s, a = []) => (await query(s, a)).rows[0].c;
       const qRows = async (s, a = []) => (await query(s, a)).rows;
       const stats = {};
 
       // Contratos vigentes (filtro empresa/mandante)
-      const contP = (() => { let s = "select count(*)::int c from contratos where estado='vigente' and deleted_at is null"; const a = []; if (empF) { a.push(empF); s += ` and empresa_id=$${a.length}`; } if (manF) { a.push(manF); s += ` and mandante_id=$${a.length}`; } return q1(s, a); })();
+      const contP = (() => { let s = "select count(*)::int c from contratos where estado='vigente' and deleted_at is null"; const a = []; if (empF) { a.push(empF); s += ` and empresa_id=$${a.length}`; } if (manList) { a.push(manList); s += ` and mandante_id = any($${a.length}::uuid[])`; } return q1(s, a); })();
 
-      // Trabajadores/Vehículos/Equipos (según haya filtro de mandante)
+      // Trabajadores/Vehículos/Equipos
       let trabP, vehP, equP;
-      if (manF) {
-        { const a = [manF]; let s = "select count(distinct a.trabajador_id)::int c from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and a.mandante_id=$1 and t.deleted_at is null"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } trabP = q1(s, a); }
-        { const a = [manF]; let s = "select count(distinct a.vehiculo_id)::int c from vehiculo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } vehP = q1(s, a); }
-        { const a = [manF]; let s = "select count(distinct a.equipo_id)::int c from equipo_asignaciones a where a.estado='activo' and a.mandante_id=$1"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } equP = q1(s, a); }
+      if (manList) {
+        { const a = [manList]; let s = "select count(distinct a.trabajador_id)::int c from trabajador_asignaciones a join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and a.mandante_id = any($1::uuid[]) and t.deleted_at is null"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } trabP = q1(s, a); }
+        { const a = [manList]; let s = "select count(distinct a.vehiculo_id)::int c from vehiculo_asignaciones a where a.estado='activo' and a.mandante_id = any($1::uuid[])"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } vehP = q1(s, a); }
+        { const a = [manList]; let s = "select count(distinct a.equipo_id)::int c from equipo_asignaciones a where a.estado='activo' and a.mandante_id = any($1::uuid[])"; if (empF) { a.push(empF); s += ` and a.empresa_id=$${a.length}`; } equP = q1(s, a); }
       } else {
         const ea = empF ? [empF] : []; const w = empF ? ' and empresa_id=$1' : '';
         trabP = q1(`select count(*)::int c from trabajadores where estado='activo' and deleted_at is null${w}`, ea);
@@ -556,8 +666,8 @@ export async function GET(request, { params }) {
         equP = q1(`select count(*)::int c from equipos where deleted_at is null${w}`, ea);
       }
 
-      const dw = manF ? ' and mandante_id=$1' : ''; const da = manF ? [manF] : [];
-      const dwd = manF ? ' and d.mandante_id=$1' : '';
+      const dw = manList ? ' and mandante_id = any($1::uuid[])' : ''; const da = manList ? [manList] : [];
+      const dwd = manList ? ' and d.mandante_id = any($1::uuid[])' : '';
 
       // Ejecuta TODAS las consultas independientes en paralelo (antes eran secuenciales)
       const [
@@ -565,7 +675,7 @@ export async function GET(request, { params }) {
         docsPend, docsPorVencer, docsVencidos, docs_por_estado,
         asigRows, reqRows, docRows, tendencia_vencimientos, proximos_vencimientos,
       ] = await Promise.all([
-        manF ? Promise.resolve(1) : q1("select count(*)::int c from mandantes where activo=true and deleted_at is null"),
+        manList ? Promise.resolve(manList.length) : q1("select count(*)::int c from mandantes where activo=true and deleted_at is null"),
         contP, trabP, vehP, equP,
         q1(`select count(*)::int c from documentos where estado='en_revision' and deleted_at is null${dw}`, da),
         q1(`select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null${dw}`, da),
@@ -606,7 +716,7 @@ export async function GET(request, { params }) {
       stats.trabajadores = trabC; stats.vehiculos = vehC; stats.equipos = equC;
       stats.docs_pendientes = docsPend; stats.docs_por_vencer = docsPorVencer; stats.docs_vencidos = docsVencidos;
 
-      const asigFilt = asigRows.filter((r) => (!empF || r.empresa_id === empF) && (!manF || r.mandante_id === manF));
+      const asigFilt = asigRows.filter((r) => (!empF || r.empresa_id === empF) && (!manList || manList.includes(r.mandante_id)));
       const reqByMand = {}; reqRows.forEach((r) => { (reqByMand[r.mandante_id] = reqByMand[r.mandante_id] || []).push(r); });
       const dkey = (rid, mid, reqid) => `${rid}|${mid}|${reqid}`;
       const docMap = {}; docRows.forEach((d) => { const k = dkey(d.recurso_id, d.mandante_id, d.requisito_id); if (!docMap[k]) docMap[k] = d; });
@@ -646,6 +756,28 @@ export async function POST(request, { params }) {
     await ensureSchema();
     const p = (await params)?.path || [];
 
+    // Endpoint PÚBLICO para el control de acceso (página /visor en PDA). Sin autenticación.
+    if (p[0] === 'public' && p[1] === 'acceso') {
+      const b = await request.json().catch(() => ({}));
+      const tipo = b.tipo;
+      if (!['ingreso', 'salida'].includes(tipo)) return json({ error: 'Debe indicar ingreso o salida' }, 400);
+      const cleaned = limpiarRutScan(b.raw || b.rut);
+      if (!cleaned) return json({ error: 'RUT no válido' }, 400);
+      const t = (await query("select trabajador_id, nombre, apellido, rut, cargo from trabajadores where regexp_replace(upper(rut),'[^0-9K]','','g')=$1 and deleted_at is null limit 1", [cleaned])).rows[0];
+      const nombre = t ? `${t.nombre} ${t.apellido}` : null;
+      const rutFinal = t?.rut || cleaned;
+      const puntoId = b.punto_id || null; const puntoNombre = b.punto_nombre || null;
+      const marcado = b.marcado_at ? new Date(b.marcado_at) : new Date();
+      const ins = async (tp, auto, hora) => { const id = uuid(); await query('insert into accesos (id, trabajador_id, rut, nombre, tipo, registrado_por_nombre, raw, punto_id, punto_nombre, marcado_at, auto) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, t?.trabajador_id || null, rutFinal, nombre, tp, 'Visor', String(b.raw || b.rut || '').slice(0, 300), puntoId, puntoNombre, hora, auto]); };
+      let autoIngreso = false;
+      if (tipo === 'salida') {
+        const last = (await query("select tipo from accesos where regexp_replace(upper(rut),'[^0-9K]','','g')=$1 order by marcado_at desc, created_at desc limit 1", [cleaned])).rows[0];
+        if (!last || last.tipo === 'salida') { await ins('ingreso', true, new Date(marcado.getTime() - 1000)); autoIngreso = true; }
+      }
+      await ins(tipo, false, marcado);
+      return json({ ok: true, encontrado: !!t, trabajador: t || null, rut_limpio: cleaned, tipo, auto_ingreso: autoIngreso, hora: marcado.toISOString() }, 201);
+    }
+
     if (p[0] === 'auth' && p[1] === 'login') {
       const { email, password } = await request.json().catch(() => ({}));
       try {
@@ -663,7 +795,7 @@ export async function POST(request, { params }) {
     if (p[0] === 'trabajadores' && p[1] && p[2] === 'desvincular') {
       const profile = await getProfile(request);
       if (!profile) return json({ error: 'No autorizado' }, 401);
-      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      if (!can(profile, 'desvincular')) return json({ error: 'No autorizado' }, 403);
       const form = await request.formData();
       const file = form.get('file');
       if (!(file instanceof File)) return json({ error: 'Archivo requerido' }, 400);
@@ -674,6 +806,7 @@ export async function POST(request, { params }) {
       if (!asignacion_id) return json({ error: 'Asignación requerida' }, 400);
       const asig = (await query('select * from trabajador_asignaciones where asignacion_id=$1', [asignacion_id])).rows[0];
       if (!asig) return json({ error: 'Asignación no encontrada' }, 404);
+      if (!inScope(profile, asig.mandante_id)) return json({ error: 'No autorizado' }, 403);
       const t = (await query('select nombre, apellido, rut, cargo from trabajadores where trabajador_id=$1', [p[1]])).rows[0] || {};
       const ct = (await query('select c.numero_oc, e.razon_social as empresa, m.razon_social as mandante from contratos c join empresas_grupo e on e.empresa_id=c.empresa_id join mandantes m on m.mandante_id=c.mandante_id where c.contrato_id=$1', [asig.contrato_id])).rows[0] || {};
       const safe = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -693,6 +826,7 @@ export async function POST(request, { params }) {
     if (p[0] === 'documentos' && p[1] === 'upload') {
       const profile = await getProfile(request);
       if (!profile) return json({ error: 'No autorizado' }, 401);
+      if (!can(profile, 'upload')) return json({ error: 'No autorizado' }, 403);
       const form = await request.formData();
       const file = form.get('file');
       if (!(file instanceof File)) return json({ error: 'Archivo requerido' }, 400);
@@ -700,6 +834,7 @@ export async function POST(request, { params }) {
       const recurso_id = form.get('recurso_id');
       const requisito_id = form.get('requisito_id');
       const mandante_id = form.get('mandante_id');
+      if (mandante_id && !inScope(profile, mandante_id)) return json({ error: 'No autorizado' }, 403);
       const fecha_emision = form.get('fecha_emision') || null;
       const fecha_vencimiento = form.get('fecha_vencimiento') || null;
       const safe = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -720,6 +855,18 @@ export async function POST(request, { params }) {
     if (!profile) return json({ error: 'No autorizado' }, 401);
     const body = await request.json().catch(() => ({}));
 
+    if (p[0] === 'accesos') {
+      const { rut: rawRut, raw, tipo } = body;
+      if (!['ingreso', 'salida'].includes(tipo)) return json({ error: 'Debe indicar ingreso o salida' }, 400);
+      const cleaned = limpiarRutScan(raw || rawRut);
+      if (!cleaned) return json({ error: 'RUT no válido' }, 400);
+      const t = (await query("select trabajador_id, nombre, apellido, rut, cargo from trabajadores where regexp_replace(upper(rut),'[^0-9K]','','g')=$1 and deleted_at is null limit 1", [cleaned])).rows[0];
+      const id = uuid();
+      const nombre = t ? `${t.nombre} ${t.apellido}` : null;
+      await query('insert into accesos (id, trabajador_id, rut, nombre, tipo, registrado_por, registrado_por_nombre, raw) values ($1,$2,$3,$4,$5,$6,$7,$8)', [id, t?.trabajador_id || null, t?.rut || cleaned, nombre, tipo, profile.perfil_id, profile.nombre, String(raw || rawRut || '').slice(0, 300)]);
+      return json({ ok: true, encontrado: !!t, trabajador: t || null, rut_limpio: cleaned, tipo, hora: new Date().toISOString() }, 201);
+    }
+
     // Mantenedor de catálogos (solo Super Admin)
     const CAT = { 'tipos-vehiculo': 'tipos_vehiculo', 'marcas-vehiculo': 'marcas_vehiculo' };
     if (CAT[p[0]] && !p[1]) {
@@ -734,9 +881,13 @@ export async function POST(request, { params }) {
     }
 
     if (p[0] === 'documentos' && p[1] && p[2] === 'revision') {
-      if (!['SUPER_ADMIN_HOLDING', 'REVISOR'].includes(profile.role_codigo)) return json({ error: 'No autorizado' }, 403);
+      const canReview = ['SUPER_ADMIN_HOLDING', 'REVISOR'].includes(profile.role_codigo) || can(profile, 'review');
+      if (!canReview) return json({ error: 'No autorizado' }, 403);
       const { estado, observacion } = body;
       if (!['aprobado', 'rechazado'].includes(estado)) return json({ error: 'Estado inválido' }, 400);
+      const docPrev = (await query('select mandante_id from documentos where documento_id=$1', [p[1]])).rows[0];
+      if (!docPrev) return json({ error: 'No encontrado' }, 404);
+      if (!inScope(profile, docPrev.mandante_id)) return json({ error: 'No autorizado' }, 403);
       await query('update documentos set estado=$1, observacion_revisor=$2, revisado_por=$3, fecha_revision=now(), updated_at=now() where documento_id=$4', [estado, observacion || null, profile.auth_user_id, p[1]]);
       await query('insert into revisiones_documentales (documento_id, estado, observacion, revisado_por) values ($1,$2,$3,$4)', [p[1], estado, observacion || null, profile.auth_user_id]);
       const d = (await query('select * from documentos where documento_id=$1', [p[1]])).rows[0];
@@ -872,6 +1023,15 @@ export async function POST(request, { params }) {
       return json({ ok: true });
     }
 
+    if (p[0] === 'puntos-acceso') {
+      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      if (!body.nombre) return json({ error: 'Nombre requerido' }, 400);
+      const id = uuid();
+      const slug = await slugUnico(slugify(body.nombre));
+      await query('insert into puntos_acceso (id, nombre, ubicacion, activo, slug) values ($1,$2,$3,$4,$5)', [id, body.nombre, body.ubicacion || null, body.activo !== false, slug]);
+      return json({ ok: true, id, slug }, 201);
+    }
+
     if (p[0] === 'trabajadores' && p[1] === 'asignar') {
       if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
       const { trabajador_id, contrato_id } = body;
@@ -943,6 +1103,14 @@ export async function PUT(request, { params }) {
     if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
     const body = await request.json().catch(() => ({}));
     const build = (allowed) => { const cols = []; const vals = []; let i = 1; for (const k of allowed) { if (body[k] !== undefined) { cols.push(`${k}=$${i++}`); vals.push(body[k]); } } return { cols, vals, i }; };
+
+    if (p[0] === 'puntos-acceso' && p[1]) {
+      const { cols, vals, i } = build(['nombre', 'ubicacion', 'activo']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      await query(`update puntos_acceso set ${cols.join(', ')} where id=$${i}`, vals);
+      return json({ ok: true });
+    }
 
     if (p[0] === 'usuarios' && p[1]) {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
@@ -1033,6 +1201,10 @@ export async function DELETE(request, { params }) {
 
     // Mantenedor de catálogos (solo Super Admin)
     const CATD = { 'tipos-vehiculo': 'tipos_vehiculo', 'marcas-vehiculo': 'marcas_vehiculo' };
+    if (p[0] === 'puntos-acceso' && p[1]) {
+      await query('delete from puntos_acceso where id=$1', [p[1]]);
+      return json({ ok: true });
+    }
     if (CATD[p[0]] && p[1]) {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
       await query(`delete from ${CATD[p[0]]} where id=$1`, [p[1]]);

@@ -1,309 +1,544 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for Aptiva RL - Regression Test
-Testing mandantes array field in vehiculos and equipos lists
+Backend API Testing for Aptiva RL - Punto de acceso por URL (slug)
+Tests the NEW slug functionality for puntos_acceso
 """
-
 import requests
 import json
 import sys
 
+# Backend URL from .env
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
 
-def test_regression_mandantes_array():
-    """
-    Regression test for mandantes array in vehiculos and equipos lists.
-    Review request: Verify GET /api/vehiculos and GET /api/equipos include mandantes array
-    with active assigned mandantes (razon_social).
-    """
-    print("=" * 80)
-    print("APTIVA RL - REGRESSION TEST: MANDANTES ARRAY IN VEHICULOS/EQUIPOS")
-    print("=" * 80)
-    
-    # Step 1: Login as admin@aptivarl.com / Aptiva2025!
-    print("\n[1] LOGIN as admin@aptivarl.com")
-    try:
-        login_response = requests.post(
-            f"{BASE_URL}/auth/login",
-            json={"email": "admin@aptivarl.com", "password": "Aptiva2025!"},
-            timeout=30
-        )
-        print(f"    Status: {login_response.status_code}")
-        
-        if login_response.status_code != 200:
-            print(f"    ❌ FAILED: Login failed with status {login_response.status_code}")
-            print(f"    Response: {login_response.text}")
-            return False
-        
-        login_data = login_response.json()
-        token = login_data.get("token")
-        profile = login_data.get("profile", {})
-        
-        if not token:
-            print("    ❌ FAILED: No token in login response")
-            return False
-        
-        print(f"    ✅ SUCCESS: Logged in as {profile.get('email')} (Role: {profile.get('role_codigo')})")
-        
-    except Exception as e:
-        print(f"    ❌ EXCEPTION during login: {e}")
-        return False
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    # Step 2: GET /api/vehiculos - verify mandantes array
-    print("\n[2] GET /api/vehiculos - Verify mandantes array field")
-    try:
-        vehiculos_response = requests.get(f"{BASE_URL}/vehiculos", headers=headers, timeout=30)
-        print(f"    Status: {vehiculos_response.status_code}")
-        
-        if vehiculos_response.status_code != 200:
-            print(f"    ❌ FAILED: GET /api/vehiculos returned {vehiculos_response.status_code}")
-            print(f"    Response: {vehiculos_response.text}")
-            return False
-        
-        vehiculos_data = vehiculos_response.json()
-        vehiculos = vehiculos_data.get("vehiculos", [])
-        
-        if not vehiculos:
-            print("    ⚠️  WARNING: No vehiculos found in response")
-            return False
-        
-        print(f"    ✅ SUCCESS: Retrieved {len(vehiculos)} vehiculos")
-        
-        # Verify each vehiculo has mandantes array, estado_operativo, operador_actual
-        missing_mandantes = []
-        missing_estado_operativo = []
-        missing_operador_actual = []
-        vehiculos_with_mandantes = []
-        
-        for v in vehiculos:
-            if "mandantes" not in v:
-                missing_mandantes.append(v.get("vehiculo_id", "unknown"))
-            elif not isinstance(v["mandantes"], list):
-                print(f"    ❌ FAILED: vehiculo {v.get('patente', 'unknown')} has mandantes but it's not an array: {type(v['mandantes'])}")
-                return False
-            elif len(v["mandantes"]) > 0:
-                vehiculos_with_mandantes.append({
-                    "patente": v.get("patente"),
-                    "mandantes": v["mandantes"],
-                    "count": len(v["mandantes"])
-                })
-            
-            if "estado_operativo" not in v:
-                missing_estado_operativo.append(v.get("vehiculo_id", "unknown"))
-            
-            if "operador_actual" not in v:
-                missing_operador_actual.append(v.get("vehiculo_id", "unknown"))
-        
-        if missing_mandantes:
-            print(f"    ❌ FAILED: {len(missing_mandantes)} vehiculos missing 'mandantes' field")
-            return False
-        
-        if missing_estado_operativo:
-            print(f"    ❌ FAILED: {len(missing_estado_operativo)} vehiculos missing 'estado_operativo' field")
-            return False
-        
-        if missing_operador_actual:
-            print(f"    ❌ FAILED: {len(missing_operador_actual)} vehiculos missing 'operador_actual' field")
-            return False
-        
-        print(f"    ✅ All vehiculos have 'mandantes' array field")
-        print(f"    ✅ All vehiculos have 'estado_operativo' field")
-        print(f"    ✅ All vehiculos have 'operador_actual' field")
-        
-        if vehiculos_with_mandantes:
-            print(f"    ✅ Found {len(vehiculos_with_mandantes)} vehiculos with active mandante assignments:")
-            for v in vehiculos_with_mandantes[:3]:  # Show first 3
-                print(f"       - {v['patente']}: {v['count']} mandante(s) -> {v['mandantes']}")
-        else:
-            print(f"    ⚠️  WARNING: No vehiculos have active mandante assignments (all mandantes arrays are empty)")
-        
-        # Sample one vehiculo for detailed inspection
-        sample_vehiculo = vehiculos[0]
-        print(f"\n    Sample vehiculo (patente: {sample_vehiculo.get('patente')}):")
-        print(f"       - mandantes: {sample_vehiculo.get('mandantes')} (type: {type(sample_vehiculo.get('mandantes'))})")
-        print(f"       - estado_operativo: {sample_vehiculo.get('estado_operativo')}")
-        print(f"       - operador_actual: {sample_vehiculo.get('operador_actual')}")
-        
-    except Exception as e:
-        print(f"    ❌ EXCEPTION during GET /api/vehiculos: {e}")
-        return False
-    
-    # Step 3: GET /api/equipos - verify mandantes array
-    print("\n[3] GET /api/equipos - Verify mandantes array field")
-    try:
-        equipos_response = requests.get(f"{BASE_URL}/equipos", headers=headers, timeout=30)
-        print(f"    Status: {equipos_response.status_code}")
-        
-        if equipos_response.status_code != 200:
-            print(f"    ❌ FAILED: GET /api/equipos returned {equipos_response.status_code}")
-            print(f"    Response: {equipos_response.text}")
-            return False
-        
-        equipos_data = equipos_response.json()
-        equipos = equipos_data.get("equipos", [])
-        
-        if not equipos:
-            print("    ⚠️  WARNING: No equipos found in response")
-            return False
-        
-        print(f"    ✅ SUCCESS: Retrieved {len(equipos)} equipos")
-        
-        # Verify each equipo has mandantes array
-        missing_mandantes = []
-        equipos_with_mandantes = []
-        
-        for e in equipos:
-            if "mandantes" not in e:
-                missing_mandantes.append(e.get("equipo_id", "unknown"))
-            elif not isinstance(e["mandantes"], list):
-                print(f"    ❌ FAILED: equipo {e.get('codigo_interno', 'unknown')} has mandantes but it's not an array: {type(e['mandantes'])}")
-                return False
-            elif len(e["mandantes"]) > 0:
-                equipos_with_mandantes.append({
-                    "codigo": e.get("codigo_interno"),
-                    "mandantes": e["mandantes"],
-                    "count": len(e["mandantes"])
-                })
-        
-        if missing_mandantes:
-            print(f"    ❌ FAILED: {len(missing_mandantes)} equipos missing 'mandantes' field")
-            return False
-        
-        print(f"    ✅ All equipos have 'mandantes' array field")
-        
-        if equipos_with_mandantes:
-            print(f"    ✅ Found {len(equipos_with_mandantes)} equipos with active mandante assignments:")
-            for e in equipos_with_mandantes[:3]:  # Show first 3
-                print(f"       - {e['codigo']}: {e['count']} mandante(s) -> {e['mandantes']}")
-        else:
-            print(f"    ⚠️  WARNING: No equipos have active mandante assignments (all mandantes arrays are empty)")
-        
-        # Sample one equipo for detailed inspection
-        sample_equipo = equipos[0]
-        print(f"\n    Sample equipo (codigo: {sample_equipo.get('codigo_interno')}):")
-        print(f"       - mandantes: {sample_equipo.get('mandantes')} (type: {type(sample_equipo.get('mandantes'))})")
-        print(f"       - estado_operativo: {sample_equipo.get('estado_operativo')}")
-        print(f"       - operador_actual: {sample_equipo.get('operador_actual')}")
-        
-    except Exception as e:
-        print(f"    ❌ EXCEPTION during GET /api/equipos: {e}")
-        return False
-    
-    # Step 4: PUT /api/vehiculos/{id} - update marca, verify, revert
-    print("\n[4] PUT /api/vehiculos/{id} - Update marca, verify, then revert")
-    try:
-        # Pick first vehiculo
-        test_vehiculo = vehiculos[0]
-        vehiculo_id = test_vehiculo.get("vehiculo_id")
-        original_marca = test_vehiculo.get("marca")
-        patente = test_vehiculo.get("patente")
-        
-        print(f"    Testing with vehiculo: {patente} (ID: {vehiculo_id})")
-        print(f"    Original marca: {original_marca}")
-        
-        # Update marca to "TEST-MARCA"
-        print(f"\n    [4a] PUT /api/vehiculos/{vehiculo_id} - Update marca to 'TEST-MARCA'")
-        update_response = requests.put(
-            f"{BASE_URL}/vehiculos/{vehiculo_id}",
-            headers=headers,
-            json={"marca": "TEST-MARCA"},
-            timeout=30
-        )
-        print(f"         Status: {update_response.status_code}")
-        
-        if update_response.status_code != 200:
-            print(f"         ❌ FAILED: PUT returned {update_response.status_code}")
-            print(f"         Response: {update_response.text}")
-            return False
-        
-        print(f"         ✅ SUCCESS: Updated marca to 'TEST-MARCA'")
-        
-        # Verify change via GET
-        print(f"\n    [4b] GET /api/vehiculos/{vehiculo_id} - Verify marca change")
-        verify_response = requests.get(f"{BASE_URL}/vehiculos/{vehiculo_id}", headers=headers, timeout=30)
-        print(f"         Status: {verify_response.status_code}")
-        
-        if verify_response.status_code != 200:
-            print(f"         ❌ FAILED: GET returned {verify_response.status_code}")
-            return False
-        
-        verify_data = verify_response.json()
-        current_marca = verify_data.get("recurso", {}).get("marca")
-        
-        if current_marca != "TEST-MARCA":
-            print(f"         ❌ FAILED: marca not updated. Expected 'TEST-MARCA', got '{current_marca}'")
-            return False
-        
-        print(f"         ✅ SUCCESS: Verified marca = 'TEST-MARCA'")
-        
-        # Revert to original marca
-        print(f"\n    [4c] PUT /api/vehiculos/{vehiculo_id} - Revert marca to original value '{original_marca}'")
-        revert_response = requests.put(
-            f"{BASE_URL}/vehiculos/{vehiculo_id}",
-            headers=headers,
-            json={"marca": original_marca},
-            timeout=30
-        )
-        print(f"         Status: {revert_response.status_code}")
-        
-        if revert_response.status_code != 200:
-            print(f"         ❌ FAILED: PUT revert returned {revert_response.status_code}")
-            print(f"         Response: {revert_response.text}")
-            return False
-        
-        print(f"         ✅ SUCCESS: Reverted marca to '{original_marca}'")
-        
-        # Verify revert via GET
-        print(f"\n    [4d] GET /api/vehiculos/{vehiculo_id} - Verify marca reverted")
-        final_verify_response = requests.get(f"{BASE_URL}/vehiculos/{vehiculo_id}", headers=headers, timeout=30)
-        print(f"         Status: {final_verify_response.status_code}")
-        
-        if final_verify_response.status_code != 200:
-            print(f"         ❌ FAILED: GET returned {final_verify_response.status_code}")
-            return False
-        
-        final_verify_data = final_verify_response.json()
-        final_marca = final_verify_data.get("recurso", {}).get("marca")
-        
-        if final_marca != original_marca:
-            print(f"         ❌ FAILED: marca not reverted. Expected '{original_marca}', got '{final_marca}'")
-            return False
-        
-        print(f"         ✅ SUCCESS: Verified marca reverted to '{original_marca}'")
-        
-    except Exception as e:
-        print(f"    ❌ EXCEPTION during PUT /api/vehiculos: {e}")
-        return False
-    
-    # Step 5: GET /api/dashboard - regression check
-    print("\n[5] GET /api/dashboard - Regression check")
-    try:
-        dashboard_response = requests.get(f"{BASE_URL}/dashboard", headers=headers, timeout=30)
-        print(f"    Status: {dashboard_response.status_code}")
-        
-        if dashboard_response.status_code != 200:
-            print(f"    ❌ FAILED: GET /api/dashboard returned {dashboard_response.status_code}")
-            print(f"    Response: {dashboard_response.text}")
-            return False
-        
-        dashboard_data = dashboard_response.json()
-        stats = dashboard_data.get("stats", {})
-        
-        print(f"    ✅ SUCCESS: Dashboard returned 200")
-        print(f"    Stats: mandantes={stats.get('mandantes')}, contratos_vigentes={stats.get('contratos_vigentes')}, trabajadores={stats.get('trabajadores')}")
-        
-    except Exception as e:
-        print(f"    ❌ EXCEPTION during GET /api/dashboard: {e}")
-        return False
-    
-    print("\n" + "=" * 80)
-    print("✅ ALL REGRESSION TESTS PASSED")
-    print("=" * 80)
-    return True
+# Test credentials
+ADMIN_EMAIL = "admin@aptivarl.com"
+ADMIN_PASSWORD = "Aptiva2025!"
+MANDANTE_EMAIL = "dugarte@rioloa.cl"
+MANDANTE_PASSWORD = "Aptiva2025!"
 
+# Global variables to store test data
+admin_token = None
+mandante_token = None
+punto1_id = None
+punto1_slug = None
+punto2_id = None
+punto2_slug = None
+
+def login(email, password):
+    """Login and return token"""
+    try:
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": email, "password": password},
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("token")
+        else:
+            print(f"❌ Login failed for {email}: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ Login exception for {email}: {str(e)}")
+        return None
+
+def test_1_post_punto_with_slug():
+    """Test 1: POST /api/puntos-acceso with nombre 'Portería Principal Mejillones' → 201 with slug 'porteria-principal-mejillones'"""
+    global punto1_id, punto1_slug
+    print("\n=== TEST 1: POST /api/puntos-acceso (crear punto con slug) ===")
+    
+    try:
+        response = requests.post(
+            f"{BASE_URL}/puntos-acceso",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"nombre": "Portería Principal Mejillones"},
+            timeout=10
+        )
+        
+        print(f"Status: {response.status_code}")
+        print(f"Response: {response.text}")
+        
+        if response.status_code == 201:
+            data = response.json()
+            if data.get("ok") and data.get("id") and data.get("slug"):
+                punto1_id = data["id"]
+                punto1_slug = data["slug"]
+                
+                # Verify slug is exactly "porteria-principal-mejillones"
+                if punto1_slug == "porteria-principal-mejillones":
+                    print(f"✅ TEST 1 PASSED: Created punto with id={punto1_id}, slug={punto1_slug}")
+                    return True
+                else:
+                    print(f"❌ TEST 1 FAILED: Expected slug 'porteria-principal-mejillones', got '{punto1_slug}'")
+                    return False
+            else:
+                print(f"❌ TEST 1 FAILED: Response missing required fields (ok, id, slug)")
+                return False
+        else:
+            print(f"❌ TEST 1 FAILED: Expected 201, got {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ TEST 1 EXCEPTION: {str(e)}")
+        return False
+
+def test_2_post_duplicate_nombre():
+    """Test 2: POST another punto with SAME nombre → 201 with unique slug ending in '-2'"""
+    global punto2_id, punto2_slug
+    print("\n=== TEST 2: POST /api/puntos-acceso (mismo nombre, slug único con -2) ===")
+    
+    try:
+        response = requests.post(
+            f"{BASE_URL}/puntos-acceso",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"nombre": "Portería Principal Mejillones"},
+            timeout=10
+        )
+        
+        print(f"Status: {response.status_code}")
+        print(f"Response: {response.text}")
+        
+        if response.status_code == 201:
+            data = response.json()
+            if data.get("ok") and data.get("id") and data.get("slug"):
+                punto2_id = data["id"]
+                punto2_slug = data["slug"]
+                
+                # Verify slug ends with "-2"
+                if punto2_slug == "porteria-principal-mejillones-2":
+                    print(f"✅ TEST 2 PASSED: Created punto with id={punto2_id}, slug={punto2_slug} (unique with -2)")
+                    return True
+                else:
+                    print(f"❌ TEST 2 FAILED: Expected slug 'porteria-principal-mejillones-2', got '{punto2_slug}'")
+                    return False
+            else:
+                print(f"❌ TEST 2 FAILED: Response missing required fields")
+                return False
+        else:
+            print(f"❌ TEST 2 FAILED: Expected 201, got {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ TEST 2 EXCEPTION: {str(e)}")
+        return False
+
+def test_3_get_public_punto_by_slug():
+    """Test 3: GET /api/public/punto?slug=<slug> WITHOUT token → 200 with punto data"""
+    print("\n=== TEST 3: GET /api/public/punto?slug (público, sin token) ===")
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/public/punto?slug={punto1_slug}",
+            timeout=10
+        )
+        
+        print(f"Status: {response.status_code}")
+        print(f"Response: {response.text}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            punto = data.get("punto")
+            if punto and punto.get("id") == punto1_id and punto.get("slug") == punto1_slug:
+                # Verify all required fields
+                required_fields = ["id", "nombre", "ubicacion", "activo", "slug"]
+                missing = [f for f in required_fields if f not in punto]
+                if not missing:
+                    print(f"✅ TEST 3 PASSED: Public endpoint returned punto with all required fields")
+                    print(f"   Punto: id={punto['id']}, nombre={punto['nombre']}, slug={punto['slug']}, activo={punto['activo']}")
+                    return True
+                else:
+                    print(f"❌ TEST 3 FAILED: Missing fields: {missing}")
+                    return False
+            else:
+                print(f"❌ TEST 3 FAILED: Punto data mismatch or missing")
+                return False
+        else:
+            print(f"❌ TEST 3 FAILED: Expected 200, got {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ TEST 3 EXCEPTION: {str(e)}")
+        return False
+
+def test_4_get_public_punto_not_found():
+    """Test 4: GET /api/public/punto?slug=no-existe-xyz → 404"""
+    print("\n=== TEST 4: GET /api/public/punto?slug=no-existe-xyz (404) ===")
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/public/punto?slug=no-existe-xyz",
+            timeout=10
+        )
+        
+        print(f"Status: {response.status_code}")
+        print(f"Response: {response.text}")
+        
+        if response.status_code == 404:
+            print(f"✅ TEST 4 PASSED: Non-existent slug correctly returns 404")
+            return True
+        else:
+            print(f"❌ TEST 4 FAILED: Expected 404, got {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ TEST 4 EXCEPTION: {str(e)}")
+        return False
+
+def test_5_get_public_punto_no_slug():
+    """Test 5: GET /api/public/punto WITHOUT slug parameter → 400"""
+    print("\n=== TEST 5: GET /api/public/punto sin parámetro slug (400) ===")
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/public/punto",
+            timeout=10
+        )
+        
+        print(f"Status: {response.status_code}")
+        print(f"Response: {response.text}")
+        
+        if response.status_code == 400:
+            print(f"✅ TEST 5 PASSED: Missing slug parameter correctly returns 400")
+            return True
+        else:
+            print(f"❌ TEST 5 FAILED: Expected 400, got {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ TEST 5 EXCEPTION: {str(e)}")
+        return False
+
+def test_6_put_punto_inactive_then_get_403():
+    """Test 6: PUT /api/puntos-acceso/:id with activo:false → 200; then GET /api/public/punto?slug → 403"""
+    print("\n=== TEST 6: PUT punto activo=false, luego GET público → 403 ===")
+    
+    try:
+        # First, deactivate the punto
+        response = requests.put(
+            f"{BASE_URL}/puntos-acceso/{punto1_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"activo": False},
+            timeout=10
+        )
+        
+        print(f"PUT Status: {response.status_code}")
+        print(f"PUT Response: {response.text}")
+        
+        if response.status_code != 200:
+            print(f"❌ TEST 6 FAILED: PUT failed with {response.status_code}")
+            return False
+        
+        # Now try to GET the inactive punto via public endpoint
+        response = requests.get(
+            f"{BASE_URL}/public/punto?slug={punto1_slug}",
+            timeout=10
+        )
+        
+        print(f"GET Status: {response.status_code}")
+        print(f"GET Response: {response.text}")
+        
+        if response.status_code == 403:
+            print(f"✅ TEST 6 PASSED: Inactive punto correctly returns 403 on public endpoint")
+            return True
+        else:
+            print(f"❌ TEST 6 FAILED: Expected 403 for inactive punto, got {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ TEST 6 EXCEPTION: {str(e)}")
+        return False
+
+def test_7_get_public_puntos_includes_slug():
+    """Test 7: GET /api/public/puntos → 200 and each element includes 'slug' field"""
+    print("\n=== TEST 7: GET /api/public/puntos (verificar campo slug) ===")
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/public/puntos",
+            timeout=10
+        )
+        
+        print(f"Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            puntos = data.get("puntos", [])
+            print(f"Found {len(puntos)} active puntos")
+            
+            if len(puntos) == 0:
+                print(f"⚠️  TEST 7 WARNING: No active puntos found (punto1 was deactivated in test 6)")
+                # Check if punto2 is in the list
+                punto2_found = any(p.get("slug") == punto2_slug for p in puntos)
+                if not punto2_found:
+                    print(f"❌ TEST 7 FAILED: punto2 (slug={punto2_slug}) should be active but not found")
+                    return False
+            
+            # Verify all puntos have slug field
+            missing_slug = [p for p in puntos if "slug" not in p]
+            if missing_slug:
+                print(f"❌ TEST 7 FAILED: {len(missing_slug)} puntos missing 'slug' field")
+                return False
+            
+            # Verify punto2 is in the list (it should be active)
+            punto2_found = any(p.get("slug") == punto2_slug for p in puntos)
+            if punto2_found:
+                print(f"✅ TEST 7 PASSED: All active puntos include 'slug' field. punto2 (slug={punto2_slug}) is present.")
+                return True
+            else:
+                print(f"❌ TEST 7 FAILED: punto2 (slug={punto2_slug}) not found in active puntos")
+                return False
+        else:
+            print(f"❌ TEST 7 FAILED: Expected 200, got {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ TEST 7 EXCEPTION: {str(e)}")
+        return False
+
+def test_8_security_no_token():
+    """Test 8a: POST/PUT/DELETE /api/puntos-acceso WITHOUT token → 401"""
+    print("\n=== TEST 8a: Seguridad - POST/PUT/DELETE sin token → 401 ===")
+    
+    all_passed = True
+    
+    # Test POST without token
+    try:
+        response = requests.post(
+            f"{BASE_URL}/puntos-acceso",
+            json={"nombre": "Test"},
+            timeout=10
+        )
+        print(f"POST without token: {response.status_code}")
+        if response.status_code == 401:
+            print(f"✅ POST without token correctly returns 401")
+        else:
+            print(f"❌ POST without token: Expected 401, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ POST without token exception: {str(e)}")
+        all_passed = False
+    
+    # Test PUT without token
+    try:
+        response = requests.put(
+            f"{BASE_URL}/puntos-acceso/{punto1_id}",
+            json={"activo": True},
+            timeout=10
+        )
+        print(f"PUT without token: {response.status_code}")
+        if response.status_code == 401:
+            print(f"✅ PUT without token correctly returns 401")
+        else:
+            print(f"❌ PUT without token: Expected 401, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ PUT without token exception: {str(e)}")
+        all_passed = False
+    
+    # Test DELETE without token
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/puntos-acceso/{punto1_id}",
+            timeout=10
+        )
+        print(f"DELETE without token: {response.status_code}")
+        if response.status_code == 401:
+            print(f"✅ DELETE without token correctly returns 401")
+        else:
+            print(f"❌ DELETE without token: Expected 401, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ DELETE without token exception: {str(e)}")
+        all_passed = False
+    
+    if all_passed:
+        print(f"✅ TEST 8a PASSED: All endpoints correctly return 401 without token")
+    else:
+        print(f"❌ TEST 8a FAILED: Some endpoints did not return 401")
+    
+    return all_passed
+
+def test_8b_security_mandante_user():
+    """Test 8b: POST/PUT/DELETE /api/puntos-acceso as mandante user → 403"""
+    print("\n=== TEST 8b: Seguridad - POST/PUT/DELETE como usuario mandante → 403 ===")
+    
+    all_passed = True
+    
+    # Test POST as mandante
+    try:
+        response = requests.post(
+            f"{BASE_URL}/puntos-acceso",
+            headers={"Authorization": f"Bearer {mandante_token}"},
+            json={"nombre": "Test"},
+            timeout=10
+        )
+        print(f"POST as mandante: {response.status_code}")
+        if response.status_code == 403:
+            print(f"✅ POST as mandante correctly returns 403")
+        else:
+            print(f"❌ POST as mandante: Expected 403, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ POST as mandante exception: {str(e)}")
+        all_passed = False
+    
+    # Test PUT as mandante
+    try:
+        response = requests.put(
+            f"{BASE_URL}/puntos-acceso/{punto1_id}",
+            headers={"Authorization": f"Bearer {mandante_token}"},
+            json={"activo": True},
+            timeout=10
+        )
+        print(f"PUT as mandante: {response.status_code}")
+        if response.status_code == 403:
+            print(f"✅ PUT as mandante correctly returns 403")
+        else:
+            print(f"❌ PUT as mandante: Expected 403, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ PUT as mandante exception: {str(e)}")
+        all_passed = False
+    
+    # Test DELETE as mandante
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/puntos-acceso/{punto1_id}",
+            headers={"Authorization": f"Bearer {mandante_token}"},
+            timeout=10
+        )
+        print(f"DELETE as mandante: {response.status_code}")
+        if response.status_code == 403:
+            print(f"✅ DELETE as mandante correctly returns 403")
+        else:
+            print(f"❌ DELETE as mandante: Expected 403, got {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ DELETE as mandante exception: {str(e)}")
+        all_passed = False
+    
+    if all_passed:
+        print(f"✅ TEST 8b PASSED: All endpoints correctly return 403 for mandante user")
+    else:
+        print(f"❌ TEST 8b FAILED: Some endpoints did not return 403")
+    
+    return all_passed
+
+def test_9_cleanup():
+    """Test 9: DELETE both test puntos created"""
+    print("\n=== TEST 9: CLEANUP - DELETE puntos de prueba ===")
+    
+    all_passed = True
+    
+    # Delete punto1
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/puntos-acceso/{punto1_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=10
+        )
+        print(f"DELETE punto1 ({punto1_slug}): {response.status_code}")
+        if response.status_code == 200:
+            print(f"✅ punto1 deleted successfully")
+        else:
+            print(f"❌ Failed to delete punto1: {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ DELETE punto1 exception: {str(e)}")
+        all_passed = False
+    
+    # Delete punto2
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/puntos-acceso/{punto2_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=10
+        )
+        print(f"DELETE punto2 ({punto2_slug}): {response.status_code}")
+        if response.status_code == 200:
+            print(f"✅ punto2 deleted successfully")
+        else:
+            print(f"❌ Failed to delete punto2: {response.status_code}")
+            all_passed = False
+    except Exception as e:
+        print(f"❌ DELETE punto2 exception: {str(e)}")
+        all_passed = False
+    
+    # Verify they're gone
+    try:
+        response = requests.get(
+            f"{BASE_URL}/public/puntos",
+            timeout=10
+        )
+        if response.status_code == 200:
+            data = response.json()
+            puntos = data.get("puntos", [])
+            punto1_still_exists = any(p.get("slug") == punto1_slug for p in puntos)
+            punto2_still_exists = any(p.get("slug") == punto2_slug for p in puntos)
+            
+            if punto1_still_exists or punto2_still_exists:
+                print(f"❌ Test puntos still appear in public list")
+                all_passed = False
+            else:
+                print(f"✅ Verified: Test puntos no longer appear in public list")
+    except Exception as e:
+        print(f"⚠️  Could not verify cleanup: {str(e)}")
+    
+    if all_passed:
+        print(f"✅ TEST 9 PASSED: Cleanup successful")
+    else:
+        print(f"❌ TEST 9 FAILED: Cleanup incomplete")
+    
+    return all_passed
+
+def main():
+    global admin_token, mandante_token
+    
+    print("=" * 80)
+    print("BACKEND API TESTING - Punto de acceso por URL (slug)")
+    print("=" * 80)
+    
+    # Login as admin
+    print("\n=== LOGIN AS ADMIN ===")
+    admin_token = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    if not admin_token:
+        print("❌ FATAL: Could not login as admin")
+        sys.exit(1)
+    print(f"✅ Admin login successful")
+    
+    # Login as mandante user
+    print("\n=== LOGIN AS MANDANTE USER ===")
+    mandante_token = login(MANDANTE_EMAIL, MANDANTE_PASSWORD)
+    if not mandante_token:
+        print("❌ FATAL: Could not login as mandante user")
+        sys.exit(1)
+    print(f"✅ Mandante user login successful")
+    
+    # Run all tests
+    results = []
+    results.append(("Test 1: POST punto con slug", test_1_post_punto_with_slug()))
+    results.append(("Test 2: POST punto duplicado (slug único -2)", test_2_post_duplicate_nombre()))
+    results.append(("Test 3: GET público por slug", test_3_get_public_punto_by_slug()))
+    results.append(("Test 4: GET público slug inexistente (404)", test_4_get_public_punto_not_found()))
+    results.append(("Test 5: GET público sin slug (400)", test_5_get_public_punto_no_slug()))
+    results.append(("Test 6: PUT inactivo + GET público (403)", test_6_put_punto_inactive_then_get_403()))
+    results.append(("Test 7: GET público puntos incluye slug", test_7_get_public_puntos_includes_slug()))
+    results.append(("Test 8a: Seguridad sin token (401)", test_8_security_no_token()))
+    results.append(("Test 8b: Seguridad usuario mandante (403)", test_8b_security_mandante_user()))
+    results.append(("Test 9: Cleanup (DELETE puntos)", test_9_cleanup()))
+    
+    # Summary
+    print("\n" + "=" * 80)
+    print("TEST SUMMARY")
+    print("=" * 80)
+    passed = sum(1 for _, result in results if result)
+    total = len(results)
+    
+    for name, result in results:
+        status = "✅ PASSED" if result else "❌ FAILED"
+        print(f"{status}: {name}")
+    
+    print(f"\nTotal: {passed}/{total} tests passed")
+    
+    if passed == total:
+        print("\n🎉 ALL TESTS PASSED! Slug functionality is working correctly.")
+        sys.exit(0)
+    else:
+        print(f"\n⚠️  {total - passed} test(s) failed. Review the output above.")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    success = test_regression_mandantes_array()
-    sys.exit(0 if success else 1)
+    main()

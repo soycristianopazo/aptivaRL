@@ -20,12 +20,13 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, ChevronDown, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus, BookOpen,
 } from 'lucide-react';
 import logoAptiva from '@/assets/logo-aptiva.png';
 import logoRioLoa from '@/assets/logo-rioloa.png';
 import loginBg from '@/assets/login-bg.jpg';
 import faviconAptiva from '@/assets/favicon-aptiva.png';
+import { MANUALES, generarManualPDF } from '@/lib/manuales';
 
 const LOGO = logoAptiva.src;
 const LOGO_RIOLOA = logoRioLoa.src;
@@ -171,7 +172,7 @@ const NAV = [
   { group: 'Operación', items: [{ id: 'mandantes', label: 'Mandantes', icon: Building2 }, { id: 'contratos', label: 'Contratos', icon: FileSignature }] },
   { group: 'Recursos', items: [{ id: 'trabajadores', label: 'Trabajadores', icon: Users }, { id: 'vehiculos', label: 'Vehículos', icon: Truck }, { id: 'equipos', label: 'Equipos', icon: Wrench }] },
   { group: 'Acreditación', items: [{ id: 'revision', label: 'Pendientes de Revisión', icon: FileClock }, { id: 'vencimientos', label: 'Vencimientos', icon: CalendarClock }, { id: 'desvinculaciones', label: 'Personal Finiquitado', icon: UserMinus }] },
-  { group: 'Administración', items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings, super: true }, { id: 'auditoria', label: 'Auditoría', icon: History }] },
+  { group: 'Administración', holding: true, items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'accesos', label: 'Control de Acceso', icon: QrCode }, { id: 'manuales', label: 'Manuales', icon: BookOpen, super: true }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings, super: true }, { id: 'auditoria', label: 'Auditoría', icon: History }] },
 ];
 
 function Shell({ token, profile, onLogout }) {
@@ -192,7 +193,14 @@ function Shell({ token, profile, onLogout }) {
 
   const isSuper = profile.role_codigo === 'SUPER_ADMIN_HOLDING';
   const canManage = ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(profile.role_codigo);
-  const ctx = { api, profile, isSuper, canManage, openDetail, go };
+  const role = profile.role_codigo;
+  const isMandante = ['MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_VISOR', 'MANDANTE_PREVENCION'].includes(role);
+  const perms = {
+    upload: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_PREVENCION'].includes(role),
+    review: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'REVISOR', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
+    desvincular: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
+  };
+  const ctx = { api, profile, isSuper, canManage, perms, isMandante, openDetail, go };
 
   return (
     <div className="min-h-screen bg-slate-100 flex">
@@ -202,7 +210,7 @@ function Shell({ token, profile, onLogout }) {
           <img src={LOGO_RIOLOA} alt="Río Loa" className="h-12 w-auto max-w-full object-contain" />
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-5">
-          {NAV.map((sec, i) => (
+          {NAV.filter((sec) => !(sec.holding && isMandante)).map((sec, i) => (
             <div key={i}>
               {sec.group && <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-teal-200/45">{sec.group}</p>}
               <div className="space-y-1">
@@ -255,6 +263,8 @@ function Shell({ token, profile, onLogout }) {
           {!detail && view === 'desvinculaciones' && <Desvinculaciones {...ctx} />}
           {!detail && view === 'empresas' && <Empresas {...ctx} />}
           {!detail && view === 'usuarios' && <Usuarios {...ctx} />}
+          {!detail && view === 'accesos' && <AccesosAdmin {...ctx} />}
+          {!detail && view === 'manuales' && isSuper && <Manuales {...ctx} />}
           {!detail && view === 'mantenedores' && isSuper && <Mantenedores {...ctx} />}
           {!detail && view === 'auditoria' && <Auditoria {...ctx} />}
         </main>
@@ -1359,7 +1369,7 @@ function Contratos({ api, openDetail, canManage }) {
     </div>
   );
 }
-function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
+function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail, perms = {} }) {
   const [data, reload] = useData(api, `/contratos/${id}`, [id]);
   const [trabajadores] = useData(api, '/trabajadores');
   const [edit, setEdit] = useState(false);
@@ -1418,7 +1428,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail }) {
       </div></CardHeader><CardContent>
         {(data.documentacion?.detalle || []).length === 0
           ? <p className="text-sm text-slate-400">No hay estándar documental configurado para contratos de este mandante. Configúralo en el mandante → Estándar Documental → Contratos.</p>
-          : <DocsPorCategoria detalle={data.documentacion.detalle} canManage={canManage} api={api} onCargar={(d) => setUpload({ requisito: d })} />}
+          : <DocsPorCategoria detalle={data.documentacion.detalle} canManage={perms.upload} api={api} onCargar={(d) => setUpload({ requisito: d })} />}
       </CardContent></Card>
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <h3 className="font-semibold text-slate-700">Trabajadores asignados</h3>
@@ -1550,7 +1560,7 @@ function DesvincularDialog({ api, trabajadorId, asignacion, onClose, onDone }) {
   );
 }
 
-function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
+function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
   const [data, reload] = useData(api, `/trabajadores/${id}`, [id]);
   const [contratos] = useData(api, '/contratos');
   const [upload, setUpload] = useState(null);
@@ -1593,13 +1603,13 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper }) {
           )}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={perms.upload} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>
         <TabsContent value="asignaciones">
           {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={doAsignar}>Asignar</Button></div>}
-          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-700 border-0'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.estado !== 'activo' && r.desvinculacion_id && <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => setVerDesv(r)}><Eye className="h-3.5 w-3.5 mr-1" />Ver desvinculación</Button>}{canManage && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button>}</div> }]} rows={asignaciones} />
+          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-700 border-0'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.estado !== 'activo' && r.desvinculacion_id && <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => setVerDesv(r)}><Eye className="h-3.5 w-3.5 mr-1" />Ver desvinculación</Button>}{perms.desvincular && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button>}</div> }]} rows={asignaciones} />
         </TabsContent>
         {historialDocumental?.length > 0 && (
           <TabsContent value="dochist">
@@ -1814,7 +1824,7 @@ function SimpleResource({ api, kind, canManage, isSuper, openDetail }) {
 }
 
 /* ------------ Recurso (Vehículo/Equipo) detail ------------ */
-function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
+function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper, perms = {} }) {
   const [data, reload] = useData(api, `/${tipo}s/${id}`, [tipo, id]);
   const [contratos] = useData(api, '/contratos');
   const [tiposVeh] = useData(api, '/tipos-vehiculo');
@@ -1860,7 +1870,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes. Asigna este {tipo} a un contrato para ver sus requisitos documentales.</p>}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={canManage} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={perms.upload} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>
@@ -1931,11 +1941,233 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper }) {
 }
 
 /* ------------ Revisión / Vencimientos ------------ */
+function Visor({ api }) {
+  const [tipo, setTipo] = useState('ingreso');
+  const [val, setVal] = useState('');
+  const [last, setLast] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [log, reload] = useData(api, '/accesos');
+  const focus = () => { const el = typeof document !== 'undefined' && document.getElementById('visor-input'); if (el) el.focus(); };
+  useEffect(() => { focus(); }, []);
+  const registrar = async (raw) => {
+    const value = (raw ?? val).trim();
+    if (!value || busy) return;
+    setBusy(true);
+    try {
+      const r = await api('/accesos', { method: 'POST', body: JSON.stringify({ raw: value, tipo }) });
+      setLast(r);
+      if (r.encontrado) toast.success(`${tipo === 'ingreso' ? 'Ingreso' : 'Salida'}: ${r.trabajador.nombre} ${r.trabajador.apellido}`);
+      else toast.warning(`RUT ${r.rut_limpio} no está registrado como trabajador`);
+      setVal(''); reload();
+    } catch (e) { toast.error(e.message); }
+    finally { setBusy(false); setTimeout(focus, 50); }
+  };
+  const fhora = (s) => { try { return new Date(s).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); } catch { return ''; } };
+
+  return (
+    <div>
+      <PageHead title="Visor · Control de acceso" sub="Marque ingreso o salida y escanee el QR de la cédula con el lector 2D de la PDA (o digite el RUT)" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={() => { setTipo('ingreso'); focus(); }} className={`rounded-xl border-2 py-6 text-center font-semibold text-lg transition-all ${tipo === 'ingreso' ? 'border-emerald-500 bg-emerald-50 text-emerald-700 shadow-md' : 'border-slate-200 bg-white text-slate-400 hover:border-emerald-200'}`}>
+              <CheckCircle2 className="h-8 w-8 mx-auto mb-1" />INGRESO
+            </button>
+            <button onClick={() => { setTipo('salida'); focus(); }} className={`rounded-xl border-2 py-6 text-center font-semibold text-lg transition-all ${tipo === 'salida' ? 'border-[#1c9dd7] bg-sky-50 text-[#1789bf] shadow-md' : 'border-slate-200 bg-white text-slate-400 hover:border-sky-200'}`}>
+              <LogOut className="h-8 w-8 mx-auto mb-1" />SALIDA
+            </button>
+          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <Label className="mb-1.5 block">Escanee la cédula o digite el RUT</Label>
+              <form onSubmit={(e) => { e.preventDefault(); registrar(); }} className="flex gap-2">
+                <div className="relative flex-1"><QrCode className="h-5 w-5 absolute left-3 top-3 text-slate-400" /><Input id="visor-input" autoComplete="off" className="pl-10 h-12 text-lg" placeholder="Esperando lectura del QR…" value={val} onChange={(e) => setVal(e.target.value)} /></div>
+                <Button type="submit" disabled={busy} className={`h-12 px-6 ${tipo === 'ingreso' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-[#1c9dd7] hover:bg-[#1789bf]'}`}>Registrar</Button>
+              </form>
+              <p className="text-xs text-slate-400 mt-2">El lector 2D actúa como teclado: al escanear se completa y registra automáticamente. El RUT de la cédula (nueva, antigua o credencial) se limpia solo.</p>
+            </CardContent>
+          </Card>
+          {last && (
+            <Card className={`border-2 ${last.encontrado ? (last.tipo === 'ingreso' ? 'border-emerald-300' : 'border-sky-300') : 'border-amber-300'}`}>
+              <CardContent className="pt-6 flex items-center gap-4">
+                <div className={`h-14 w-14 rounded-full flex items-center justify-center ${last.encontrado ? (last.tipo === 'ingreso' ? 'bg-emerald-100 text-emerald-600' : 'bg-sky-100 text-[#1789bf]') : 'bg-amber-100 text-amber-600'}`}>{last.encontrado ? <CheckCircle2 className="h-7 w-7" /> : <XCircle className="h-7 w-7" />}</div>
+                <div className="flex-1">
+                  {last.encontrado
+                    ? <><p className="text-lg font-bold text-slate-800">{last.trabajador.nombre} {last.trabajador.apellido}</p><p className="text-sm text-slate-500">{last.trabajador.rut} · {last.trabajador.cargo || 'Sin cargo'}</p></>
+                    : <><p className="text-lg font-bold text-amber-700">RUT no registrado</p><p className="text-sm text-slate-500">{last.rut_limpio}</p></>}
+                </div>
+                <Badge className={`text-sm px-3 py-1 ${last.tipo === 'ingreso' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-[#1789bf]'}`}>{last.tipo === 'ingreso' ? 'INGRESO' : 'SALIDA'} · {fhora(last.hora)}</Badge>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Últimos movimientos</p>
+          <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
+            {(log?.accesos || []).length === 0 && <p className="text-sm text-slate-400">Aún no hay registros</p>}
+            {(log?.accesos || []).map((a) => (
+              <div key={a.id} className="flex items-center gap-3 rounded-lg border bg-white px-3 py-2">
+                <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${a.tipo === 'ingreso' ? 'bg-emerald-500' : 'bg-[#1c9dd7]'}`} />
+                <div className="flex-1 min-w-0"><p className="text-sm font-medium text-slate-800 truncate">{a.nombre || a.rut}</p><p className="text-[11px] text-slate-400">{a.nombre ? a.rut : 'No registrado'}</p></div>
+                <div className="text-right"><Badge className={`text-[10px] ${a.tipo === 'ingreso' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-[#1789bf]'}`}>{a.tipo}</Badge><p className="text-[10px] text-slate-400 mt-0.5">{fhora(a.created_at)}</p></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Manuales() {
+  const [ver, setVer] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const descargar = async (m) => {
+    setBusy(m.id);
+    try { await generarManualPDF(m); toast.success('Manual descargado'); }
+    catch (e) { toast.error('No se pudo generar el PDF'); }
+    finally { setBusy(null); }
+  };
+  return (
+    <div>
+      <PageHead title="Manuales" sub="Guías de uso de la Plataforma Aptiva por perfil, descargables en PDF" />
+      <div className="grid gap-4 sm:grid-cols-2">
+        {MANUALES.map((m) => (
+          <div key={m.id} className="rounded-xl border bg-card p-5 flex flex-col shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="h-11 w-11 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${m.color}1a` }}>
+                <BookOpen className="h-5 w-5" style={{ color: m.color }} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-semibold text-slate-800 leading-tight">{m.perfil}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Manual de usuario · PDF</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-500 mt-3 flex-1">{m.resumen}</p>
+            <div className="flex gap-2 mt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setVer(m)}><Eye className="h-4 w-4 mr-1.5" />Ver</Button>
+              <Button className="flex-1 text-white" style={{ backgroundColor: m.color }} disabled={busy === m.id} onClick={() => descargar(m)}><Download className="h-4 w-4 mr-1.5" />{busy === m.id ? 'Generando…' : 'Descargar PDF'}</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Dialog open={!!ver} onOpenChange={(o) => !o && setVer(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          {ver && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2"><BookOpen className="h-5 w-5" style={{ color: ver.color }} />Manual · {ver.perfil}</DialogTitle>
+                <DialogDescription>{ver.resumen}</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 mt-1">
+                {ver.secciones.map((sec, i) => (
+                  <div key={i}>
+                    <p className="font-semibold text-sm mb-1.5" style={{ color: ver.color }}>{sec.titulo}</p>
+                    <ul className="space-y-1.5">
+                      {sec.pasos.map((p, j) => (
+                        <li key={j} className="flex gap-2 text-sm text-slate-600">
+                          <span className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: ver.color }} />
+                          <span>{p}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              <DialogFooter className="mt-2">
+                <Button variant="outline" onClick={() => setVer(null)}>Cerrar</Button>
+                <Button className="text-white" style={{ backgroundColor: ver.color }} onClick={() => descargar(ver)}><Download className="h-4 w-4 mr-1.5" />Descargar PDF</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+
+function AccesosAdmin({ api }) {
+  const [tab, setTab] = useState('reporte');
+  const [puntos, reloadP] = useData(api, '/puntos-acceso');
+  const [pf, setPf] = useState({ nombre: '', ubicacion: '' });
+  const [editP, setEditP] = useState(null);
+  const [openP, setOpenP] = useState(false);
+  const [rep, setRep] = useState([]);
+  const [fil, setFil] = useState({ desde: '', hasta: '', punto_id: 'all', q: '' });
+  const loadRep = async () => {
+    const qs = new URLSearchParams();
+    if (fil.desde) qs.set('desde', fil.desde); if (fil.hasta) qs.set('hasta', fil.hasta);
+    if (fil.punto_id !== 'all') qs.set('punto_id', fil.punto_id); if (fil.q.trim()) qs.set('q', fil.q.trim());
+    try { const r = await api(`/accesos?${qs.toString()}`); setRep(r.accesos || []); } catch (e) { toast.error(e.message); }
+  };
+  useEffect(() => { loadRep(); }, []); // eslint-disable-line
+  const savePunto = async () => {
+    if (!pf.nombre.trim()) { toast.error('Nombre requerido'); return; }
+    try {
+      if (editP) await api(`/puntos-acceso/${editP}`, { method: 'PUT', body: JSON.stringify(pf) });
+      else await api('/puntos-acceso', { method: 'POST', body: JSON.stringify(pf) });
+      toast.success('Guardado'); setOpenP(false); setPf({ nombre: '', ubicacion: '' }); setEditP(null); reloadP();
+    } catch (e) { toast.error(e.message); }
+  };
+  const delPunto = async (r) => { if (!(await confirmDialog({ title: 'Eliminar punto', description: `¿Eliminar "${r.nombre}"?`, confirmText: 'Eliminar' }))) return; try { await api(`/puntos-acceso/${r.id}`, { method: 'DELETE' }); toast.success('Eliminado'); reloadP(); } catch (e) { toast.error(e.message); } };
+  const visorUrl = (r) => `https://aptiva-rl.cl/visor?punto=${r.slug || r.id}`;
+  const copyVisorUrl = async (r) => { try { await navigator.clipboard.writeText(visorUrl(r)); toast.success('URL del visor copiada'); } catch { toast.error('No se pudo copiar'); } };
+  const fdt = (s) => { try { return new Date(s).toLocaleString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
+
+  return (
+    <div>
+      <PageHead title="Control de Acceso" sub="Puntos de control (visores) y reporte de ingresos/salidas" />
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="mb-4"><TabsTrigger value="reporte">Reporte</TabsTrigger><TabsTrigger value="puntos">Puntos de acceso</TabsTrigger></TabsList>
+        <TabsContent value="reporte">
+          <div className="flex flex-wrap gap-2 mb-4 items-end">
+            <div><Label className="text-xs">Desde</Label><Input type="date" value={fil.desde} onChange={(e) => setFil({ ...fil, desde: e.target.value })} /></div>
+            <div><Label className="text-xs">Hasta</Label><Input type="date" value={fil.hasta} onChange={(e) => setFil({ ...fil, hasta: e.target.value })} /></div>
+            <div className="min-w-[180px]"><Label className="text-xs">Punto</Label><Select value={fil.punto_id} onValueChange={(v) => setFil({ ...fil, punto_id: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem>{(puntos?.puntos || []).map((p) => <SelectItem key={p.id} value={p.id}>{p.nombre}</SelectItem>)}</SelectContent></Select></div>
+            <div className="flex-1 min-w-[180px]"><Label className="text-xs">Buscar (nombre/RUT)</Label><Input value={fil.q} onChange={(e) => setFil({ ...fil, q: e.target.value })} placeholder="Nombre o RUT" /></div>
+            <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={loadRep}>Filtrar</Button>
+            <Button variant="outline" className="border-emerald-300 text-emerald-700 hover:bg-emerald-50" onClick={() => xlsxDownload('control_acceso.xlsx', ['Fecha/Hora', 'Tipo', 'Trabajador', 'RUT', 'Punto', 'Auto'], rep.map((r) => [fdt(r.marcado_at), r.tipo, r.nombre || 'No registrado', r.rut, r.punto_nombre || '—', r.auto ? 'Sí' : 'No']), 'Control de acceso')}><Download className="h-4 w-4 mr-1" />Excel</Button>
+          </div>
+          <p className="text-sm text-slate-500 mb-2">{rep.length} registro(s)</p>
+          <Table columns={[
+            { key: 'marcado_at', label: 'Fecha / Hora', render: (r) => fdt(r.marcado_at) },
+            { key: 'tipo', label: 'Tipo', render: (r) => <Badge className={r.tipo === 'ingreso' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-[#1789bf]'}>{r.tipo}{r.auto ? ' (auto)' : ''}</Badge> },
+            { key: 'nombre', label: 'Trabajador', render: (r) => r.nombre || <span className="text-amber-600">No registrado</span> },
+            { key: 'rut', label: 'RUT' },
+            { key: 'punto_nombre', label: 'Punto', render: (r) => r.punto_nombre || <span className="text-slate-300">—</span> },
+          ]} rows={rep} empty="Sin registros para el filtro" />
+        </TabsContent>
+        <TabsContent value="puntos">
+          <div className="flex justify-end mb-3"><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => { setEditP(null); setPf({ nombre: '', ubicacion: '' }); setOpenP(true); }}><Plus className="h-4 w-4 mr-1" />Nuevo punto</Button></div>
+          <Table columns={[
+            { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium">{r.nombre}</span> },
+            { key: 'ubicacion', label: 'Ubicación', render: (r) => r.ubicacion || <span className="text-slate-300">—</span> },
+            { key: 'activo', label: 'Estado', render: (r) => <Badge className={r.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}>{r.activo ? 'Activo' : 'Inactivo'}</Badge> },
+            { key: 'url', label: 'URL del visor', render: (r) => <span className="text-xs text-slate-500 font-mono break-all">/visor?punto={r.slug || r.id}</span> },
+            { key: 'acc', label: '', render: (r) => <div className="flex gap-2"><Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-sky-200" onClick={() => copyVisorUrl(r)}><Copy className="h-3.5 w-3.5 mr-1" />Copiar URL</Button><Button size="sm" variant="outline" className="h-7" onClick={() => { setEditP(r.id); setPf({ nombre: r.nombre, ubicacion: r.ubicacion || '', activo: r.activo }); setOpenP(true); }}>Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200" onClick={() => delPunto(r)}>Eliminar</Button></div> },
+          ]} rows={puntos?.puntos} empty="Aún no hay puntos de acceso" />
+        </TabsContent>
+      </Tabs>
+      <Dialog open={openP} onOpenChange={setOpenP}><DialogContent>
+        <DialogHeader><DialogTitle>{editP ? 'Editar' : 'Nuevo'} punto de acceso</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5"><Label>Nombre del visor</Label><Input value={pf.nombre} onChange={(e) => setPf({ ...pf, nombre: e.target.value })} placeholder="Ej: Portería Principal, Acceso Faena Norte" /></div>
+          <div className="space-y-1.5"><Label>Ubicación (opcional)</Label><Input value={pf.ubicacion} onChange={(e) => setPf({ ...pf, ubicacion: e.target.value })} placeholder="Ej: Mejillones" /></div>
+          {editP && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={pf.activo !== false} onChange={(e) => setPf({ ...pf, activo: e.target.checked })} />Activo</label>}
+        </div>
+        <DialogFooter><Button variant="outline" onClick={() => setOpenP(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={savePunto}>{editP ? 'Guardar' : 'Crear'}</Button></DialogFooter>
+      </DialogContent></Dialog>
+    </div>
+  );
+}
+
 function Revision({ api, profile }) {
   const [data, reload] = useData(api, '/documentos/pendientes');
   const [rej, setRej] = useState(null);
   const [obs, setObs] = useState('');
-  const canReview = ['SUPER_ADMIN_HOLDING', 'REVISOR'].includes(profile.role_codigo);
+  const canReview = ['SUPER_ADMIN_HOLDING', 'REVISOR', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(profile.role_codigo);
   const act = async (docId, estado, observacion) => { try { await api(`/documentos/${docId}/revision`, { method: 'POST', body: JSON.stringify({ estado, observacion }) }); toast.success(estado === 'aprobado' ? 'Aprobado' : 'Rechazado'); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
