@@ -26,7 +26,7 @@ import logoAptiva from '@/assets/logo-aptiva.png';
 import logoRioLoa from '@/assets/logo-rioloa.png';
 import loginBg from '@/assets/login-bg.jpg';
 import faviconAptiva from '@/assets/favicon-aptiva.png';
-import { MANUALES, generarManualPDF } from '@/lib/manuales';
+import { MANUALES, manualPreviewHTML, descargarManualPDF } from '@/lib/manuales';
 
 const LOGO = logoAptiva.src;
 const LOGO_RIOLOA = logoRioLoa.src;
@@ -2021,16 +2021,16 @@ function Visor({ api }) {
 
 function Manuales() {
   const [ver, setVer] = useState(null);
-  const [busy, setBusy] = useState(null);
-  const descargar = async (m) => {
-    setBusy(m.id);
-    try { await generarManualPDF(m); toast.success('Manual descargado'); }
-    catch (e) { toast.error('No se pudo generar el PDF'); }
-    finally { setBusy(null); }
+  const descargar = (m) => {
+    try { descargarManualPDF(m); toast.success('Abriendo vista de impresión…'); }
+    catch (e) { toast.error('Habilite las ventanas emergentes para descargar el PDF'); }
   };
   return (
     <div>
-      <PageHead title="Manuales" sub="Guías de uso de la Plataforma Aptiva por perfil, descargables en PDF" />
+      <PageHead title="Manuales" sub="Guías de uso de la Plataforma Aptiva por perfil · pensadas para personal de Río Loa asignado a sus mandantes (clientes)" />
+      <div className="rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm px-4 py-2.5 mb-4">
+        Presione <b>Ver</b> para leer el manual en pantalla, o <b>Descargar PDF</b> para abrir la vista de impresión y elegir «Guardar como PDF».
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {MANUALES.map((m) => (
           <div key={m.id} className="rounded-xl border bg-card p-5 flex flex-col shadow-sm">
@@ -2039,43 +2039,31 @@ function Manuales() {
                 <BookOpen className="h-5 w-5" style={{ color: m.color }} />
               </div>
               <div className="min-w-0">
-                <h3 className="font-semibold text-slate-800 leading-tight">{m.perfil}</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Manual de usuario · PDF</p>
+                <h3 className="font-semibold text-slate-800 leading-tight">Manual · {m.perfil}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Guía paso a paso · con capturas e infografías</p>
               </div>
             </div>
-            <p className="text-sm text-slate-500 mt-3 flex-1">{m.resumen}</p>
+            <p className="text-sm text-slate-500 mt-3 flex-1">{m.alcance}</p>
             <div className="flex gap-2 mt-4">
               <Button variant="outline" className="flex-1" onClick={() => setVer(m)}><Eye className="h-4 w-4 mr-1.5" />Ver</Button>
-              <Button className="flex-1 text-white" style={{ backgroundColor: m.color }} disabled={busy === m.id} onClick={() => descargar(m)}><Download className="h-4 w-4 mr-1.5" />{busy === m.id ? 'Generando…' : 'Descargar PDF'}</Button>
+              <Button className="flex-1 text-white" style={{ backgroundColor: m.color }} onClick={() => descargar(m)}><Download className="h-4 w-4 mr-1.5" />Descargar PDF</Button>
             </div>
           </div>
         ))}
       </div>
 
       <Dialog open={!!ver} onOpenChange={(o) => !o && setVer(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0">
           {ver && (
             <>
-              <DialogHeader>
+              <DialogHeader className="px-6 pt-6 pb-3 sticky top-0 bg-background z-10 border-b">
                 <DialogTitle className="flex items-center gap-2"><BookOpen className="h-5 w-5" style={{ color: ver.color }} />Manual · {ver.perfil}</DialogTitle>
-                <DialogDescription>{ver.resumen}</DialogDescription>
+                <DialogDescription>Vista previa del manual. Use «Descargar PDF» para guardarlo.</DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 mt-1">
-                {ver.secciones.map((sec, i) => (
-                  <div key={i}>
-                    <p className="font-semibold text-sm mb-1.5" style={{ color: ver.color }}>{sec.titulo}</p>
-                    <ul className="space-y-1.5">
-                      {sec.pasos.map((p, j) => (
-                        <li key={j} className="flex gap-2 text-sm text-slate-600">
-                          <span className="mt-1.5 h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: ver.color }} />
-                          <span>{p}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+              <div className="px-6 py-4 bg-slate-100">
+                <div className="bg-white rounded-lg shadow-sm p-4" dangerouslySetInnerHTML={{ __html: manualPreviewHTML(ver) }} />
               </div>
-              <DialogFooter className="mt-2">
+              <DialogFooter className="px-6 py-3 border-t sticky bottom-0 bg-background">
                 <Button variant="outline" onClick={() => setVer(null)}>Cerrar</Button>
                 <Button className="text-white" style={{ backgroundColor: ver.color }} onClick={() => descargar(ver)}><Download className="h-4 w-4 mr-1.5" />Descargar PDF</Button>
               </DialogFooter>
