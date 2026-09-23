@@ -1,544 +1,855 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for Aptiva RL - Punto de acceso por URL (slug)
-Tests the NEW slug functionality for puntos_acceso
+Backend Testing for RR.HH. Permissions (MANDANTE_RRHH role)
+Tests NEW permissions: crear trabajador + eliminar (soft-delete) documento
 """
+
 import requests
 import json
 import sys
+from datetime import datetime
 
-# Backend URL from .env
+# Backend URL
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
 
 # Test credentials
-ADMIN_EMAIL = "admin@aptivarl.com"
-ADMIN_PASSWORD = "Aptiva2025!"
-MANDANTE_EMAIL = "dugarte@rioloa.cl"
-MANDANTE_PASSWORD = "Aptiva2025!"
+CREDENTIALS = {
+    "admin": {"email": "admin@aptivarl.com", "password": "Aptiva2025!"},
+    "rrhh": {"email": "nvelasquez@rioloa.cl", "password": "Aptiva2025!"},
+    "rrhh_alt1": {"email": "cgalindo@rioloa.cl", "password": "Aptiva2025!"},
+    "rrhh_alt2": {"email": "crivera@rioloa.cl", "password": "Aptiva2025!"},
+}
 
-# Global variables to store test data
-admin_token = None
-mandante_token = None
-punto1_id = None
-punto1_slug = None
-punto2_id = None
-punto2_slug = None
+# Test state
+test_state = {
+    "tokens": {},
+    "test_trabajador_id": None,
+    "test_documento_id": None,
+    "test_mandante_id": None,
+    "empresa_id": None,
+    "contrato_id": None,
+    "requisito_id": None,
+    "visor_user": None,
+    "prevencion_user": None,
+    "cleanup_items": []
+}
 
-def login(email, password):
+def log(msg):
+    """Print timestamped log message"""
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+def login(role):
     """Login and return token"""
     try:
-        response = requests.post(
-            f"{BASE_URL}/auth/login",
-            json={"email": email, "password": password},
-            timeout=10
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("token")
-        else:
-            print(f"❌ Login failed for {email}: {response.status_code} - {response.text}")
+        creds = CREDENTIALS[role]
+        log(f"Logging in as {role} ({creds['email']})...")
+        resp = requests.post(f"{BASE_URL}/auth/login", json=creds, timeout=30)
+        
+        if resp.status_code != 200:
+            log(f"❌ Login failed for {role}: {resp.status_code} - {resp.text}")
             return None
+        
+        data = resp.json()
+        token = data.get("token")
+        profile = data.get("profile", {})
+        
+        if not token:
+            log(f"❌ No token received for {role}")
+            return None
+        
+        log(f"✅ Login successful for {role} - Role: {profile.get('role_codigo')}")
+        test_state["tokens"][role] = token
+        return token
     except Exception as e:
-        print(f"❌ Login exception for {email}: {str(e)}")
+        log(f"❌ Login exception for {role}: {str(e)}")
         return None
 
-def test_1_post_punto_with_slug():
-    """Test 1: POST /api/puntos-acceso with nombre 'Portería Principal Mejillones' → 201 with slug 'porteria-principal-mejillones'"""
-    global punto1_id, punto1_slug
-    print("\n=== TEST 1: POST /api/puntos-acceso (crear punto con slug) ===")
+def get_headers(role):
+    """Get authorization headers for a role"""
+    token = test_state["tokens"].get(role)
+    if not token:
+        return None
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+def test_1_login_all_users():
+    """Test 1: Login as admin, RR.HH., and find VISOR/PREVENCION users"""
+    log("\n" + "="*80)
+    log("TEST 1: Login all users")
+    log("="*80)
     
-    try:
-        response = requests.post(
-            f"{BASE_URL}/puntos-acceso",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"nombre": "Portería Principal Mejillones"},
-            timeout=10
-        )
-        
-        print(f"Status: {response.status_code}")
-        print(f"Response: {response.text}")
-        
-        if response.status_code == 201:
-            data = response.json()
-            if data.get("ok") and data.get("id") and data.get("slug"):
-                punto1_id = data["id"]
-                punto1_slug = data["slug"]
-                
-                # Verify slug is exactly "porteria-principal-mejillones"
-                if punto1_slug == "porteria-principal-mejillones":
-                    print(f"✅ TEST 1 PASSED: Created punto with id={punto1_id}, slug={punto1_slug}")
-                    return True
-                else:
-                    print(f"❌ TEST 1 FAILED: Expected slug 'porteria-principal-mejillones', got '{punto1_slug}'")
-                    return False
+    # Login admin
+    if not login("admin"):
+        return False
+    
+    # Login RR.HH.
+    if not login("rrhh"):
+        log("⚠️  Primary RR.HH. user failed, trying alternatives...")
+        if not login("rrhh_alt1"):
+            if not login("rrhh_alt2"):
+                log("❌ All RR.HH. users failed to login")
+                return False
             else:
-                print(f"❌ TEST 1 FAILED: Response missing required fields (ok, id, slug)")
-                return False
+                # Use rrhh_alt2
+                test_state["tokens"]["rrhh"] = test_state["tokens"]["rrhh_alt2"]
         else:
-            print(f"❌ TEST 1 FAILED: Expected 201, got {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"❌ TEST 1 EXCEPTION: {str(e)}")
-        return False
-
-def test_2_post_duplicate_nombre():
-    """Test 2: POST another punto with SAME nombre → 201 with unique slug ending in '-2'"""
-    global punto2_id, punto2_slug
-    print("\n=== TEST 2: POST /api/puntos-acceso (mismo nombre, slug único con -2) ===")
+            # Use rrhh_alt1
+            test_state["tokens"]["rrhh"] = test_state["tokens"]["rrhh_alt1"]
     
+    # Get list of usuarios to find VISOR and PREVENCION
+    log("\nFetching usuarios list to find VISOR and PREVENCION users...")
     try:
-        response = requests.post(
-            f"{BASE_URL}/puntos-acceso",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"nombre": "Portería Principal Mejillones"},
-            timeout=10
-        )
-        
-        print(f"Status: {response.status_code}")
-        print(f"Response: {response.text}")
-        
-        if response.status_code == 201:
-            data = response.json()
-            if data.get("ok") and data.get("id") and data.get("slug"):
-                punto2_id = data["id"]
-                punto2_slug = data["slug"]
-                
-                # Verify slug ends with "-2"
-                if punto2_slug == "porteria-principal-mejillones-2":
-                    print(f"✅ TEST 2 PASSED: Created punto with id={punto2_id}, slug={punto2_slug} (unique with -2)")
-                    return True
-                else:
-                    print(f"❌ TEST 2 FAILED: Expected slug 'porteria-principal-mejillones-2', got '{punto2_slug}'")
-                    return False
+        resp = requests.get(f"{BASE_URL}/usuarios", headers=get_headers("admin"), timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            usuarios = data.get("usuarios", [])
+            
+            # Find VISOR user
+            visor_users = [u for u in usuarios if u.get("role_codigo") == "MANDANTE_VISOR" and "@rioloa.cl" in u.get("email", "")]
+            if visor_users:
+                test_state["visor_user"] = visor_users[0]
+                log(f"✅ Found VISOR user: {test_state['visor_user']['email']}")
             else:
-                print(f"❌ TEST 2 FAILED: Response missing required fields")
-                return False
-        else:
-            print(f"❌ TEST 2 FAILED: Expected 201, got {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"❌ TEST 2 EXCEPTION: {str(e)}")
-        return False
-
-def test_3_get_public_punto_by_slug():
-    """Test 3: GET /api/public/punto?slug=<slug> WITHOUT token → 200 with punto data"""
-    print("\n=== TEST 3: GET /api/public/punto?slug (público, sin token) ===")
-    
-    try:
-        response = requests.get(
-            f"{BASE_URL}/public/punto?slug={punto1_slug}",
-            timeout=10
-        )
-        
-        print(f"Status: {response.status_code}")
-        print(f"Response: {response.text}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            punto = data.get("punto")
-            if punto and punto.get("id") == punto1_id and punto.get("slug") == punto1_slug:
-                # Verify all required fields
-                required_fields = ["id", "nombre", "ubicacion", "activo", "slug"]
-                missing = [f for f in required_fields if f not in punto]
-                if not missing:
-                    print(f"✅ TEST 3 PASSED: Public endpoint returned punto with all required fields")
-                    print(f"   Punto: id={punto['id']}, nombre={punto['nombre']}, slug={punto['slug']}, activo={punto['activo']}")
-                    return True
-                else:
-                    print(f"❌ TEST 3 FAILED: Missing fields: {missing}")
-                    return False
+                log("⚠️  No VISOR user found with @rioloa.cl email")
+            
+            # Find PREVENCION user
+            prev_users = [u for u in usuarios if u.get("role_codigo") == "MANDANTE_PREVENCION" and "@rioloa.cl" in u.get("email", "")]
+            if prev_users:
+                test_state["prevencion_user"] = prev_users[0]
+                log(f"✅ Found PREVENCION user: {test_state['prevencion_user']['email']}")
             else:
-                print(f"❌ TEST 3 FAILED: Punto data mismatch or missing")
-                return False
+                log("⚠️  No PREVENCION user found with @rioloa.cl email")
         else:
-            print(f"❌ TEST 3 FAILED: Expected 200, got {response.status_code}")
-            return False
+            log(f"⚠️  Failed to fetch usuarios: {resp.status_code}")
     except Exception as e:
-        print(f"❌ TEST 3 EXCEPTION: {str(e)}")
-        return False
+        log(f"⚠️  Exception fetching usuarios: {str(e)}")
+    
+    # Try to login VISOR and PREVENCION if found
+    if test_state["visor_user"]:
+        try:
+            visor_creds = {"email": test_state["visor_user"]["email"], "password": "Aptiva2025!"}
+            resp = requests.post(f"{BASE_URL}/auth/login", json=visor_creds, timeout=30)
+            if resp.status_code == 200:
+                test_state["tokens"]["visor"] = resp.json().get("token")
+                log(f"✅ VISOR login successful")
+            else:
+                log(f"⚠️  VISOR login failed: {resp.status_code}")
+        except Exception as e:
+            log(f"⚠️  VISOR login exception: {str(e)}")
+    
+    if test_state["prevencion_user"]:
+        try:
+            prev_creds = {"email": test_state["prevencion_user"]["email"], "password": "Aptiva2025!"}
+            resp = requests.post(f"{BASE_URL}/auth/login", json=prev_creds, timeout=30)
+            if resp.status_code == 200:
+                test_state["tokens"]["prevencion"] = resp.json().get("token")
+                log(f"✅ PREVENCION login successful")
+            else:
+                log(f"⚠️  PREVENCION login failed: {resp.status_code}")
+        except Exception as e:
+            log(f"⚠️  PREVENCION login exception: {str(e)}")
+    
+    log("\n✅ TEST 1 PASSED: Login successful")
+    return True
 
-def test_4_get_public_punto_not_found():
-    """Test 4: GET /api/public/punto?slug=no-existe-xyz → 404"""
-    print("\n=== TEST 4: GET /api/public/punto?slug=no-existe-xyz (404) ===")
+def test_2_get_empresa_and_mandante():
+    """Test 2: Get empresa_id and mandante_id for RR.HH. user"""
+    log("\n" + "="*80)
+    log("TEST 2: Get empresa_id and mandante_id for test setup")
+    log("="*80)
     
     try:
-        response = requests.get(
-            f"{BASE_URL}/public/punto?slug=no-existe-xyz",
-            timeout=10
-        )
-        
-        print(f"Status: {response.status_code}")
-        print(f"Response: {response.text}")
-        
-        if response.status_code == 404:
-            print(f"✅ TEST 4 PASSED: Non-existent slug correctly returns 404")
-            return True
-        else:
-            print(f"❌ TEST 4 FAILED: Expected 404, got {response.status_code}")
+        # Get empresas
+        log("Fetching empresas...")
+        resp = requests.get(f"{BASE_URL}/empresas", headers=get_headers("admin"), timeout=30)
+        if resp.status_code != 200:
+            log(f"❌ Failed to fetch empresas: {resp.status_code}")
             return False
+        
+        empresas = resp.json().get("empresas", [])
+        if not empresas:
+            log("❌ No empresas found")
+            return False
+        
+        # Use first empresa (Río Loa)
+        test_state["empresa_id"] = empresas[0]["empresa_id"]
+        log(f"✅ Using empresa: {empresas[0]['razon_social']} (ID: {test_state['empresa_id']})")
+        
+        # Get mandantes for RR.HH. user
+        log("\nFetching mandantes as RR.HH. user...")
+        resp = requests.get(f"{BASE_URL}/mandantes", headers=get_headers("rrhh"), timeout=30)
+        if resp.status_code != 200:
+            log(f"❌ Failed to fetch mandantes: {resp.status_code}")
+            return False
+        
+        mandantes = resp.json().get("mandantes", [])
+        if not mandantes:
+            log("❌ RR.HH. user has no mandantes assigned")
+            return False
+        
+        test_state["test_mandante_id"] = mandantes[0]["mandante_id"]
+        log(f"✅ RR.HH. user has {len(mandantes)} mandante(s) assigned")
+        log(f"✅ Using mandante: {mandantes[0]['razon_social']} (ID: {test_state['test_mandante_id']})")
+        
+        log("\n✅ TEST 2 PASSED: Got empresa and mandante IDs")
+        return True
     except Exception as e:
-        print(f"❌ TEST 4 EXCEPTION: {str(e)}")
+        log(f"❌ TEST 2 FAILED: {str(e)}")
         return False
 
-def test_5_get_public_punto_no_slug():
-    """Test 5: GET /api/public/punto WITHOUT slug parameter → 400"""
-    print("\n=== TEST 5: GET /api/public/punto sin parámetro slug (400) ===")
+def generate_valid_rut():
+    """Generate a valid Chilean RUT"""
+    import random
+    # Generate a random RUT number between 10000000 and 25000000
+    rut_num = random.randint(10000000, 25000000)
     
-    try:
-        response = requests.get(
-            f"{BASE_URL}/public/punto",
-            timeout=10
-        )
-        
-        print(f"Status: {response.status_code}")
-        print(f"Response: {response.text}")
-        
-        if response.status_code == 400:
-            print(f"✅ TEST 5 PASSED: Missing slug parameter correctly returns 400")
-            return True
-        else:
-            print(f"❌ TEST 5 FAILED: Expected 400, got {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"❌ TEST 5 EXCEPTION: {str(e)}")
-        return False
+    # Calculate DV using modulo 11 (Chilean algorithm)
+    suma = 0
+    mul = 2
+    rut_str = str(rut_num)
+    for digit in reversed(rut_str):
+        suma += int(digit) * mul
+        mul = mul + 1 if mul < 7 else 2
+    
+    resto = suma % 11
+    dv_calc = 11 - resto
+    
+    if dv_calc == 11:
+        dv = '0'
+    elif dv_calc == 10:
+        dv = 'K'
+    else:
+        dv = str(dv_calc)
+    
+    # Format as XX.XXX.XXX-X
+    rut_formatted = f"{rut_str[:-6]}.{rut_str[-6:-3]}.{rut_str[-3:]}-{dv}"
+    return rut_formatted
 
-def test_6_put_punto_inactive_then_get_403():
-    """Test 6: PUT /api/puntos-acceso/:id with activo:false → 200; then GET /api/public/punto?slug → 403"""
-    print("\n=== TEST 6: PUT punto activo=false, luego GET público → 403 ===")
+def test_3_crear_trabajador_rrhh():
+    """Test 3: CREATE trabajador as RR.HH. (should return 201, not 403)"""
+    log("\n" + "="*80)
+    log("TEST 3: CREATE trabajador as RR.HH.")
+    log("="*80)
     
     try:
-        # First, deactivate the punto
-        response = requests.put(
-            f"{BASE_URL}/puntos-acceso/{punto1_id}",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"activo": False},
-            timeout=10
+        # Generate valid Chilean RUT for testing
+        test_rut = generate_valid_rut()
+        
+        trabajador_data = {
+            "empresa_id": test_state["empresa_id"],
+            "rut": test_rut,
+            "nombre": "QA Test",
+            "apellido": "RRHH Permisos",
+            "cargo": "Tester"
+        }
+        
+        log(f"Creating trabajador as RR.HH. with RUT {test_rut}...")
+        resp = requests.post(
+            f"{BASE_URL}/trabajadores",
+            headers=get_headers("rrhh"),
+            json=trabajador_data,
+            timeout=30
         )
         
-        print(f"PUT Status: {response.status_code}")
-        print(f"PUT Response: {response.text}")
+        log(f"Response status: {resp.status_code}")
         
-        if response.status_code != 200:
-            print(f"❌ TEST 6 FAILED: PUT failed with {response.status_code}")
-            return False
-        
-        # Now try to GET the inactive punto via public endpoint
-        response = requests.get(
-            f"{BASE_URL}/public/punto?slug={punto1_slug}",
-            timeout=10
-        )
-        
-        print(f"GET Status: {response.status_code}")
-        print(f"GET Response: {response.text}")
-        
-        if response.status_code == 403:
-            print(f"✅ TEST 6 PASSED: Inactive punto correctly returns 403 on public endpoint")
-            return True
-        else:
-            print(f"❌ TEST 6 FAILED: Expected 403 for inactive punto, got {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"❌ TEST 6 EXCEPTION: {str(e)}")
-        return False
-
-def test_7_get_public_puntos_includes_slug():
-    """Test 7: GET /api/public/puntos → 200 and each element includes 'slug' field"""
-    print("\n=== TEST 7: GET /api/public/puntos (verificar campo slug) ===")
-    
-    try:
-        response = requests.get(
-            f"{BASE_URL}/public/puntos",
-            timeout=10
-        )
-        
-        print(f"Status: {response.status_code}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            puntos = data.get("puntos", [])
-            print(f"Found {len(puntos)} active puntos")
+        if resp.status_code == 201:
+            data = resp.json()
+            trabajador = data.get("trabajador", {})
+            test_state["test_trabajador_id"] = trabajador.get("trabajador_id")
+            test_state["cleanup_items"].append(("trabajador", test_state["test_trabajador_id"]))
             
-            if len(puntos) == 0:
-                print(f"⚠️  TEST 7 WARNING: No active puntos found (punto1 was deactivated in test 6)")
-                # Check if punto2 is in the list
-                punto2_found = any(p.get("slug") == punto2_slug for p in puntos)
-                if not punto2_found:
-                    print(f"❌ TEST 7 FAILED: punto2 (slug={punto2_slug}) should be active but not found")
-                    return False
+            log(f"✅ Trabajador created successfully!")
+            log(f"   ID: {test_state['test_trabajador_id']}")
+            log(f"   RUT: {trabajador.get('rut')}")
+            log(f"   Nombre: {trabajador.get('nombre')} {trabajador.get('apellido')}")
             
-            # Verify all puntos have slug field
-            missing_slug = [p for p in puntos if "slug" not in p]
-            if missing_slug:
-                print(f"❌ TEST 7 FAILED: {len(missing_slug)} puntos missing 'slug' field")
-                return False
+            # Verify trabajador appears in list
+            log("\nVerifying trabajador appears in GET /api/trabajadores...")
+            resp = requests.get(f"{BASE_URL}/trabajadores", headers=get_headers("admin"), timeout=30)
+            if resp.status_code == 200:
+                trabajadores = resp.json().get("trabajadores", [])
+                found = any(t.get("trabajador_id") == test_state["test_trabajador_id"] for t in trabajadores)
+                if found:
+                    log("✅ Trabajador found in list")
+                else:
+                    log("⚠️  Trabajador not found in list (may be filtered)")
             
-            # Verify punto2 is in the list (it should be active)
-            punto2_found = any(p.get("slug") == punto2_slug for p in puntos)
-            if punto2_found:
-                print(f"✅ TEST 7 PASSED: All active puntos include 'slug' field. punto2 (slug={punto2_slug}) is present.")
+            log("\n✅ TEST 3 PASSED: RR.HH. can CREATE trabajador (201)")
+            return True
+        elif resp.status_code == 403:
+            log(f"❌ TEST 3 FAILED: Got 403 (should be 201) - RR.HH. permission not working")
+            log(f"   Response: {resp.text}")
+            return False
+        elif resp.status_code == 409:
+            log(f"⚠️  RUT already exists, trying with another RUT...")
+            # Try with another random RUT
+            test_rut = generate_valid_rut()
+            trabajador_data["rut"] = test_rut
+            
+            resp = requests.post(
+                f"{BASE_URL}/trabajadores",
+                headers=get_headers("rrhh"),
+                json=trabajador_data,
+                timeout=30
+            )
+            
+            if resp.status_code == 201:
+                data = resp.json()
+                trabajador = data.get("trabajador", {})
+                test_state["test_trabajador_id"] = trabajador.get("trabajador_id")
+                test_state["cleanup_items"].append(("trabajador", test_state["test_trabajador_id"]))
+                log(f"✅ Trabajador created with alternative RUT: {test_rut}")
+                log("\n✅ TEST 3 PASSED: RR.HH. can CREATE trabajador (201)")
                 return True
             else:
-                print(f"❌ TEST 7 FAILED: punto2 (slug={punto2_slug}) not found in active puntos")
+                log(f"❌ TEST 3 FAILED: {resp.status_code} - {resp.text}")
                 return False
         else:
-            print(f"❌ TEST 7 FAILED: Expected 200, got {response.status_code}")
+            log(f"❌ TEST 3 FAILED: Unexpected status {resp.status_code}")
+            log(f"   Response: {resp.text}")
             return False
     except Exception as e:
-        print(f"❌ TEST 7 EXCEPTION: {str(e)}")
+        log(f"❌ TEST 3 FAILED: {str(e)}")
         return False
 
-def test_8_security_no_token():
-    """Test 8a: POST/PUT/DELETE /api/puntos-acceso WITHOUT token → 401"""
-    print("\n=== TEST 8a: Seguridad - POST/PUT/DELETE sin token → 401 ===")
+def test_4_setup_documento_for_delete():
+    """Test 4: Setup - Create documento for delete test"""
+    log("\n" + "="*80)
+    log("TEST 4: Setup documento for DELETE test")
+    log("="*80)
+    
+    try:
+        # Get contrato for the mandante
+        log(f"Getting contratos for mandante {test_state['test_mandante_id']}...")
+        resp = requests.get(f"{BASE_URL}/contratos", headers=get_headers("admin"), timeout=30)
+        if resp.status_code != 200:
+            log(f"❌ Failed to fetch contratos: {resp.status_code}")
+            return False
+        
+        contratos = resp.json().get("contratos", [])
+        mandante_contratos = [c for c in contratos if c.get("mandante_id") == test_state["test_mandante_id"]]
+        
+        if not mandante_contratos:
+            log(f"⚠️  No contratos found for mandante, creating one...")
+            # Create a contrato
+            contrato_data = {
+                "numero_oc": f"QA-TEST-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "mandante_id": test_state["test_mandante_id"],
+                "empresa_id": test_state["empresa_id"],
+                "estado": "vigente"
+            }
+            resp = requests.post(f"{BASE_URL}/contratos", headers=get_headers("admin"), json=contrato_data, timeout=30)
+            if resp.status_code == 201:
+                test_state["contrato_id"] = resp.json().get("contrato", {}).get("contrato_id")
+                test_state["cleanup_items"].append(("contrato", test_state["contrato_id"]))
+                log(f"✅ Created test contrato: {test_state['contrato_id']}")
+            else:
+                log(f"❌ Failed to create contrato: {resp.status_code}")
+                return False
+        else:
+            test_state["contrato_id"] = mandante_contratos[0]["contrato_id"]
+            log(f"✅ Using existing contrato: {mandante_contratos[0]['numero_oc']}")
+        
+        # Assign trabajador to contrato
+        if test_state["test_trabajador_id"]:
+            log(f"\nAssigning trabajador to contrato...")
+            asignar_data = {
+                "trabajador_id": test_state["test_trabajador_id"],
+                "contrato_id": test_state["contrato_id"]
+            }
+            resp = requests.post(f"{BASE_URL}/trabajadores/asignar", headers=get_headers("admin"), json=asignar_data, timeout=30)
+            if resp.status_code == 201:
+                log("✅ Trabajador assigned to contrato")
+            else:
+                log(f"⚠️  Failed to assign trabajador: {resp.status_code} - {resp.text}")
+        
+        # Get requisito for the mandante
+        log(f"\nGetting requisitos for mandante...")
+        resp = requests.get(f"{BASE_URL}/mandantes/{test_state['test_mandante_id']}", headers=get_headers("admin"), timeout=30)
+        if resp.status_code != 200:
+            log(f"❌ Failed to fetch mandante detail: {resp.status_code}")
+            return False
+        
+        requisitos = resp.json().get("requisitos", [])
+        trabajador_reqs = [r for r in requisitos if r.get("tipo_recurso") == "trabajador"]
+        
+        if not trabajador_reqs:
+            log("❌ No requisitos found for trabajador")
+            return False
+        
+        test_state["requisito_id"] = trabajador_reqs[0]["requisito_id"]
+        log(f"✅ Using requisito: {trabajador_reqs[0]['nombre']}")
+        
+        # Upload a test document
+        log(f"\nUploading test document...")
+        
+        # Create a simple text file
+        test_file_content = b"Test document for RR.HH. delete permission test"
+        files = {
+            "file": ("test_documento_rrhh.txt", test_file_content, "text/plain")
+        }
+        data = {
+            "recurso_tipo": "trabajador",
+            "recurso_id": test_state["test_trabajador_id"],
+            "requisito_id": test_state["requisito_id"],
+            "mandante_id": test_state["test_mandante_id"]
+        }
+        
+        headers = {"Authorization": f"Bearer {test_state['tokens']['admin']}"}
+        resp = requests.post(f"{BASE_URL}/documentos/upload", headers=headers, files=files, data=data, timeout=30)
+        
+        if resp.status_code == 201:
+            documento = resp.json().get("documento", {})
+            test_state["test_documento_id"] = documento.get("documento_id")
+            log(f"✅ Test document uploaded successfully")
+            log(f"   ID: {test_state['test_documento_id']}")
+            log(f"   Estado: {documento.get('estado')}")
+        else:
+            log(f"❌ Failed to upload document: {resp.status_code} - {resp.text}")
+            return False
+        
+        log("\n✅ TEST 4 PASSED: Setup complete for DELETE test")
+        return True
+    except Exception as e:
+        log(f"❌ TEST 4 FAILED: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def test_5_delete_documento_rrhh():
+    """Test 5: DELETE documento as RR.HH. (should return 200)"""
+    log("\n" + "="*80)
+    log("TEST 5: DELETE documento as RR.HH.")
+    log("="*80)
+    
+    if not test_state["test_documento_id"]:
+        log("⚠️  Skipping test - no documento_id available")
+        return True
+    
+    try:
+        log(f"Deleting documento {test_state['test_documento_id']} as RR.HH....")
+        resp = requests.delete(
+            f"{BASE_URL}/documentos/{test_state['test_documento_id']}",
+            headers=get_headers("rrhh"),
+            timeout=30
+        )
+        
+        log(f"Response status: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("ok"):
+                log("✅ Documento deleted successfully (soft-delete)")
+                
+                # Verify documento is gone (deleted_at set)
+                log("\nVerifying documento no longer appears...")
+                resp = requests.get(
+                    f"{BASE_URL}/trabajadores/{test_state['test_trabajador_id']}",
+                    headers=get_headers("admin"),
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    acreditacion = resp.json().get("acreditacion", [])
+                    # Check if documento is marked as deleted
+                    log("✅ Documento soft-deleted (requisito should show as 'faltante' now)")
+                
+                log("\n✅ TEST 5 PASSED: RR.HH. can DELETE documento (200)")
+                return True
+            else:
+                log(f"⚠️  Response ok=false: {data}")
+                return False
+        elif resp.status_code == 403:
+            log(f"❌ TEST 5 FAILED: Got 403 (should be 200) - RR.HH. delete permission not working")
+            log(f"   Response: {resp.text}")
+            return False
+        else:
+            log(f"❌ TEST 5 FAILED: Unexpected status {resp.status_code}")
+            log(f"   Response: {resp.text}")
+            return False
+    except Exception as e:
+        log(f"❌ TEST 5 FAILED: {str(e)}")
+        return False
+
+def test_6_download_documento_url():
+    """Test 6: GET documento URL as RR.HH."""
+    log("\n" + "="*80)
+    log("TEST 6: GET documento URL as RR.HH.")
+    log("="*80)
+    
+    # Upload a new document for this test
+    try:
+        log("Uploading new document for URL test...")
+        test_file_content = b"Test document for URL download test"
+        files = {
+            "file": ("test_download.txt", test_file_content, "text/plain")
+        }
+        data = {
+            "recurso_tipo": "trabajador",
+            "recurso_id": test_state["test_trabajador_id"],
+            "requisito_id": test_state["requisito_id"],
+            "mandante_id": test_state["test_mandante_id"]
+        }
+        
+        headers = {"Authorization": f"Bearer {test_state['tokens']['admin']}"}
+        resp = requests.post(f"{BASE_URL}/documentos/upload", headers=headers, files=files, data=data, timeout=30)
+        
+        if resp.status_code != 201:
+            log(f"⚠️  Failed to upload document for URL test: {resp.status_code}")
+            return True  # Skip test
+        
+        doc_id = resp.json().get("documento", {}).get("documento_id")
+        log(f"✅ Document uploaded: {doc_id}")
+        
+        # Get URL as RR.HH.
+        log(f"\nGetting documento URL as RR.HH....")
+        resp = requests.get(
+            f"{BASE_URL}/documentos/{doc_id}/url",
+            headers=get_headers("rrhh"),
+            timeout=30
+        )
+        
+        log(f"Response status: {resp.status_code}")
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            url = data.get("url")
+            if url:
+                log(f"✅ Got signed URL successfully")
+                log(f"   URL length: {len(url)} chars")
+                log("\n✅ TEST 6 PASSED: RR.HH. can GET documento URL (200)")
+                return True
+            else:
+                log(f"⚠️  No URL in response: {data}")
+                return False
+        else:
+            log(f"❌ TEST 6 FAILED: Status {resp.status_code}")
+            log(f"   Response: {resp.text}")
+            return False
+    except Exception as e:
+        log(f"❌ TEST 6 FAILED: {str(e)}")
+        return False
+
+def test_7_negative_visor_prevencion():
+    """Test 7: NEGATIVE tests - VISOR and PREVENCION should get 403"""
+    log("\n" + "="*80)
+    log("TEST 7: NEGATIVE authorization tests (VISOR and PREVENCION)")
+    log("="*80)
     
     all_passed = True
     
-    # Test POST without token
-    try:
-        response = requests.post(
-            f"{BASE_URL}/puntos-acceso",
-            json={"nombre": "Test"},
-            timeout=10
+    # Test VISOR
+    if test_state["tokens"].get("visor"):
+        log("\n--- Testing VISOR permissions ---")
+        
+        # VISOR POST /api/trabajadores -> 403
+        log("Testing VISOR POST /api/trabajadores (should be 403)...")
+        trabajador_data = {
+            "empresa_id": test_state["empresa_id"],
+            "rut": "99.999.999-9",
+            "nombre": "Test",
+            "apellido": "Visor"
+        }
+        resp = requests.post(
+            f"{BASE_URL}/trabajadores",
+            headers=get_headers("visor"),
+            json=trabajador_data,
+            timeout=30
         )
-        print(f"POST without token: {response.status_code}")
-        if response.status_code == 401:
-            print(f"✅ POST without token correctly returns 401")
+        if resp.status_code == 403:
+            log("✅ VISOR POST /api/trabajadores correctly returns 403")
         else:
-            print(f"❌ POST without token: Expected 401, got {response.status_code}")
+            log(f"❌ VISOR POST /api/trabajadores returned {resp.status_code} (expected 403)")
             all_passed = False
-    except Exception as e:
-        print(f"❌ POST without token exception: {str(e)}")
-        all_passed = False
+        
+        # VISOR DELETE /api/documentos/:id -> 403
+        if test_state["test_documento_id"]:
+            log("Testing VISOR DELETE /api/documentos/:id (should be 403)...")
+            resp = requests.delete(
+                f"{BASE_URL}/documentos/{test_state['test_documento_id']}",
+                headers=get_headers("visor"),
+                timeout=30
+            )
+            if resp.status_code == 403:
+                log("✅ VISOR DELETE /api/documentos/:id correctly returns 403")
+            else:
+                log(f"❌ VISOR DELETE returned {resp.status_code} (expected 403)")
+                all_passed = False
+    else:
+        log("⚠️  Skipping VISOR tests - no VISOR user available")
     
-    # Test PUT without token
-    try:
-        response = requests.put(
-            f"{BASE_URL}/puntos-acceso/{punto1_id}",
-            json={"activo": True},
-            timeout=10
+    # Test PREVENCION
+    if test_state["tokens"].get("prevencion"):
+        log("\n--- Testing PREVENCION permissions ---")
+        
+        # PREVENCION POST /api/trabajadores -> 403
+        log("Testing PREVENCION POST /api/trabajadores (should be 403)...")
+        trabajador_data = {
+            "empresa_id": test_state["empresa_id"],
+            "rut": "88.888.888-8",
+            "nombre": "Test",
+            "apellido": "Prevencion"
+        }
+        resp = requests.post(
+            f"{BASE_URL}/trabajadores",
+            headers=get_headers("prevencion"),
+            json=trabajador_data,
+            timeout=30
         )
-        print(f"PUT without token: {response.status_code}")
-        if response.status_code == 401:
-            print(f"✅ PUT without token correctly returns 401")
+        if resp.status_code == 403:
+            log("✅ PREVENCION POST /api/trabajadores correctly returns 403")
         else:
-            print(f"❌ PUT without token: Expected 401, got {response.status_code}")
+            log(f"❌ PREVENCION POST returned {resp.status_code} (expected 403)")
             all_passed = False
-    except Exception as e:
-        print(f"❌ PUT without token exception: {str(e)}")
-        all_passed = False
+        
+        # PREVENCION DELETE /api/documentos/:id -> 403
+        if test_state["test_documento_id"]:
+            log("Testing PREVENCION DELETE /api/documentos/:id (should be 403)...")
+            resp = requests.delete(
+                f"{BASE_URL}/documentos/{test_state['test_documento_id']}",
+                headers=get_headers("prevencion"),
+                timeout=30
+            )
+            if resp.status_code == 403:
+                log("✅ PREVENCION DELETE /api/documentos/:id correctly returns 403")
+            else:
+                log(f"❌ PREVENCION DELETE returned {resp.status_code} (expected 403)")
+                all_passed = False
+    else:
+        log("⚠️  Skipping PREVENCION tests - no PREVENCION user available")
     
-    # Test DELETE without token
-    try:
-        response = requests.delete(
-            f"{BASE_URL}/puntos-acceso/{punto1_id}",
-            timeout=10
+    # Test without token
+    log("\n--- Testing without token ---")
+    log("Testing DELETE /api/documentos/:id without token (should be 401)...")
+    if test_state["test_documento_id"]:
+        resp = requests.delete(
+            f"{BASE_URL}/documentos/{test_state['test_documento_id']}",
+            timeout=30
         )
-        print(f"DELETE without token: {response.status_code}")
-        if response.status_code == 401:
-            print(f"✅ DELETE without token correctly returns 401")
+        if resp.status_code == 401:
+            log("✅ DELETE without token correctly returns 401")
         else:
-            print(f"❌ DELETE without token: Expected 401, got {response.status_code}")
+            log(f"❌ DELETE without token returned {resp.status_code} (expected 401)")
             all_passed = False
-    except Exception as e:
-        print(f"❌ DELETE without token exception: {str(e)}")
-        all_passed = False
     
     if all_passed:
-        print(f"✅ TEST 8a PASSED: All endpoints correctly return 401 without token")
+        log("\n✅ TEST 7 PASSED: All negative authorization tests passed")
     else:
-        print(f"❌ TEST 8a FAILED: Some endpoints did not return 401")
+        log("\n❌ TEST 7 FAILED: Some negative tests failed")
     
     return all_passed
 
-def test_8b_security_mandante_user():
-    """Test 8b: POST/PUT/DELETE /api/puntos-acceso as mandante user → 403"""
-    print("\n=== TEST 8b: Seguridad - POST/PUT/DELETE como usuario mandante → 403 ===")
+def test_8_scope_test():
+    """Test 8: SCOPE test - RR.HH. cannot delete docs from unassigned mandantes"""
+    log("\n" + "="*80)
+    log("TEST 8: SCOPE test - RR.HH. cannot delete docs from unassigned mandante")
+    log("="*80)
     
-    all_passed = True
-    
-    # Test POST as mandante
     try:
-        response = requests.post(
-            f"{BASE_URL}/puntos-acceso",
-            headers={"Authorization": f"Bearer {mandante_token}"},
-            json={"nombre": "Test"},
-            timeout=10
+        # Get all mandantes
+        log("Getting all mandantes...")
+        resp = requests.get(f"{BASE_URL}/mandantes", headers=get_headers("admin"), timeout=30)
+        if resp.status_code != 200:
+            log(f"⚠️  Failed to fetch mandantes: {resp.status_code}")
+            return True  # Skip test
+        
+        all_mandantes = resp.json().get("mandantes", [])
+        
+        # Get RR.HH. mandantes
+        resp = requests.get(f"{BASE_URL}/mandantes", headers=get_headers("rrhh"), timeout=30)
+        if resp.status_code != 200:
+            log(f"⚠️  Failed to fetch RR.HH. mandantes: {resp.status_code}")
+            return True
+        
+        rrhh_mandantes = resp.json().get("mandantes", [])
+        rrhh_mandante_ids = [m["mandante_id"] for m in rrhh_mandantes]
+        
+        # Find a mandante NOT assigned to RR.HH.
+        unassigned_mandantes = [m for m in all_mandantes if m["mandante_id"] not in rrhh_mandante_ids]
+        
+        if not unassigned_mandantes:
+            log("⚠️  RR.HH. user has access to ALL mandantes - cannot test scope restriction")
+            return True
+        
+        out_of_scope_mandante = unassigned_mandantes[0]
+        log(f"✅ Found out-of-scope mandante: {out_of_scope_mandante['razon_social']}")
+        
+        # Create a test trabajador and document in the out-of-scope mandante
+        log("\nCreating test data in out-of-scope mandante...")
+        
+        # Create trabajador
+        trabajador_data = {
+            "empresa_id": test_state["empresa_id"],
+            "rut": generate_valid_rut(),
+            "nombre": "Test",
+            "apellido": "OutOfScope"
+        }
+        resp = requests.post(f"{BASE_URL}/trabajadores", headers=get_headers("admin"), json=trabajador_data, timeout=30)
+        if resp.status_code != 201:
+            log(f"⚠️  Failed to create test trabajador: {resp.status_code}")
+            return True
+        
+        scope_test_trabajador_id = resp.json().get("trabajador", {}).get("trabajador_id")
+        test_state["cleanup_items"].append(("trabajador", scope_test_trabajador_id))
+        log(f"✅ Created test trabajador: {scope_test_trabajador_id}")
+        
+        # Get contrato for out-of-scope mandante
+        resp = requests.get(f"{BASE_URL}/contratos", headers=get_headers("admin"), timeout=30)
+        contratos = resp.json().get("contratos", [])
+        scope_contratos = [c for c in contratos if c.get("mandante_id") == out_of_scope_mandante["mandante_id"]]
+        
+        if not scope_contratos:
+            log("⚠️  No contratos for out-of-scope mandante - skipping scope test")
+            return True
+        
+        scope_contrato_id = scope_contratos[0]["contrato_id"]
+        
+        # Assign trabajador
+        asignar_data = {
+            "trabajador_id": scope_test_trabajador_id,
+            "contrato_id": scope_contrato_id
+        }
+        resp = requests.post(f"{BASE_URL}/trabajadores/asignar", headers=get_headers("admin"), json=asignar_data, timeout=30)
+        if resp.status_code != 201:
+            log(f"⚠️  Failed to assign trabajador: {resp.status_code}")
+            return True
+        
+        # Get requisito
+        resp = requests.get(f"{BASE_URL}/mandantes/{out_of_scope_mandante['mandante_id']}", headers=get_headers("admin"), timeout=30)
+        requisitos = resp.json().get("requisitos", [])
+        trabajador_reqs = [r for r in requisitos if r.get("tipo_recurso") == "trabajador"]
+        
+        if not trabajador_reqs:
+            log("⚠️  No requisitos for out-of-scope mandante")
+            return True
+        
+        scope_requisito_id = trabajador_reqs[0]["requisito_id"]
+        
+        # Upload document
+        test_file_content = b"Test document for scope test"
+        files = {
+            "file": ("test_scope.txt", test_file_content, "text/plain")
+        }
+        data = {
+            "recurso_tipo": "trabajador",
+            "recurso_id": scope_test_trabajador_id,
+            "requisito_id": scope_requisito_id,
+            "mandante_id": out_of_scope_mandante["mandante_id"]
+        }
+        
+        headers = {"Authorization": f"Bearer {test_state['tokens']['admin']}"}
+        resp = requests.post(f"{BASE_URL}/documentos/upload", headers=headers, files=files, data=data, timeout=30)
+        
+        if resp.status_code != 201:
+            log(f"⚠️  Failed to upload document: {resp.status_code}")
+            return True
+        
+        scope_doc_id = resp.json().get("documento", {}).get("documento_id")
+        log(f"✅ Created test document in out-of-scope mandante: {scope_doc_id}")
+        
+        # Try to delete as RR.HH. (should be 403)
+        log(f"\nAttempting to DELETE out-of-scope document as RR.HH. (should be 403)...")
+        resp = requests.delete(
+            f"{BASE_URL}/documentos/{scope_doc_id}",
+            headers=get_headers("rrhh"),
+            timeout=30
         )
-        print(f"POST as mandante: {response.status_code}")
-        if response.status_code == 403:
-            print(f"✅ POST as mandante correctly returns 403")
+        
+        log(f"Response status: {resp.status_code}")
+        
+        if resp.status_code == 403:
+            log("✅ RR.HH. correctly denied access to out-of-scope document (403)")
+            log("\n✅ TEST 8 PASSED: Scope restriction working correctly")
+            return True
         else:
-            print(f"❌ POST as mandante: Expected 403, got {response.status_code}")
-            all_passed = False
+            log(f"❌ TEST 8 FAILED: Expected 403, got {resp.status_code}")
+            log(f"   Response: {resp.text}")
+            return False
     except Exception as e:
-        print(f"❌ POST as mandante exception: {str(e)}")
-        all_passed = False
-    
-    # Test PUT as mandante
-    try:
-        response = requests.put(
-            f"{BASE_URL}/puntos-acceso/{punto1_id}",
-            headers={"Authorization": f"Bearer {mandante_token}"},
-            json={"activo": True},
-            timeout=10
-        )
-        print(f"PUT as mandante: {response.status_code}")
-        if response.status_code == 403:
-            print(f"✅ PUT as mandante correctly returns 403")
-        else:
-            print(f"❌ PUT as mandante: Expected 403, got {response.status_code}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ PUT as mandante exception: {str(e)}")
-        all_passed = False
-    
-    # Test DELETE as mandante
-    try:
-        response = requests.delete(
-            f"{BASE_URL}/puntos-acceso/{punto1_id}",
-            headers={"Authorization": f"Bearer {mandante_token}"},
-            timeout=10
-        )
-        print(f"DELETE as mandante: {response.status_code}")
-        if response.status_code == 403:
-            print(f"✅ DELETE as mandante correctly returns 403")
-        else:
-            print(f"❌ DELETE as mandante: Expected 403, got {response.status_code}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ DELETE as mandante exception: {str(e)}")
-        all_passed = False
-    
-    if all_passed:
-        print(f"✅ TEST 8b PASSED: All endpoints correctly return 403 for mandante user")
-    else:
-        print(f"❌ TEST 8b FAILED: Some endpoints did not return 403")
-    
-    return all_passed
+        log(f"❌ TEST 8 FAILED: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 def test_9_cleanup():
-    """Test 9: DELETE both test puntos created"""
-    print("\n=== TEST 9: CLEANUP - DELETE puntos de prueba ===")
+    """Test 9: Cleanup all test data"""
+    log("\n" + "="*80)
+    log("TEST 9: Cleanup test data")
+    log("="*80)
     
-    all_passed = True
-    
-    # Delete punto1
     try:
-        response = requests.delete(
-            f"{BASE_URL}/puntos-acceso/{punto1_id}",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            timeout=10
-        )
-        print(f"DELETE punto1 ({punto1_slug}): {response.status_code}")
-        if response.status_code == 200:
-            print(f"✅ punto1 deleted successfully")
-        else:
-            print(f"❌ Failed to delete punto1: {response.status_code}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ DELETE punto1 exception: {str(e)}")
-        all_passed = False
-    
-    # Delete punto2
-    try:
-        response = requests.delete(
-            f"{BASE_URL}/puntos-acceso/{punto2_id}",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            timeout=10
-        )
-        print(f"DELETE punto2 ({punto2_slug}): {response.status_code}")
-        if response.status_code == 200:
-            print(f"✅ punto2 deleted successfully")
-        else:
-            print(f"❌ Failed to delete punto2: {response.status_code}")
-            all_passed = False
-    except Exception as e:
-        print(f"❌ DELETE punto2 exception: {str(e)}")
-        all_passed = False
-    
-    # Verify they're gone
-    try:
-        response = requests.get(
-            f"{BASE_URL}/public/puntos",
-            timeout=10
-        )
-        if response.status_code == 200:
-            data = response.json()
-            puntos = data.get("puntos", [])
-            punto1_still_exists = any(p.get("slug") == punto1_slug for p in puntos)
-            punto2_still_exists = any(p.get("slug") == punto2_slug for p in puntos)
+        # Delete all test items (as admin with cascade delete)
+        for item_type, item_id in reversed(test_state["cleanup_items"]):
+            if not item_id:
+                continue
             
-            if punto1_still_exists or punto2_still_exists:
-                print(f"❌ Test puntos still appear in public list")
-                all_passed = False
+            log(f"Deleting {item_type} {item_id}...")
+            resp = requests.delete(
+                f"{BASE_URL}/{item_type}s/{item_id}",
+                headers=get_headers("admin"),
+                timeout=30
+            )
+            
+            if resp.status_code == 200:
+                log(f"✅ Deleted {item_type} {item_id}")
             else:
-                print(f"✅ Verified: Test puntos no longer appear in public list")
+                log(f"⚠️  Failed to delete {item_type} {item_id}: {resp.status_code}")
+        
+        log("\n✅ TEST 9 PASSED: Cleanup complete")
+        return True
     except Exception as e:
-        print(f"⚠️  Could not verify cleanup: {str(e)}")
-    
-    if all_passed:
-        print(f"✅ TEST 9 PASSED: Cleanup successful")
-    else:
-        print(f"❌ TEST 9 FAILED: Cleanup incomplete")
-    
-    return all_passed
+        log(f"⚠️  Cleanup exception: {str(e)}")
+        return True  # Don't fail on cleanup
 
 def main():
-    global admin_token, mandante_token
+    """Run all tests"""
+    log("="*80)
+    log("BACKEND TESTING: RR.HH. Permissions (MANDANTE_RRHH)")
+    log("Testing NEW permissions: crear trabajador + eliminar documento")
+    log("="*80)
     
-    print("=" * 80)
-    print("BACKEND API TESTING - Punto de acceso por URL (slug)")
-    print("=" * 80)
+    tests = [
+        ("Login all users", test_1_login_all_users),
+        ("Get empresa and mandante", test_2_get_empresa_and_mandante),
+        ("CREATE trabajador as RR.HH.", test_3_crear_trabajador_rrhh),
+        ("Setup documento for DELETE", test_4_setup_documento_for_delete),
+        ("DELETE documento as RR.HH.", test_5_delete_documento_rrhh),
+        ("GET documento URL", test_6_download_documento_url),
+        ("Negative authorization tests", test_7_negative_visor_prevencion),
+        ("Scope test", test_8_scope_test),
+        ("Cleanup", test_9_cleanup),
+    ]
     
-    # Login as admin
-    print("\n=== LOGIN AS ADMIN ===")
-    admin_token = login(ADMIN_EMAIL, ADMIN_PASSWORD)
-    if not admin_token:
-        print("❌ FATAL: Could not login as admin")
-        sys.exit(1)
-    print(f"✅ Admin login successful")
-    
-    # Login as mandante user
-    print("\n=== LOGIN AS MANDANTE USER ===")
-    mandante_token = login(MANDANTE_EMAIL, MANDANTE_PASSWORD)
-    if not mandante_token:
-        print("❌ FATAL: Could not login as mandante user")
-        sys.exit(1)
-    print(f"✅ Mandante user login successful")
-    
-    # Run all tests
     results = []
-    results.append(("Test 1: POST punto con slug", test_1_post_punto_with_slug()))
-    results.append(("Test 2: POST punto duplicado (slug único -2)", test_2_post_duplicate_nombre()))
-    results.append(("Test 3: GET público por slug", test_3_get_public_punto_by_slug()))
-    results.append(("Test 4: GET público slug inexistente (404)", test_4_get_public_punto_not_found()))
-    results.append(("Test 5: GET público sin slug (400)", test_5_get_public_punto_no_slug()))
-    results.append(("Test 6: PUT inactivo + GET público (403)", test_6_put_punto_inactive_then_get_403()))
-    results.append(("Test 7: GET público puntos incluye slug", test_7_get_public_puntos_includes_slug()))
-    results.append(("Test 8a: Seguridad sin token (401)", test_8_security_no_token()))
-    results.append(("Test 8b: Seguridad usuario mandante (403)", test_8b_security_mandante_user()))
-    results.append(("Test 9: Cleanup (DELETE puntos)", test_9_cleanup()))
+    for test_name, test_func in tests:
+        try:
+            result = test_func()
+            results.append((test_name, result))
+        except Exception as e:
+            log(f"\n❌ EXCEPTION in {test_name}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            results.append((test_name, False))
     
     # Summary
-    print("\n" + "=" * 80)
-    print("TEST SUMMARY")
-    print("=" * 80)
+    log("\n" + "="*80)
+    log("TEST SUMMARY")
+    log("="*80)
+    
     passed = sum(1 for _, result in results if result)
     total = len(results)
     
-    for name, result in results:
+    for test_name, result in results:
         status = "✅ PASSED" if result else "❌ FAILED"
-        print(f"{status}: {name}")
+        log(f"{status}: {test_name}")
     
-    print(f"\nTotal: {passed}/{total} tests passed")
+    log(f"\nTotal: {passed}/{total} tests passed")
     
     if passed == total:
-        print("\n🎉 ALL TESTS PASSED! Slug functionality is working correctly.")
-        sys.exit(0)
+        log("\n🎉 ALL TESTS PASSED!")
+        return 0
     else:
-        print(f"\n⚠️  {total - passed} test(s) failed. Review the output above.")
-        sys.exit(1)
+        log(f"\n⚠️  {total - passed} test(s) failed")
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

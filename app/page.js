@@ -199,6 +199,8 @@ function Shell({ token, profile, onLogout }) {
     upload: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_PREVENCION'].includes(role),
     review: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'REVISOR', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
     desvincular: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
+    del: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
+    crearTrab: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
   };
   const ctx = { api, profile, isSuper, canManage, perms, isMandante, openDetail, go };
 
@@ -1055,7 +1057,7 @@ function DesvinculacionInfoModal({ asig, trabajador, onClose, onVerArchivo }) {
 }
 
 
-function DocsPorCategoria({ detalle, canManage, onCargar, api }) {
+function DocsPorCategoria({ detalle, canManage, onCargar, api, puedeEliminar, reload }) {
   const grupos = {};
   const orden = [];
   (detalle || []).forEach((d) => {
@@ -1065,8 +1067,20 @@ function DocsPorCategoria({ detalle, canManage, onCargar, api }) {
   });
   const [abiertas, setAbiertas] = useState({});
   const [verDoc, setVerDoc] = useState(null);
+  const [borrando, setBorrando] = useState(null);
   const toggle = (cat) => setAbiertas((s) => ({ ...s, [cat]: !s[cat] }));
   const puedeVer = (d) => !!d.documento_id && ['aprobado', 'en_revision', 'vencido', 'rechazado', 'pendiente'].includes(d.estado);
+  const descargar = async (d) => {
+    try { const r = await api(`/documentos/${d.documento_id}/url`); if (r.url) window.open(r.url, '_blank'); else toast.error('Sin archivo'); }
+    catch (e) { toast.error(e.message); }
+  };
+  const eliminar = async (d) => {
+    if (!(await confirmDialog({ title: 'Eliminar documento', description: `¿Eliminar el documento "${d.nombre}"? El requisito quedará como faltante y se podrá volver a cargar.`, confirmText: 'Eliminar' }))) return;
+    setBorrando(d.documento_id);
+    try { await api(`/documentos/${d.documento_id}`, { method: 'DELETE' }); toast.success('Documento eliminado'); reload && reload(); }
+    catch (e) { toast.error(e.message); }
+    finally { setBorrando(null); }
+  };
   return (
     <div className="space-y-2">
       {orden.map((cat) => {
@@ -1094,7 +1108,9 @@ function DocsPorCategoria({ detalle, canManage, onCargar, api }) {
                       {d.fecha_vencimiento && <span className="text-xs text-slate-400">vence {fdate(d.fecha_vencimiento)}</span>}
                       <Badge className={`${docEstado[d.estado] || ''} border-0`}>{d.estado}</Badge>
                       {puedeVer(d) && api && <Button size="sm" variant="outline" className="h-7" onClick={() => setVerDoc(d)}><Eye className="h-3.5 w-3.5 mr-1" />Ver</Button>}
+                      {puedeVer(d) && api && <Button size="sm" variant="outline" className="h-7" onClick={() => descargar(d)}><Download className="h-3.5 w-3.5 mr-1" />Descargar</Button>}
                       {canManage && <Button size="sm" variant="outline" className="h-7" onClick={() => onCargar(d)}><Upload className="h-3.5 w-3.5 mr-1" />Cargar</Button>}
+                      {puedeEliminar && puedeVer(d) && <Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" disabled={borrando === d.documento_id} onClick={() => eliminar(d)}><Trash2 className="h-3.5 w-3.5 mr-1" />Eliminar</Button>}
                     </div>
                   </div>
                 ))}
@@ -1428,7 +1444,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail, perms
       </div></CardHeader><CardContent>
         {(data.documentacion?.detalle || []).length === 0
           ? <p className="text-sm text-slate-400">No hay estándar documental configurado para contratos de este mandante. Configúralo en el mandante → Estándar Documental → Contratos.</p>
-          : <DocsPorCategoria detalle={data.documentacion.detalle} canManage={perms.upload} api={api} onCargar={(d) => setUpload({ requisito: d })} />}
+          : <DocsPorCategoria detalle={data.documentacion.detalle} canManage={perms.upload} puedeEliminar={perms.del} reload={reload} api={api} onCargar={(d) => setUpload({ requisito: d })} />}
       </CardContent></Card>
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <h3 className="font-semibold text-slate-700">Trabajadores asignados</h3>
@@ -1473,7 +1489,7 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail, perms
 }
 
 /* ------------ Trabajadores ------------ */
-function Trabajadores({ api, openDetail, canManage, isSuper }) {
+function Trabajadores({ api, openDetail, canManage, isSuper, perms = {}, profile }) {
   const [q, setQ] = useState('');
   const [empresas] = useData(api, '/empresas');
   const [open, setOpen] = useState(false);
@@ -1486,7 +1502,7 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
   const save = async () => { try { await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) }); toast.success('Trabajador creado'); setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '' }); fetchList(q); } catch (e) { toast.error(e.message); } };
   return (
     <div>
-      <PageHead title="Trabajadores" sub="Ficha única por trabajador (una empresa del Holding)" action={canManage && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo trabajador</Button>} />
+      <PageHead title="Trabajadores" sub="Ficha única por trabajador (una empresa del Holding)" action={(canManage || perms.crearTrab) && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo trabajador</Button>} />
       <div className="mb-3 max-w-md"><div className="relative"><Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" /><Input className="pl-9" placeholder="Buscar por nombre, RUT, cargo…" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
       <Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre} {r.apellido}</span> },
@@ -1497,7 +1513,7 @@ function Trabajadores({ api, openDetail, canManage, isSuper }) {
       <Dialog open={open} onOpenChange={setOpen}><DialogContent>
         <DialogHeader><DialogTitle>Nuevo trabajador</DialogTitle><DialogDescription>Pertenece a una única empresa del Holding.</DialogDescription></DialogHeader>
         <div className="space-y-3">
-          {isSuper && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
+          {profile?.role_codigo !== 'ADMIN_EMPRESA' && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={f.nombre} onChange={(e) => setF({ ...f, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={f.apellido} onChange={(e) => setF({ ...f, apellido: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={f.rut} onChange={(e) => setF({ ...f, rut: e.target.value })} className={f.rut && !validarRut(f.rut) ? 'border-red-400' : ''} />{f.rut && !validarRut(f.rut) && <p className="text-xs text-red-500">RUT inválido</p>}</div><div className="space-y-1.5"><Label>Cargo</Label><Input value={f.cargo} onChange={(e) => setF({ ...f, cargo: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Teléfono</Label><Input value={f.telefono} onChange={(e) => setF({ ...f, telefono: e.target.value })} /></div>
@@ -1603,7 +1619,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
           )}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={perms.upload} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={perms.upload} puedeEliminar={perms.del} reload={reload} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>
@@ -1870,7 +1886,7 @@ function RecursoDetail({ api, tipo, id, onBack, canManage, isSuper, perms = {} }
           {acreditacion.length === 0 && <p className="text-slate-400">Sin asignaciones a mandantes. Asigna este {tipo} a un contrato para ver sus requisitos documentales.</p>}
           {acreditacion.map((a) => (
             <Card key={a.mandante_id} className="mb-4"><CardHeader className="pb-2"><div className="flex items-center justify-between"><CardTitle className="text-base flex items-center gap-2">{a.mandante} <span className="text-xs text-slate-400 font-normal">· {a.contrato}</span></CardTitle><div className="flex items-center gap-2"><span className="text-xs text-slate-500">{a.docs_ok}/{a.docs_total} obligatorios</span><SemBadge estado={a.estado} /></div></div></CardHeader>
-              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={perms.upload} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
+              <CardContent><DocsPorCategoria detalle={a.detalle} mandanteId={a.mandante_id} canManage={perms.upload} puedeEliminar={perms.del} reload={reload} api={api} onCargar={(d) => setUpload({ requisito: d, mandante_id: a.mandante_id })} /></CardContent>
             </Card>
           ))}
         </TabsContent>

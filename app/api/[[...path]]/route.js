@@ -31,10 +31,10 @@ async function getProfile(request) {
 }
 const MANDANTE_ROLES = ['MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_VISOR', 'MANDANTE_PREVENCION'];
 const ROLE_PERMS = {
-  MANDANTE_ADMIN: { upload: true, review: true, del: true, desvincular: true, manage: true },
-  MANDANTE_RRHH: { upload: true, review: true, del: true, desvincular: true, manage: false },
-  MANDANTE_PREVENCION: { upload: true, review: false, del: false, desvincular: false, manage: false },
-  MANDANTE_VISOR: { upload: false, review: false, del: false, desvincular: false, manage: false },
+  MANDANTE_ADMIN: { upload: true, review: true, del: true, desvincular: true, manage: true, crear_trab: true },
+  MANDANTE_RRHH: { upload: true, review: true, del: true, desvincular: true, manage: false, crear_trab: true },
+  MANDANTE_PREVENCION: { upload: true, review: false, del: false, desvincular: false, manage: false, crear_trab: false },
+  MANDANTE_VISOR: { upload: false, review: false, del: false, desvincular: false, manage: false, crear_trab: false },
 };
 // ¿Puede el usuario realizar 'action'? Holding (super/admin_empresa) siempre; mandante según su rol.
 const can = (p, action) => {
@@ -977,7 +977,7 @@ export async function POST(request, { params }) {
     }
 
     if (p[0] === 'trabajadores' && !p[1]) {
-      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      if (!canManage(profile) && !can(profile, 'crear_trab')) return json({ error: 'No autorizado' }, 403);
       const { empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email } = body;
       const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
       if (!empId || !rut || !nombre || !apellido) return json({ error: 'Faltan campos obligatorios' }, 400);
@@ -1197,6 +1197,18 @@ export async function DELETE(request, { params }) {
     const p = (await params)?.path || [];
     const profile = await getProfile(request);
     if (!profile) return json({ error: 'No autorizado' }, 401);
+
+    // Eliminar (soft-delete) un documento cargado — RR.HH./Admin de mandante o Holding.
+    if (p[0] === 'documentos' && p[1] && !p[2]) {
+      if (!can(profile, 'del')) return json({ error: 'No autorizado' }, 403);
+      const d = (await query('select documento_id, mandante_id, requisito_id, recurso_tipo, recurso_id from documentos where documento_id=$1 and deleted_at is null', [p[1]])).rows[0];
+      if (!d) return json({ error: 'Documento no encontrado' }, 404);
+      if (!inScope(profile, d.mandante_id)) return json({ error: 'No autorizado' }, 403);
+      await query('update documentos set deleted_at=now() where documento_id=$1', [p[1]]);
+      await audit(profile, 'eliminar_documento', 'documento', p[1], { requisito_id: d.requisito_id, mandante_id: d.mandante_id });
+      return json({ ok: true });
+    }
+
     if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
 
     // Mantenedor de catálogos (solo Super Admin)
