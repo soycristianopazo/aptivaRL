@@ -1521,14 +1521,31 @@ function ContratoDetail({ api, id, onBack, canManage, isSuper, openDetail, perms
 function Trabajadores({ api, openDetail, canManage, isSuper, perms = {}, profile }) {
   const [q, setQ] = useState('');
   const [empresas] = useData(api, '/empresas');
+  const [contratosData] = useData(api, '/contratos');
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '', es_spot: false });
+  const [selCon, setSelCon] = useState([]);
+  const contratosEmp = (contratosData?.contratos || []).filter((c) => !f.empresa_id || c.empresa_id === f.empresa_id);
+  const toggleCon = (cid) => setSelCon((s) => s.includes(cid) ? s.filter((x) => x !== cid) : [...s, cid]);
   const [rows, setRows] = useState(null);
   const fetchList = useCallback(async (query) => {
     try { const d = await api(`/trabajadores${query && query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''}`); setRows(d.trabajadores || []); } catch (e) { toast.error(e.message); }
   }, [api]);
   useEffect(() => { const t = setTimeout(() => fetchList(q), 300); return () => clearTimeout(t); }, [q, fetchList]);
-  const save = async () => { try { await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) }); toast.success('Trabajador creado'); setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '', es_spot: false }); fetchList(q); } catch (e) { toast.error(e.message); } };
+  const save = async () => {
+    try {
+      const r = await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) });
+      const tid = r?.trabajador?.trabajador_id;
+      let ok = 0, fail = 0;
+      if (tid && selCon.length) {
+        for (const cid of selCon) {
+          try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: tid, contrato_id: cid }) }); ok++; } catch { fail++; }
+        }
+      }
+      toast.success(`Trabajador creado${ok ? ` · asignado a ${ok} contrato(s)` : ''}${fail ? ` · ${fail} no se pudo asignar` : ''}`);
+      setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '', es_spot: false }); setSelCon([]); fetchList(q);
+    } catch (e) { toast.error(e.message); }
+  };
   return (
     <div>
       <PageHead title="Trabajadores" sub="Ficha única por trabajador (una empresa del Holding)" action={(canManage || perms.crearTrab) && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo trabajador</Button>} />
@@ -1540,16 +1557,32 @@ function Trabajadores({ api, openDetail, canManage, isSuper, perms = {}, profile
         { key: 'estado', label: 'Estado', render: (r) => r.vinculado ? <Badge className="bg-emerald-100 text-emerald-700">activo</Badge> : <Badge className="bg-slate-100 text-slate-500">inactivo</Badge> },
         { key: 'x', label: '', render: () => <ChevronRight className="h-4 w-4 text-slate-300" /> },
       ]} rows={rows} />
-      <Dialog open={open} onOpenChange={setOpen}><DialogContent>
+      <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Nuevo trabajador</DialogTitle><DialogDescription>Pertenece a una única empresa del Holding.</DialogDescription></DialogHeader>
         <div className="space-y-3">
-          {profile?.role_codigo !== 'ADMIN_EMPRESA' && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
+          {profile?.role_codigo !== 'ADMIN_EMPRESA' && <div className="space-y-1.5"><Label>Empresa del Holding</Label><Select value={f.empresa_id} onValueChange={(v) => { setF({ ...f, empresa_id: v }); setSelCon([]); }}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={f.nombre} onChange={(e) => setF({ ...f, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={f.apellido} onChange={(e) => setF({ ...f, apellido: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={f.rut} onChange={(e) => setF({ ...f, rut: e.target.value })} className={f.rut && !validarRut(f.rut) ? 'border-red-400' : ''} />{f.rut && !validarRut(f.rut) && <p className="text-xs text-red-500">RUT inválido</p>}</div><div className="space-y-1.5"><Label>Cargo</Label><Input value={f.cargo} onChange={(e) => setF({ ...f, cargo: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Teléfono</Label><Input value={f.telefono} onChange={(e) => setF({ ...f, telefono: e.target.value })} /></div>
           <div className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2.5">
             <div><Label className="text-sm">Trabajador Spot</Label><p className="text-xs text-slate-400">Personal transversal que puede trabajar en varias faenas</p></div>
             <Switch checked={f.es_spot} onCheckedChange={(v) => setF({ ...f, es_spot: v })} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Asignar a mandantes / contratos <span className="text-slate-400 font-normal">(opcional)</span></Label>
+            {(f.empresa_id || profile?.role_codigo === 'ADMIN_EMPRESA') ? (
+              contratosEmp.length ? (
+                <div className="rounded-lg border divide-y max-h-44 overflow-y-auto">
+                  {contratosEmp.map((c) => (
+                    <label key={c.contrato_id} className="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+                      <Checkbox checked={selCon.includes(c.contrato_id)} onCheckedChange={() => toggleCon(c.contrato_id)} />
+                      <span className="text-slate-700"><span className="font-medium">{c.mandante}</span><span className="text-slate-400"> · {c.numero_oc}</span></span>
+                    </label>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-slate-400 rounded-lg border bg-slate-50 px-3 py-2.5">No hay contratos disponibles para esta empresa.</p>
+            ) : <p className="text-xs text-slate-400 rounded-lg border bg-slate-50 px-3 py-2.5">Selecciona primero la empresa del Holding para ver sus contratos.</p>}
+            {selCon.length > 0 && <p className="text-xs text-[#1789bf]">{selCon.length} contrato(s) seleccionado(s)</p>}
           </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={!validarRut(f.rut)} onClick={save}>Crear</Button></DialogFooter>
@@ -1618,17 +1651,23 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
   const [qrOpen, setQrOpen] = useState(false);
   const [ef, setEf] = useState({});
   const [asig, setAsig] = useState('');
+  const [selConEdit, setSelConEdit] = useState([]);
   const [desvincular, setDesvincular] = useState(null);
   const [verHistDoc, setVerHistDoc] = useState(null);
   const [verDesv, setVerDesv] = useState(null);
   const [verDesvFile, setVerDesvFile] = useState(null);
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const { trabajador: t, asignaciones, acreditacion, historial, historialDocumental } = data;
+  const canAssign = canManage || perms.crearTrab;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === t.empresa_id);
-  const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email, es_spot: !!t.es_spot }); setEdit(true); };
-  const saveEdit = async () => { try { await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); toast.success('Trabajador actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
+  const asignadasActivas = new Set((asignaciones || []).filter((a) => a.estado === 'activo').map((a) => a.contrato_id));
+  const contratosDisp = contratosEmp.filter((c) => !asignadasActivas.has(c.contrato_id));
+  const toggleConEdit = (cid) => setSelConEdit((s) => s.includes(cid) ? s.filter((x) => x !== cid) : [...s, cid]);
+  const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email, es_spot: !!t.es_spot }); setSelConEdit([]); setEdit(true); };
+  const saveEdit = async () => { try { await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); if (selConEdit.length) { let ok = 0, fail = 0; for (const cid of selConEdit) { try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: cid }) }); ok++; } catch { fail++; } } toast.success(`Trabajador actualizado · asignado a ${ok} contrato(s)${fail ? ` · ${fail} no se pudo` : ''}`); } else { toast.success('Trabajador actualizado'); } setEdit(false); setSelConEdit([]); reload(); } catch (e) { toast.error(e.message); } };
   const desactivar = async () => { if (!(await confirmDialog({ title: '¿Desactivar trabajador?', description: 'El trabajador quedará inactivo en la plataforma.', confirmText: 'Desactivar' }))) return; try { await api(`/trabajadores/${id}`, { method: 'DELETE' }); toast.success('Trabajador desactivado'); onBack(); } catch (e) { toast.error(e.message); } };
   const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
+  const quitarAsig = async (a) => { if (!(await confirmDialog({ title: 'Quitar asignación', description: `¿Quitar la asignación al contrato ${a.numero_oc || ''} (${a.mandante})? Quedará inactiva sin generar finiquito.`, confirmText: 'Quitar' }))) return; try { await api(`/trabajadores/asignaciones/${a.asignacion_id}`, { method: 'DELETE' }); toast.success('Asignación quitada'); reload(); } catch (e) { toast.error(e.message); } };
   return (
     <div>
       <button onClick={onBack} className="text-sm text-[#1789bf] mb-3">← Volver</button>
@@ -1636,7 +1675,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
         icon={<span className="text-xl font-bold">{t.nombre?.charAt(0)}</span>}
         title={`${t.nombre} ${t.apellido}`}
         meta={[{ label: 'RUT', value: t.rut }, { label: 'Cargo', value: t.cargo || '—' }, { label: 'Empresa', value: t.empresa }]}
-        actions={<><Button variant="outline" onClick={() => setQrOpen(true)}><QrCode className="h-4 w-4 mr-1" />QR</Button>{canManage && <><Button variant="outline" onClick={openEdit}>Editar</Button><Button variant="outline" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button>{isSuper && <CascadeDelete api={api} tipo="trabajadores" id={id} nombre={`${t.nombre} ${t.apellido}`} onDone={onBack} />}</>}</>}
+        actions={<><Button variant="outline" onClick={() => setQrOpen(true)}><QrCode className="h-4 w-4 mr-1" />QR</Button>{(canAssign) && <Button variant="outline" onClick={openEdit}>Editar</Button>}{canManage && <><Button variant="outline" className="text-red-600 border-red-200" onClick={desactivar}>Desactivar</Button>{isSuper && <CascadeDelete api={api} tipo="trabajadores" id={id} nombre={`${t.nombre} ${t.apellido}`} onDone={onBack} />}</>}</>}
       />
       {acreditacion.length > 0 && <div className="flex gap-3 flex-wrap mb-4 -mt-2">{acreditacion.map((a) => <div key={a.mandante_id} className="flex items-center gap-2 rounded-lg border bg-white px-3 py-1.5"><span className="text-xs text-slate-500">{a.mandante}</span><SemBadge estado={a.estado} /></div>)}</div>}
       <Tabs defaultValue="documentacion">
@@ -1658,8 +1697,8 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
           ))}
         </TabsContent>
         <TabsContent value="asignaciones">
-          {canManage && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosEmp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={doAsignar}>Asignar</Button></div>}
-          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-700 border-0'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.estado !== 'activo' && r.desvinculacion_id && <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => setVerDesv(r)}><Eye className="h-3.5 w-3.5 mr-1" />Ver desvinculación</Button>}{perms.desvincular && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button>}</div> }]} rows={asignaciones} />
+          {canAssign && <div className="flex gap-2 mb-3 max-w-lg"><Select value={asig} onValueChange={setAsig}><SelectTrigger><SelectValue placeholder="Asignar a contrato de su empresa…" /></SelectTrigger><SelectContent>{contratosDisp.map((c) => <SelectItem key={c.contrato_id} value={c.contrato_id}>{c.numero_oc} · {c.mandante}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={doAsignar}>Asignar</Button></div>}
+          <Table columns={[{ key: 'mandante', label: 'Mandante' }, { key: 'numero_oc', label: 'Contrato' }, { key: 'gerencia', label: 'Gerencia' }, { key: 'estado', label: 'Estado', render: (r) => <Badge className={r.estado === 'activo' ? 'bg-emerald-100 text-emerald-700 border-0' : 'bg-rose-100 text-rose-700 border-0'}>{r.estado === 'activo' ? 'activo' : 'desvinculado'}</Badge> }, { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.estado !== 'activo' && r.desvinculacion_id && <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => setVerDesv(r)}><Eye className="h-3.5 w-3.5 mr-1" />Ver desvinculación</Button>}{canAssign && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-slate-600" onClick={() => quitarAsig(r)}>Quitar</Button>}{perms.desvincular && r.estado === 'activo' && <Button size="sm" variant="outline" className="h-7 text-amber-700 border-amber-200" onClick={() => setDesvincular(r)}>Desvincular</Button>}</div> }]} rows={asignaciones} />
         </TabsContent>
         {historialDocumental?.length > 0 && (
           <TabsContent value="dochist">
@@ -1716,7 +1755,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
         </CardContent></Card></TabsContent>
         <TabsContent value="historial"><Table columns={[{ key: 'created_at', label: 'Fecha', render: (r) => fdatetime(r.created_at) }, { key: 'accion', label: 'Acción' }, { key: 'usuario', label: 'Usuario' }]} rows={historial} empty="Sin eventos" /></TabsContent>
       </Tabs>
-      <Dialog open={edit} onOpenChange={setEdit}><DialogContent>
+      <Dialog open={edit} onOpenChange={setEdit}><DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Editar trabajador</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={ef.nombre || ''} onChange={(e) => setEf({ ...ef, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={ef.apellido || ''} onChange={(e) => setEf({ ...ef, apellido: e.target.value })} /></div></div>
@@ -1726,6 +1765,32 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
           <div className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2.5">
             <div><Label className="text-sm">Trabajador Spot</Label><p className="text-xs text-slate-400">Personal transversal que puede trabajar en varias faenas</p></div>
             <Switch checked={!!ef.es_spot} onCheckedChange={(v) => setEf({ ...ef, es_spot: v })} />
+          </div>
+          <div className="space-y-2 rounded-lg border p-3">
+            <Label className="text-sm">Asignaciones a mandantes / contratos</Label>
+            <div className="space-y-1.5">
+              {(asignaciones || []).filter((a) => a.estado === 'activo').length === 0 && <p className="text-xs text-slate-400">Sin asignaciones activas.</p>}
+              {(asignaciones || []).filter((a) => a.estado === 'activo').map((a) => (
+                <div key={a.asignacion_id} className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2.5 py-1.5 text-sm">
+                  <span className="text-slate-700 min-w-0 truncate"><span className="font-medium">{a.mandante}</span><span className="text-slate-400"> · {a.numero_oc}</span></span>
+                  <Button size="sm" variant="outline" className="h-7 text-slate-600 shrink-0" onClick={() => quitarAsig(a)}>Quitar</Button>
+                </div>
+              ))}
+            </div>
+            <div className="pt-1">
+              <p className="text-xs text-slate-500 mb-1.5">Agregar a otros contratos de {t.empresa}:</p>
+              {contratosDisp.length ? (
+                <div className="rounded-md border divide-y max-h-40 overflow-y-auto">
+                  {contratosDisp.map((c) => (
+                    <label key={c.contrato_id} className="flex items-center gap-2.5 px-2.5 py-1.5 text-sm cursor-pointer hover:bg-slate-50">
+                      <Checkbox checked={selConEdit.includes(c.contrato_id)} onCheckedChange={() => toggleConEdit(c.contrato_id)} />
+                      <span className="text-slate-700"><span className="font-medium">{c.mandante}</span><span className="text-slate-400"> · {c.numero_oc}</span></span>
+                    </label>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-slate-400">No hay más contratos disponibles.</p>}
+              {selConEdit.length > 0 && <p className="text-xs text-[#1789bf] mt-1">{selConEdit.length} contrato(s) nuevo(s) se asignarán al guardar</p>}
+            </div>
           </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={saveEdit}>Guardar</Button></DialogFooter>
@@ -2635,6 +2700,7 @@ const AUDIT_LABEL = {
   editar_mandante: { t: 'Editó mandante', c: 'bg-amber-100 text-amber-700' },
   crear_contrato: { t: 'Creó contrato', c: 'bg-emerald-100 text-emerald-700' },
   asignar_trabajador: { t: 'Asignó trabajador', c: 'bg-blue-100 text-[#1789bf]' },
+  quitar_asignacion: { t: 'Quitó asignación', c: 'bg-slate-100 text-slate-600' },
   asignar_vehiculo: { t: 'Asignó vehículo', c: 'bg-blue-100 text-[#1789bf]' },
   asignar_equipo: { t: 'Asignó equipo', c: 'bg-blue-100 text-[#1789bf]' },
 };

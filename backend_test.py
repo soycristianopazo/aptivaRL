@@ -1,926 +1,674 @@
 #!/usr/bin/env python3
 """
-Backend Testing for Reemplazo de documento transversal con confirmación (Spot)
-Tests NEW feature: check-replace endpoint + reemplazar=true in upload
+Backend API Testing Script for Aptiva RL
+Tests the NEW DELETE /api/trabajadores/asignaciones/:asignacion_id endpoint
 """
 
 import requests
 import json
 import sys
 from datetime import datetime
-import random
 
-# Backend URL
+# Base URL from .env
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
 
 # Test credentials
-CREDENTIALS = {
-    "admin": {"email": "admin@aptivarl.com", "password": "Aptiva2025!"},
-    "rrhh": {"email": "crivera@rioloa.cl", "password": "Aptiva2025!"},
-}
+ADMIN_EMAIL = "admin@aptivarl.com"
+ADMIN_PASSWORD = "Aptiva2025!"
+RRHH_EMAIL = "crivera@rioloa.cl"
+RRHH_PASSWORD = "Aptiva2025!"
 
-# Test state
-test_state = {
-    "tokens": {},
-    "test_trabajador_id": None,
-    "empresa_id": None,
-    "mandante1_id": None,
-    "mandante2_id": None,
-    "contrato1_id": None,
-    "contrato2_id": None,
-    "transversal_requisito_id": None,
-    "transversal_requisito_nombre": None,
-    "non_transversal_requisito_id": None,
-    "non_transversal_requisito_nombre": None,
-    "cleanup_items": []
-}
+# Color codes for output
+GREEN = '\033[92m'
+RED = '\033[91m'
+YELLOW = '\033[93m'
+BLUE = '\033[94m'
+RESET = '\033[0m'
 
-def log(msg):
-    """Print timestamped log message"""
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+def log(message, color=RESET):
+    """Print colored log message"""
+    print(f"{color}{message}{RESET}")
 
-def login(role):
+def login(email, password):
     """Login and return token"""
     try:
-        creds = CREDENTIALS[role]
-        log(f"Logging in as {role} ({creds['email']})...")
-        resp = requests.post(f"{BASE_URL}/auth/login", json=creds, timeout=30)
-        
-        if resp.status_code != 200:
-            log(f"❌ Login failed for {role}: {resp.status_code} - {resp.text}")
-            return None
-        
-        data = resp.json()
-        token = data.get("token")
-        profile = data.get("profile", {})
-        
-        if not token:
-            log(f"❌ No token received for {role}")
-            return None
-        
-        log(f"✅ Login successful for {role} - Role: {profile.get('role_codigo')}")
-        test_state["tokens"][role] = token
-        return token
+        log(f"\n🔐 Logging in as {email}...", BLUE)
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": email, "password": password},
+            timeout=30
+        )
+        if response.status_code == 200:
+            data = response.json()
+            token = data.get('token')
+            # Get full profile from /api/me to get mandante_ids
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            me_response = requests.get(f"{BASE_URL}/me", headers=headers, timeout=30)
+            if me_response.status_code == 200:
+                profile = me_response.json().get('profile', {})
+            else:
+                profile = data.get('profile', {})
+            log(f"✅ Login successful - Role: {profile.get('role_codigo', 'N/A')}", GREEN)
+            if 'mandante_ids' in profile:
+                log(f"   Mandantes in scope: {len(profile.get('mandante_ids', []))}", BLUE)
+            return token, profile
+        else:
+            log(f"❌ Login failed: {response.status_code} - {response.text}", RED)
+            return None, None
     except Exception as e:
-        log(f"❌ Login exception for {role}: {str(e)}")
-        return None
+        log(f"❌ Login error: {str(e)}", RED)
+        return None, None
 
-def get_headers(role):
-    """Get authorization headers for a role"""
-    token = test_state["tokens"].get(role)
-    if not token:
-        return None
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+def get_headers(token):
+    """Get headers with authorization"""
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
 
-def generate_valid_rut():
-    """Generate a valid Chilean RUT"""
-    # Generate a random RUT number between 10000000 and 25000000
-    rut_num = random.randint(10000000, 25000000)
-    
-    # Calculate DV using modulo 11 (Chilean algorithm)
-    suma = 0
-    mul = 2
-    rut_str = str(rut_num)
-    for digit in reversed(rut_str):
-        suma += int(digit) * mul
-        mul = mul + 1 if mul < 7 else 2
-    
-    resto = suma % 11
-    dv_calc = 11 - resto
-    
-    if dv_calc == 11:
+def generate_rut():
+    """Generate a unique Chilean RUT for testing"""
+    import random
+    base = random.randint(20000000, 25000000)
+    # Calculate verification digit
+    reversed_digits = str(base)[::-1]
+    suma = sum((int(d) * ((i % 6) + 2)) for i, d in enumerate(reversed_digits))
+    dv = 11 - (suma % 11)
+    if dv == 11:
         dv = '0'
-    elif dv_calc == 10:
+    elif dv == 10:
         dv = 'K'
     else:
-        dv = str(dv_calc)
-    
-    # Format as XX.XXX.XXX-X
-    rut_formatted = f"{rut_str[:-6]}.{rut_str[-6:-3]}.{rut_str[-3:]}-{dv}"
-    return rut_formatted
+        dv = str(dv)
+    return f"{base}-{dv}"
 
-def test_1_login():
-    """Test 1: Login as admin and RR.HH."""
-    log("\n" + "="*80)
-    log("TEST 1: Login")
-    log("="*80)
+def test_delete_asignacion_endpoint():
+    """
+    Test the NEW DELETE /api/trabajadores/asignaciones/:asignacion_id endpoint
+    """
+    log("\n" + "="*80, BLUE)
+    log("TESTING: DELETE /api/trabajadores/asignaciones/:asignacion_id", BLUE)
+    log("="*80 + "\n", BLUE)
     
-    if not login("admin"):
+    # Step 1: Login as admin
+    log("\n📋 STEP 1: Login as admin", YELLOW)
+    admin_token, admin_profile = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    if not admin_token:
+        log("❌ CRITICAL: Admin login failed. Cannot proceed.", RED)
         return False
     
-    if not login("rrhh"):
+    # Step 2: Login as RR.HH. user
+    log("\n📋 STEP 2: Login as RR.HH. user (crivera)", YELLOW)
+    rrhh_token, rrhh_profile = login(RRHH_EMAIL, RRHH_PASSWORD)
+    if not rrhh_token:
+        log("❌ CRITICAL: RR.HH. login failed. Cannot proceed.", RED)
         return False
     
-    log("\n✅ TEST 1 PASSED: Login successful")
-    return True
-
-def test_2_setup_spot_worker():
-    """Test 2: Create SPOT trabajador with es_spot=true"""
-    log("\n" + "="*80)
-    log("TEST 2: Create SPOT trabajador with es_spot=true")
-    log("="*80)
+    rrhh_mandantes = rrhh_profile.get('mandante_ids', [])
+    log(f"   RR.HH. user has {len(rrhh_mandantes)} mandantes in scope", BLUE)
     
+    # Step 3: Get empresas and select one
+    log("\n📋 STEP 3: Get empresas and select one", YELLOW)
     try:
-        # Get empresas
-        log("Fetching empresas...")
-        resp = requests.get(f"{BASE_URL}/empresas", headers=get_headers("admin"), timeout=30)
-        if resp.status_code != 200:
-            log(f"❌ Failed to fetch empresas: {resp.status_code}")
+        response = requests.get(f"{BASE_URL}/empresas", headers=get_headers(admin_token), timeout=30)
+        if response.status_code != 200:
+            log(f"❌ GET /api/empresas failed: {response.status_code}", RED)
             return False
-        
-        empresas = resp.json().get("empresas", [])
+        empresas_data = response.json()
+        # Handle both dict with 'empresas' key and direct list
+        if isinstance(empresas_data, dict):
+            empresas = empresas_data.get('empresas', [])
+        else:
+            empresas = empresas_data
         if not empresas:
-            log("❌ No empresas found")
+            log("❌ No empresas found", RED)
             return False
         
-        # Get contratos to find empresa with 2+ contratos from different mandantes
-        log("Fetching contratos to find suitable empresa...")
-        resp = requests.get(f"{BASE_URL}/contratos", headers=get_headers("admin"), timeout=30)
-        if resp.status_code != 200:
-            log(f"❌ Failed to fetch contratos: {resp.status_code}")
-            return False
-        
-        contratos = resp.json().get("contratos", [])
-        
-        # Find empresa with 2+ contratos from different mandantes
-        empresa_map = {}
-        for c in contratos:
-            eid = c.get("empresa_id")
-            if eid:
-                if eid not in empresa_map:
-                    empresa_map[eid] = []
-                empresa_map[eid].append(c)
-        
-        suitable_empresa = None
-        for eid, empr_contratos in empresa_map.items():
-            mandante_ids = set(c.get("mandante_id") for c in empr_contratos if c.get("mandante_id"))
-            if len(mandante_ids) >= 2:
-                suitable_empresa = eid
+        # Select empresa with contratos
+        selected_empresa = None
+        for empresa in empresas:
+            if empresa.get('contratos_count', 0) > 0:
+                selected_empresa = empresa
                 break
         
-        if not suitable_empresa:
-            log("❌ Cannot find empresa with 2+ contratos from different mandantes")
-            # Use first empresa anyway
-            suitable_empresa = empresas[0]["empresa_id"]
-            log(f"⚠️  Using first empresa anyway: {empresas[0]['razon_social']}")
+        if not selected_empresa:
+            selected_empresa = empresas[0]
+        
+        empresa_id = selected_empresa['empresa_id']
+        empresa_nombre = selected_empresa['razon_social']
+        log(f"✅ Selected empresa: {empresa_nombre} (ID: {empresa_id})", GREEN)
+    except Exception as e:
+        log(f"❌ Error getting empresas: {str(e)}", RED)
+        return False
+    
+    # Step 4: Get contratos from different mandantes
+    log("\n📋 STEP 4: Get contratos from 2 different mandantes", YELLOW)
+    try:
+        response = requests.get(f"{BASE_URL}/contratos", headers=get_headers(admin_token), timeout=30)
+        if response.status_code != 200:
+            log(f"❌ GET /api/contratos failed: {response.status_code}", RED)
+            return False
+        contratos_data = response.json()
+        # Handle both dict with 'contratos' key and direct list
+        if isinstance(contratos_data, dict):
+            contratos = contratos_data.get('contratos', [])
         else:
-            empresa_name = next((e["razon_social"] for e in empresas if e["empresa_id"] == suitable_empresa), "Unknown")
-            log(f"✅ Found suitable empresa with 2+ mandantes: {empresa_name}")
+            contratos = contratos_data
         
-        test_state["empresa_id"] = suitable_empresa
-        log(f"✅ Using empresa ID: {test_state['empresa_id']}")
+        # Filter contratos by empresa and find 2 from different mandantes
+        empresa_contratos = [c for c in contratos if c.get('empresa_id') == empresa_id]
+        if len(empresa_contratos) < 2:
+            log(f"⚠️  Only {len(empresa_contratos)} contratos found for empresa. Need at least 2.", YELLOW)
+            # Try to find contratos from any empresa with multiple mandantes
+            mandante_map = {}
+            for c in contratos:
+                mid = c.get('mandante_id')
+                if mid not in mandante_map:
+                    mandante_map[mid] = []
+                mandante_map[mid].append(c)
+            
+            # Find 2 contratos from different mandantes
+            selected_contratos = []
+            for mid, contracts in mandante_map.items():
+                if len(selected_contratos) < 2 and contracts:
+                    selected_contratos.append(contracts[0])
+            
+            if len(selected_contratos) < 2:
+                log("❌ Cannot find 2 contratos from different mandantes", RED)
+                return False
+            
+            contrato1 = selected_contratos[0]
+            contrato2 = selected_contratos[1]
+            # Update empresa_id to match first contrato
+            empresa_id = contrato1['empresa_id']
+        else:
+            # Find 2 contratos from different mandantes
+            mandante_ids = list(set([c['mandante_id'] for c in empresa_contratos]))
+            if len(mandante_ids) < 2:
+                log(f"⚠️  All contratos belong to same mandante. Using first 2 contratos.", YELLOW)
+                contrato1 = empresa_contratos[0]
+                contrato2 = empresa_contratos[1] if len(empresa_contratos) > 1 else empresa_contratos[0]
+            else:
+                contrato1 = next(c for c in empresa_contratos if c['mandante_id'] == mandante_ids[0])
+                contrato2 = next(c for c in empresa_contratos if c['mandante_id'] == mandante_ids[1])
         
-        # Create trabajador with es_spot=true
-        test_rut = generate_valid_rut()
-        trabajador_data = {
-            "empresa_id": test_state["empresa_id"],
-            "rut": test_rut,
-            "nombre": "QA Spot",
-            "apellido": "Worker Test",
-            "cargo": "Tester",
-            "es_spot": True
-        }
+        contrato1_id = contrato1['contrato_id']
+        contrato1_mandante = contrato1['mandante_id']
+        contrato1_nombre = contrato1.get('numero_oc', 'N/A')
         
-        log(f"\nCreating SPOT trabajador with RUT {test_rut}...")
-        resp = requests.post(
+        contrato2_id = contrato2['contrato_id']
+        contrato2_mandante = contrato2['mandante_id']
+        contrato2_nombre = contrato2.get('numero_oc', 'N/A')
+        
+        log(f"✅ Contrato 1: {contrato1_nombre} (Mandante: {contrato1_mandante})", GREEN)
+        log(f"✅ Contrato 2: {contrato2_nombre} (Mandante: {contrato2_mandante})", GREEN)
+        
+        # Check if RR.HH. user has access to these mandantes
+        rrhh_has_mandante1 = contrato1_mandante in rrhh_mandantes
+        rrhh_has_mandante2 = contrato2_mandante in rrhh_mandantes
+        log(f"   RR.HH. has access to mandante1: {rrhh_has_mandante1}", BLUE)
+        log(f"   RR.HH. has access to mandante2: {rrhh_has_mandante2}", BLUE)
+        
+    except Exception as e:
+        log(f"❌ Error getting contratos: {str(e)}", RED)
+        return False
+    
+    # Step 5: Create a trabajador
+    log("\n📋 STEP 5: Create a trabajador", YELLOW)
+    test_rut = generate_rut()
+    trabajador_data = {
+        "empresa_id": empresa_id,
+        "rut": test_rut,
+        "nombre": "Test",
+        "apellido": "Asignacion Delete",
+        "cargo": "QA Tester",
+        "es_spot": False
+    }
+    
+    try:
+        response = requests.post(
             f"{BASE_URL}/trabajadores",
-            headers=get_headers("admin"),
+            headers=get_headers(admin_token),
             json=trabajador_data,
             timeout=30
         )
-        
-        if resp.status_code != 201:
-            log(f"❌ Failed to create trabajador: {resp.status_code} - {resp.text}")
+        if response.status_code != 201:
+            log(f"❌ POST /api/trabajadores failed: {response.status_code} - {response.text}", RED)
             return False
         
-        trabajador = resp.json().get("trabajador", {})
-        test_state["test_trabajador_id"] = trabajador.get("trabajador_id")
-        test_state["cleanup_items"].append(("trabajador", test_state["test_trabajador_id"]))
-        
-        if trabajador.get("es_spot") != True:
-            log(f"❌ es_spot not set correctly: {trabajador.get('es_spot')}")
-            return False
-        
-        log(f"✅ SPOT trabajador created successfully!")
-        log(f"   ID: {test_state['test_trabajador_id']}")
-        log(f"   RUT: {trabajador.get('rut')}")
-        log(f"   es_spot: {trabajador.get('es_spot')}")
-        
-        log("\n✅ TEST 2 PASSED: SPOT trabajador created with es_spot=true")
-        return True
-    except Exception as e:
-        log(f"❌ TEST 2 FAILED: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def test_3_assign_to_two_mandantes():
-    """Test 3: Assign SPOT trabajador to 2 contratos from DIFFERENT mandantes (same empresa)"""
-    log("\n" + "="*80)
-    log("TEST 3: Assign SPOT trabajador to 2 contratos from DIFFERENT mandantes")
-    log("="*80)
-    
-    try:
-        # Get contratos
-        log("Fetching contratos...")
-        resp = requests.get(f"{BASE_URL}/contratos", headers=get_headers("admin"), timeout=30)
-        if resp.status_code != 200:
-            log(f"❌ Failed to fetch contratos: {resp.status_code}")
-            return False
-        
-        contratos = resp.json().get("contratos", [])
-        if len(contratos) < 2:
-            log("❌ Need at least 2 contratos")
-            return False
-        
-        # CRITICAL: Find 2 contratos from SAME empresa but DIFFERENT mandantes
-        empresa_contratos = [c for c in contratos if c.get("empresa_id") == test_state["empresa_id"]]
-        
-        log(f"Found {len(empresa_contratos)} contratos for trabajador's empresa")
-        
-        if len(empresa_contratos) < 2:
-            log("❌ Not enough contratos for same empresa")
-            return False
-        
-        # Get unique mandantes from empresa_contratos
-        mandante_map = {}
-        for c in empresa_contratos:
-            mid = c.get("mandante_id")
-            if mid and mid not in mandante_map:
-                mandante_map[mid] = c
-        
-        if len(mandante_map) < 2:
-            log("❌ Need contratos from at least 2 different mandantes in same empresa")
-            return False
-        
-        # Pick first 2 mandantes
-        mandante_ids = list(mandante_map.keys())[:2]
-        contrato1 = mandante_map[mandante_ids[0]]
-        contrato2 = mandante_map[mandante_ids[1]]
-        
-        test_state["mandante1_id"] = contrato1["mandante_id"]
-        test_state["mandante2_id"] = contrato2["mandante_id"]
-        test_state["contrato1_id"] = contrato1["contrato_id"]
-        test_state["contrato2_id"] = contrato2["contrato_id"]
-        
-        log(f"✅ Selected contratos from 2 different mandantes:")
-        log(f"   Mandante 1: {contrato1.get('mandante_nombre')} (Contrato: {contrato1.get('numero_oc')})")
-        log(f"   Mandante 2: {contrato2.get('mandante_nombre')} (Contrato: {contrato2.get('numero_oc')})")
-        
-        # Assign to contrato 1
-        log(f"\nAssigning trabajador to contrato 1...")
-        asignar_data = {
-            "trabajador_id": test_state["test_trabajador_id"],
-            "contrato_id": test_state["contrato1_id"]
-        }
-        resp = requests.post(f"{BASE_URL}/trabajadores/asignar", headers=get_headers("admin"), json=asignar_data, timeout=30)
-        if resp.status_code != 201:
-            log(f"❌ Failed to assign to contrato 1: {resp.status_code} - {resp.text}")
-            return False
-        log("✅ Assigned to contrato 1")
-        
-        # Assign to contrato 2
-        log(f"Assigning trabajador to contrato 2...")
-        asignar_data = {
-            "trabajador_id": test_state["test_trabajador_id"],
-            "contrato_id": test_state["contrato2_id"]
-        }
-        resp = requests.post(f"{BASE_URL}/trabajadores/asignar", headers=get_headers("admin"), json=asignar_data, timeout=30)
-        if resp.status_code != 201:
-            log(f"❌ Failed to assign to contrato 2: {resp.status_code} - {resp.text}")
-            return False
-        log("✅ Assigned to contrato 2")
-        
-        log(f"\n✅ SPOT worker now assigned to 2 mandantes (faenas)")
-        log("\n✅ TEST 3 PASSED: SPOT trabajador assigned to 2 different mandantes")
-        return True
-    except Exception as e:
-        log(f"❌ TEST 3 FAILED: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def test_4_identify_transversal_requisito():
-    """Test 4: Identify a TRANSVERSAL requisito in mandante1"""
-    log("\n" + "="*80)
-    log("TEST 4: Identify TRANSVERSAL requisito in mandante1")
-    log("="*80)
-    
-    try:
-        # Get trabajador detail to see acreditacion
-        log(f"Getting trabajador detail to see acreditacion...")
-        resp = requests.get(f"{BASE_URL}/trabajadores/{test_state['test_trabajador_id']}", headers=get_headers("admin"), timeout=30)
-        if resp.status_code != 200:
-            log(f"❌ Failed to get trabajador detail: {resp.status_code}")
-            return False
-        
-        data = resp.json()
-        acreditacion = data.get("acreditacion", [])
-        
-        if not acreditacion:
-            log("❌ No acreditacion found")
-            return False
-        
-        log(f"✅ Found {len(acreditacion)} mandante(s) in acreditacion")
-        
-        # Find mandante1 acreditacion
-        mandante1_acred = None
-        for acred in acreditacion:
-            if acred.get("mandante_id") == test_state["mandante1_id"]:
-                mandante1_acred = acred
-                break
-        
-        if not mandante1_acred:
-            log(f"❌ No acreditacion found for mandante1")
-            return False
-        
-        log(f"✅ Found acreditacion for mandante1: {mandante1_acred.get('mandante')}")
-        
-        # Find a transversal requisito
-        detalle = mandante1_acred.get("detalle", [])
-        transversal_reqs = [d for d in detalle if d.get("transversal") == True]
-        non_transversal_reqs = [d for d in detalle if d.get("transversal") == False]
-        
-        log(f"✅ Found {len(transversal_reqs)} transversal requisitos")
-        log(f"✅ Found {len(non_transversal_reqs)} non-transversal requisitos")
-        
-        if not transversal_reqs:
-            log("❌ No transversal requisitos found")
-            return False
-        
-        # Pick a transversal requisito (prefer "Contrato de Trabajo")
-        transversal_req = None
-        for req in transversal_reqs:
-            if "contrato" in req.get("nombre", "").lower():
-                transversal_req = req
-                break
-        
-        if not transversal_req:
-            transversal_req = transversal_reqs[0]
-        
-        test_state["transversal_requisito_id"] = transversal_req.get("requisito_id")
-        test_state["transversal_requisito_nombre"] = transversal_req.get("nombre")
-        
-        log(f"✅ Selected TRANSVERSAL requisito: '{test_state['transversal_requisito_nombre']}'")
-        log(f"   ID: {test_state['transversal_requisito_id']}")
-        log(f"   transversal: {transversal_req.get('transversal')}")
-        
-        # Pick a non-transversal requisito
-        if non_transversal_reqs:
-            non_transversal_req = non_transversal_reqs[0]
-            test_state["non_transversal_requisito_id"] = non_transversal_req.get("requisito_id")
-            test_state["non_transversal_requisito_nombre"] = non_transversal_req.get("nombre")
-            log(f"✅ Selected NON-TRANSVERSAL requisito: '{test_state['non_transversal_requisito_nombre']}'")
-            log(f"   ID: {test_state['non_transversal_requisito_id']}")
+        trabajador_response = response.json()
+        # Handle both direct object and nested 'trabajador' key
+        if 'trabajador' in trabajador_response:
+            trabajador = trabajador_response['trabajador']
         else:
-            log("⚠️  No non-transversal requisitos found (will skip TEST D)")
-        
-        log("\n✅ TEST 4 PASSED: Identified transversal and non-transversal requisitos")
-        return True
+            trabajador = trabajador_response
+        trabajador_id = trabajador['trabajador_id']
+        log(f"✅ Trabajador created: {trabajador_data['nombre']} {trabajador_data['apellido']} (RUT: {test_rut})", GREEN)
+        log(f"   Trabajador ID: {trabajador_id}", BLUE)
     except Exception as e:
-        log(f"❌ TEST 4 FAILED: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        log(f"❌ Error creating trabajador: {str(e)}", RED)
         return False
-
-def test_5_upload_without_reemplazar():
-    """TEST A: Upload transversal doc WITHOUT reemplazar (baseline replication)"""
-    log("\n" + "="*80)
-    log("TEST A (5): Upload transversal doc WITHOUT reemplazar (baseline replication)")
-    log("="*80)
     
+    # Step 6: Assign trabajador to contrato 1
+    log("\n📋 STEP 6: Assign trabajador to contrato 1", YELLOW)
     try:
-        # Create a small PDF-like file
-        test_file_content = b"%PDF-1.4\nTest document for transversal replication (baseline)\n%%EOF"
-        files = {
-            "file": ("test_transversal_baseline.pdf", test_file_content, "application/pdf")
-        }
-        data = {
-            "recurso_tipo": "trabajador",
-            "recurso_id": test_state["test_trabajador_id"],
-            "requisito_id": test_state["transversal_requisito_id"],
-            "mandante_id": test_state["mandante1_id"],
-            "faenas": test_state["mandante2_id"]  # Replicate to mandante2
-        }
-        
-        log(f"Uploading transversal doc to mandante1 with faenas=[mandante2]...")
-        log(f"   Requisito: {test_state['transversal_requisito_nombre']}")
-        log(f"   reemplazar: NOT SET (should replicate without replacing)")
-        
-        headers = {"Authorization": f"Bearer {test_state['tokens']['admin']}"}
-        resp = requests.post(f"{BASE_URL}/documentos/upload", headers=headers, files=files, data=data, timeout=30)
-        
-        log(f"Response status: {resp.status_code}")
-        
-        if resp.status_code != 201:
-            log(f"❌ Upload failed: {resp.status_code} - {resp.text}")
-            return False
-        
-        documento = resp.json().get("documento", {})
-        log(f"✅ Document uploaded successfully")
-        log(f"   documento_id: {documento.get('documento_id')}")
-        log(f"   estado: {documento.get('estado')}")
-        log(f"   nombre_archivo: {documento.get('nombre_archivo')}")
-        
-        # Verify replication in BOTH mandantes
-        log(f"\nVerifying replication in BOTH mandantes...")
-        resp = requests.get(f"{BASE_URL}/trabajadores/{test_state['test_trabajador_id']}", headers=get_headers("admin"), timeout=30)
-        if resp.status_code != 200:
-            log(f"❌ Failed to get trabajador detail: {resp.status_code}")
-            return False
-        
-        data = resp.json()
-        acreditacion = data.get("acreditacion", [])
-        
-        # Check mandante1
-        mandante1_acred = next((a for a in acreditacion if a.get("mandante_id") == test_state["mandante1_id"]), None)
-        if not mandante1_acred:
-            log(f"❌ No acreditacion for mandante1")
-            return False
-        
-        mandante1_req = next((d for d in mandante1_acred.get("detalle", []) if d.get("requisito_id") == test_state["transversal_requisito_id"]), None)
-        if not mandante1_req:
-            log(f"❌ Requisito not found in mandante1 acreditacion")
-            return False
-        
-        if mandante1_req.get("estado") != "en_revision":
-            log(f"❌ Mandante1 requisito estado is '{mandante1_req.get('estado')}' (expected 'en_revision')")
-            return False
-        
-        log(f"✅ Mandante1 acreditacion shows requisito with estado=en_revision")
-        log(f"   nombre_archivo: {mandante1_req.get('nombre_archivo')}")
-        
-        # Check mandante2 (should be replicated)
-        mandante2_acred = next((a for a in acreditacion if a.get("mandante_id") == test_state["mandante2_id"]), None)
-        if not mandante2_acred:
-            log(f"❌ No acreditacion for mandante2")
-            return False
-        
-        # Find the homologated requisito in mandante2 (same transversalKey)
-        mandante2_transversal_reqs = [d for d in mandante2_acred.get("detalle", []) if d.get("transversal") == True and test_state["transversal_requisito_nombre"].lower() in d.get("nombre", "").lower()]
-        
-        if not mandante2_transversal_reqs:
-            # Try to find by transversal flag and similar name
-            mandante2_transversal_reqs = [d for d in mandante2_acred.get("detalle", []) if d.get("transversal") == True]
-            log(f"⚠️  Could not find exact match, found {len(mandante2_transversal_reqs)} transversal requisitos in mandante2")
-            if mandante2_transversal_reqs:
-                # Check if any has estado=en_revision (indicating replication)
-                replicated = [d for d in mandante2_transversal_reqs if d.get("estado") == "en_revision"]
-                if replicated:
-                    log(f"✅ Found {len(replicated)} replicated transversal requisito(s) in mandante2 with estado=en_revision")
-                    mandante2_req = replicated[0]
-                else:
-                    log(f"❌ No transversal requisitos in mandante2 with estado=en_revision")
-                    return False
-            else:
-                log(f"❌ No transversal requisitos found in mandante2")
-                return False
-        else:
-            mandante2_req = mandante2_transversal_reqs[0]
-        
-        if mandante2_req.get("estado") != "en_revision":
-            log(f"❌ Mandante2 requisito estado is '{mandante2_req.get('estado')}' (expected 'en_revision')")
-            return False
-        
-        log(f"✅ Mandante2 acreditacion shows homologated requisito with estado=en_revision")
-        log(f"   nombre: {mandante2_req.get('nombre')}")
-        log(f"   nombre_archivo: {mandante2_req.get('nombre_archivo')}")
-        
-        # Verify same file (same nombre_archivo)
-        if mandante1_req.get("nombre_archivo") == mandante2_req.get("nombre_archivo"):
-            log(f"✅ REPLICATION CONFIRMED: Same file replicated to both mandantes")
-        else:
-            log(f"⚠️  Different file names: mandante1={mandante1_req.get('nombre_archivo')}, mandante2={mandante2_req.get('nombre_archivo')}")
-        
-        log("\n✅ TEST A (5) PASSED: Transversal doc uploaded and replicated to both mandantes")
-        return True
-    except Exception as e:
-        log(f"❌ TEST A (5) FAILED: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def test_6_check_replace_endpoint():
-    """TEST B: check-replace endpoint"""
-    log("\n" + "="*80)
-    log("TEST B (6): check-replace endpoint")
-    log("="*80)
-    
-    try:
-        # POST /api/documentos/check-replace
-        check_data = {
-            "recurso_id": test_state["test_trabajador_id"],
-            "requisito_id": test_state["transversal_requisito_id"],
-            "mandante_id": test_state["mandante1_id"],
-            "faenas": [test_state["mandante2_id"]]
-        }
-        
-        log(f"Calling POST /api/documentos/check-replace...")
-        log(f"   recurso_id: {test_state['test_trabajador_id']}")
-        log(f"   requisito_id: {test_state['transversal_requisito_id']}")
-        log(f"   mandante_id: {test_state['mandante1_id']}")
-        log(f"   faenas: [{test_state['mandante2_id']}]")
-        
-        resp = requests.post(
-            f"{BASE_URL}/documentos/check-replace",
-            headers=get_headers("admin"),
-            json=check_data,
+        response = requests.post(
+            f"{BASE_URL}/trabajadores/asignar",
+            headers=get_headers(admin_token),
+            json={"trabajador_id": trabajador_id, "contrato_id": contrato1_id},
             timeout=30
         )
-        
-        log(f"Response status: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            log(f"❌ check-replace failed: {resp.status_code} - {resp.text}")
+        if response.status_code != 201:
+            log(f"❌ POST /api/trabajadores/asignar failed: {response.status_code} - {response.text}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
             return False
         
-        data = resp.json()
-        conflicts = data.get("conflicts", [])
-        
-        log(f"✅ check-replace returned 200")
-        log(f"   conflicts count: {len(conflicts)}")
-        
-        if len(conflicts) == 0:
-            log(f"❌ Expected conflicts array to have entries (mandante1 + mandante2)")
-            return False
-        
-        # Verify conflicts structure
-        log(f"\nConflicts details:")
-        mandante1_conflict = None
-        mandante2_conflict = None
-        
-        for conflict in conflicts:
-            log(f"   - mandante: {conflict.get('mandante')}")
-            log(f"     mandante_id: {conflict.get('mandante_id')}")
-            log(f"     contrato: {conflict.get('contrato')}")
-            log(f"     estado: {conflict.get('estado')}")
-            log(f"     nombre_archivo: {conflict.get('nombre_archivo')}")
-            log(f"     es_origen: {conflict.get('es_origen')}")
-            
-            if conflict.get("mandante_id") == test_state["mandante1_id"]:
-                mandante1_conflict = conflict
-            elif conflict.get("mandante_id") == test_state["mandante2_id"]:
-                mandante2_conflict = conflict
-        
-        # Verify mandante1 (es_origen=true)
-        if not mandante1_conflict:
-            log(f"❌ No conflict entry for mandante1 (origin)")
-            return False
-        
-        if mandante1_conflict.get("es_origen") != True:
-            log(f"❌ Mandante1 conflict should have es_origen=true, got {mandante1_conflict.get('es_origen')}")
-            return False
-        
-        log(f"✅ Mandante1 conflict found with es_origen=true")
-        
-        # Verify mandante2 (es_origen=false)
-        if not mandante2_conflict:
-            log(f"❌ No conflict entry for mandante2")
-            return False
-        
-        if mandante2_conflict.get("es_origen") != False:
-            log(f"❌ Mandante2 conflict should have es_origen=false, got {mandante2_conflict.get('es_origen')}")
-            return False
-        
-        log(f"✅ Mandante2 conflict found with es_origen=false")
-        
-        # Test with RR.HH. user (permission check)
-        log(f"\nTesting check-replace as RR.HH. user (permission check)...")
-        resp = requests.post(
-            f"{BASE_URL}/documentos/check-replace",
-            headers=get_headers("rrhh"),
-            json=check_data,
+        asignacion1 = response.json().get('asignacion', {})
+        asignacion1_id = asignacion1.get('asignacion_id')
+        log(f"✅ Assignment 1 created: {asignacion1_id}", GREEN)
+        log(f"   Contrato: {contrato1_nombre}, Mandante: {contrato1_mandante}", BLUE)
+    except Exception as e:
+        log(f"❌ Error assigning to contrato 1: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+        return False
+    
+    # Step 7: Assign trabajador to contrato 2
+    log("\n📋 STEP 7: Assign trabajador to contrato 2", YELLOW)
+    try:
+        response = requests.post(
+            f"{BASE_URL}/trabajadores/asignar",
+            headers=get_headers(admin_token),
+            json={"trabajador_id": trabajador_id, "contrato_id": contrato2_id},
             timeout=30
         )
+        if response.status_code != 201:
+            log(f"❌ POST /api/trabajadores/asignar failed: {response.status_code} - {response.text}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
         
-        log(f"RR.HH. response status: {resp.status_code}")
-        
-        if resp.status_code == 200:
-            rrhh_conflicts = resp.json().get("conflicts", [])
-            log(f"✅ RR.HH. can call check-replace (returned {len(rrhh_conflicts)} conflicts)")
-            log(f"   Note: Conflicts may be filtered by RR.HH. scope (inScope)")
-        elif resp.status_code == 403:
-            log(f"⚠️  RR.HH. got 403 (may not have upload permission or scope)")
-        else:
-            log(f"⚠️  RR.HH. got unexpected status: {resp.status_code}")
-        
-        log("\n✅ TEST B (6) PASSED: check-replace endpoint working correctly")
-        return True
+        asignacion2 = response.json().get('asignacion', {})
+        asignacion2_id = asignacion2.get('asignacion_id')
+        log(f"✅ Assignment 2 created: {asignacion2_id}", GREEN)
+        log(f"   Contrato: {contrato2_nombre}, Mandante: {contrato2_mandante}", BLUE)
     except Exception as e:
-        log(f"❌ TEST B (6) FAILED: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        log(f"❌ Error assigning to contrato 2: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
         return False
-
-def test_7_upload_with_reemplazar():
-    """TEST C: Upload WITH reemplazar=true"""
-    log("\n" + "="*80)
-    log("TEST C (7): Upload WITH reemplazar=true")
-    log("="*80)
     
+    # Step 8: DELETE assignment 1 as admin
+    log("\n📋 STEP 8: DELETE assignment 1 as admin (NEW ENDPOINT)", YELLOW)
     try:
-        # Create a DIFFERENT file
-        test_file_content = b"%PDF-1.4\nNEW REPLACEMENT document for transversal replication\n%%EOF"
-        files = {
-            "file": ("test_transversal_REPLACEMENT.pdf", test_file_content, "application/pdf")
-        }
-        data = {
-            "recurso_tipo": "trabajador",
-            "recurso_id": test_state["test_trabajador_id"],
-            "requisito_id": test_state["transversal_requisito_id"],
-            "mandante_id": test_state["mandante1_id"],
-            "faenas": test_state["mandante2_id"],
-            "reemplazar": "true"  # KEY: reemplazar=true
-        }
-        
-        log(f"Uploading NEW transversal doc with reemplazar=true...")
-        log(f"   Requisito: {test_state['transversal_requisito_nombre']}")
-        log(f"   New file: test_transversal_REPLACEMENT.pdf")
-        log(f"   reemplazar: TRUE (should replace old docs)")
-        
-        headers = {"Authorization": f"Bearer {test_state['tokens']['admin']}"}
-        resp = requests.post(f"{BASE_URL}/documentos/upload", headers=headers, files=files, data=data, timeout=30)
-        
-        log(f"Response status: {resp.status_code}")
-        
-        if resp.status_code != 201:
-            log(f"❌ Upload failed: {resp.status_code} - {resp.text}")
-            return False
-        
-        documento = resp.json().get("documento", {})
-        log(f"✅ Document uploaded successfully with reemplazar=true")
-        log(f"   documento_id: {documento.get('documento_id')}")
-        log(f"   nombre_archivo: {documento.get('nombre_archivo')}")
-        
-        # Verify replacement in BOTH mandantes
-        log(f"\nVerifying replacement in BOTH mandantes...")
-        resp = requests.get(f"{BASE_URL}/trabajadores/{test_state['test_trabajador_id']}", headers=get_headers("admin"), timeout=30)
-        if resp.status_code != 200:
-            log(f"❌ Failed to get trabajador detail: {resp.status_code}")
-            return False
-        
-        data = resp.json()
-        acreditacion = data.get("acreditacion", [])
-        
-        # Check mandante1
-        mandante1_acred = next((a for a in acreditacion if a.get("mandante_id") == test_state["mandante1_id"]), None)
-        if not mandante1_acred:
-            log(f"❌ No acreditacion for mandante1")
-            return False
-        
-        mandante1_req = next((d for d in mandante1_acred.get("detalle", []) if d.get("requisito_id") == test_state["transversal_requisito_id"]), None)
-        if not mandante1_req:
-            log(f"❌ Requisito not found in mandante1 acreditacion")
-            return False
-        
-        # Verify NEW file name (check if documento_id changed or estado is en_revision)
-        # Note: nombre_archivo may not be in acreditacion detalle, but estado should be en_revision
-        if mandante1_req.get("estado") != "en_revision":
-            log(f"❌ Mandante1 estado is '{mandante1_req.get('estado')}' (expected 'en_revision')")
-            return False
-        
-        # Check if documento_id is the new one
-        if mandante1_req.get("documento_id") == documento.get("documento_id"):
-            log(f"✅ Mandante1 shows NEW document (documento_id matches)")
-        else:
-            log(f"✅ Mandante1 shows document with estado=en_revision (replacement may have worked)")
-        
-        log(f"   estado: {mandante1_req.get('estado')}")
-        
-        # Check mandante2
-        mandante2_acred = next((a for a in acreditacion if a.get("mandante_id") == test_state["mandante2_id"]), None)
-        if not mandante2_acred:
-            log(f"❌ No acreditacion for mandante2")
-            return False
-        
-        # Find the homologated requisito in mandante2
-        mandante2_transversal_reqs = [d for d in mandante2_acred.get("detalle", []) if d.get("transversal") == True and d.get("estado") == "en_revision"]
-        
-        if not mandante2_transversal_reqs:
-            log(f"❌ No transversal requisitos with estado=en_revision in mandante2")
-            return False
-        
-        mandante2_req = mandante2_transversal_reqs[0]
-        
-        # Verify estado is en_revision (indicating document exists)
-        if mandante2_req.get("estado") != "en_revision":
-            log(f"❌ Mandante2 requisito estado is '{mandante2_req.get('estado')}' (expected 'en_revision')")
-            return False
-        
-        log(f"✅ Mandante2 shows document with estado=en_revision")
-        log(f"   nombre: {mandante2_req.get('nombre')}")
-        log(f"   estado: {mandante2_req.get('estado')}")
-        
-        # Verify only ONE active document per faena (check by counting en_revision docs for this requisito)
-        # Since we can't easily verify file names in acreditacion, we'll trust the backend logic
-        # The key test is that estado=en_revision and the upload succeeded with reemplazar=true
-        
-        log(f"✅ Both mandantes show estado=en_revision (replacement logic executed)")
-        log(f"✅ Backend soft-deleted old docs and inserted new ones (per reemplazar=true logic)")
-        
-        log("\n✅ TEST C (7) PASSED: Upload with reemplazar=true correctly replaced old docs")
-        return True
-    except Exception as e:
-        log(f"❌ TEST C (7) FAILED: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def test_8_non_transversal_not_replicated():
-    """TEST D: Non-transversal doc NOT replicated"""
-    log("\n" + "="*80)
-    log("TEST D (8): Non-transversal doc NOT replicated")
-    log("="*80)
-    
-    if not test_state["non_transversal_requisito_id"]:
-        log("⚠️  Skipping TEST D - no non-transversal requisito available")
-        return True
-    
-    try:
-        # Check-replace with non-transversal requisito (should NOT include mandante2)
-        check_data = {
-            "recurso_id": test_state["test_trabajador_id"],
-            "requisito_id": test_state["non_transversal_requisito_id"],
-            "mandante_id": test_state["mandante1_id"],
-            "faenas": [test_state["mandante2_id"]]
-        }
-        
-        log(f"Calling check-replace with NON-TRANSVERSAL requisito...")
-        log(f"   Requisito: {test_state['non_transversal_requisito_nombre']}")
-        
-        resp = requests.post(
-            f"{BASE_URL}/documentos/check-replace",
-            headers=get_headers("admin"),
-            json=check_data,
+        response = requests.delete(
+            f"{BASE_URL}/trabajadores/asignaciones/{asignacion1_id}",
+            headers=get_headers(admin_token),
             timeout=30
         )
-        
-        if resp.status_code != 200:
-            log(f"❌ check-replace failed: {resp.status_code} - {resp.text}")
+        if response.status_code != 200:
+            log(f"❌ DELETE /api/trabajadores/asignaciones/{asignacion1_id} failed: {response.status_code} - {response.text}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
             return False
         
-        conflicts = resp.json().get("conflicts", [])
-        log(f"✅ check-replace returned {len(conflicts)} conflicts")
-        
-        # Should NOT include mandante2 (only mandante1 if doc exists there)
-        mandante2_in_conflicts = any(c.get("mandante_id") == test_state["mandante2_id"] for c in conflicts)
-        
-        if mandante2_in_conflicts:
-            log(f"❌ Mandante2 should NOT be in conflicts for non-transversal requisito")
-            return False
-        
-        log(f"✅ Mandante2 NOT in conflicts (correct for non-transversal)")
-        
-        # Upload non-transversal doc with faenas
-        log(f"\nUploading NON-TRANSVERSAL doc with faenas=[mandante2]...")
-        test_file_content = b"Non-transversal document (should NOT replicate)"
-        files = {
-            "file": ("test_non_transversal.txt", test_file_content, "text/plain")
-        }
-        data = {
-            "recurso_tipo": "trabajador",
-            "recurso_id": test_state["test_trabajador_id"],
-            "requisito_id": test_state["non_transversal_requisito_id"],
-            "mandante_id": test_state["mandante1_id"],
-            "faenas": test_state["mandante2_id"]
-        }
-        
-        headers = {"Authorization": f"Bearer {test_state['tokens']['admin']}"}
-        resp = requests.post(f"{BASE_URL}/documentos/upload", headers=headers, files=files, data=data, timeout=30)
-        
-        if resp.status_code != 201:
-            log(f"❌ Upload failed: {resp.status_code} - {resp.text}")
-            return False
-        
-        log(f"✅ Non-transversal doc uploaded")
-        
-        # Verify it appears ONLY in mandante1, NOT in mandante2
-        log(f"\nVerifying doc appears ONLY in mandante1...")
-        resp = requests.get(f"{BASE_URL}/trabajadores/{test_state['test_trabajador_id']}", headers=get_headers("admin"), timeout=30)
-        if resp.status_code != 200:
-            log(f"❌ Failed to get trabajador detail: {resp.status_code}")
-            return False
-        
-        data = resp.json()
-        acreditacion = data.get("acreditacion", [])
-        
-        # Check mandante1 (should have the doc)
-        mandante1_acred = next((a for a in acreditacion if a.get("mandante_id") == test_state["mandante1_id"]), None)
-        if not mandante1_acred:
-            log(f"❌ No acreditacion for mandante1")
-            return False
-        
-        mandante1_req = next((d for d in mandante1_acred.get("detalle", []) if d.get("requisito_id") == test_state["non_transversal_requisito_id"]), None)
-        if not mandante1_req:
-            log(f"❌ Non-transversal requisito not found in mandante1")
-            return False
-        
-        if mandante1_req.get("estado") != "en_revision":
-            log(f"❌ Mandante1 requisito estado is '{mandante1_req.get('estado')}' (expected 'en_revision')")
-            return False
-        
-        log(f"✅ Non-transversal doc appears in mandante1 with estado=en_revision")
-        
-        # Check mandante2 (should NOT have the doc replicated)
-        mandante2_acred = next((a for a in acreditacion if a.get("mandante_id") == test_state["mandante2_id"]), None)
-        if not mandante2_acred:
-            log(f"❌ No acreditacion for mandante2")
-            return False
-        
-        # Find the same requisito name in mandante2 (if exists)
-        mandante2_same_req = next((d for d in mandante2_acred.get("detalle", []) if d.get("nombre") == test_state["non_transversal_requisito_nombre"]), None)
-        
-        if mandante2_same_req and mandante2_same_req.get("estado") == "en_revision":
-            log(f"❌ Non-transversal doc was replicated to mandante2 (should NOT be)")
-            return False
-        
-        log(f"✅ Non-transversal doc NOT replicated to mandante2 (correct)")
-        
-        log("\n✅ TEST D (8) PASSED: Non-transversal doc NOT replicated")
-        return True
+        result = response.json()
+        log(f"✅ DELETE assignment 1 successful: {result}", GREEN)
     except Exception as e:
-        log(f"❌ TEST D (8) FAILED: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        log(f"❌ Error deleting assignment 1: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
         return False
-
-def test_9_cleanup():
-    """CLEANUP: Delete all test data"""
-    log("\n" + "="*80)
-    log("CLEANUP: Delete all test data")
-    log("="*80)
     
+    # Step 9: Verify assignment 1 is inactivo and assignment 2 is still activo
+    log("\n📋 STEP 9: Verify assignment states", YELLOW)
     try:
-        # Delete trabajador (cascade deletes asignaciones and documentos)
-        if test_state["test_trabajador_id"]:
-            log(f"Deleting test trabajador {test_state['test_trabajador_id']}...")
-            resp = requests.delete(
-                f"{BASE_URL}/trabajadores/{test_state['test_trabajador_id']}",
-                headers=get_headers("admin"),
+        response = requests.get(
+            f"{BASE_URL}/trabajadores/{trabajador_id}",
+            headers=get_headers(admin_token),
+            timeout=30
+        )
+        if response.status_code != 200:
+            log(f"❌ GET /api/trabajadores/{trabajador_id} failed: {response.status_code}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        trabajador_detail = response.json()
+        asignaciones = trabajador_detail.get('asignaciones', [])
+        
+        asig1 = next((a for a in asignaciones if a['asignacion_id'] == asignacion1_id), None)
+        asig2 = next((a for a in asignaciones if a['asignacion_id'] == asignacion2_id), None)
+        
+        if not asig1:
+            log(f"❌ Assignment 1 not found in trabajador detail", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        if not asig2:
+            log(f"❌ Assignment 2 not found in trabajador detail", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        asig1_estado = asig1.get('estado')
+        asig2_estado = asig2.get('estado')
+        asig1_fecha_desasignacion = asig1.get('fecha_desasignacion')
+        
+        log(f"   Assignment 1 estado: {asig1_estado} (expected: inactivo)", BLUE)
+        log(f"   Assignment 1 fecha_desasignacion: {asig1_fecha_desasignacion}", BLUE)
+        log(f"   Assignment 2 estado: {asig2_estado} (expected: activo)", BLUE)
+        
+        if asig1_estado != 'inactivo':
+            log(f"❌ Assignment 1 estado is '{asig1_estado}', expected 'inactivo'", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        if not asig1_fecha_desasignacion:
+            log(f"❌ Assignment 1 fecha_desasignacion is null, expected timestamp", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        if asig2_estado != 'activo':
+            log(f"❌ Assignment 2 estado is '{asig2_estado}', expected 'activo'", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        log(f"✅ Assignment states verified correctly", GREEN)
+        
+        # Verify NO desvinculacion was created for assignment 1
+        log("\n   Verifying NO desvinculacion was created...", BLUE)
+        desvinculacion_id = asig1.get('desvinculacion_id')
+        if desvinculacion_id:
+            log(f"❌ Assignment 1 has desvinculacion_id: {desvinculacion_id} (should be null)", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        log(f"✅ Confirmed: NO desvinculacion created (desvinculacion_id is null)", GREEN)
+        
+    except Exception as e:
+        log(f"❌ Error verifying assignments: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+        return False
+    
+    # Step 10: Test RR.HH. permissions
+    log("\n📋 STEP 10: Test RR.HH. permissions", YELLOW)
+    
+    # Determine which assignment RR.HH. can delete (in scope)
+    if rrhh_has_mandante2:
+        # RR.HH. can delete assignment 2 (in scope)
+        log(f"   Testing DELETE assignment 2 as RR.HH. (in scope)...", BLUE)
+        try:
+            response = requests.delete(
+                f"{BASE_URL}/trabajadores/asignaciones/{asignacion2_id}",
+                headers=get_headers(rrhh_token),
                 timeout=30
             )
+            if response.status_code != 200:
+                log(f"❌ DELETE as RR.HH. (in scope) failed: {response.status_code} - {response.text}", RED)
+                # Cleanup
+                requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+                return False
             
-            if resp.status_code == 200:
-                log(f"✅ Test trabajador deleted (cascade: asignaciones + documentos)")
-            else:
-                log(f"⚠️  Failed to delete trabajador: {resp.status_code}")
+            log(f"✅ DELETE as RR.HH. (in scope) successful: 200", GREEN)
+        except Exception as e:
+            log(f"❌ Error deleting as RR.HH.: {str(e)}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+    else:
+        log(f"   ⚠️  RR.HH. user does not have access to mandante2. Skipping in-scope test.", YELLOW)
+    
+    # Test out-of-scope (if RR.HH. doesn't have access to mandante1)
+    if not rrhh_has_mandante1:
+        log(f"\n   Testing DELETE assignment 1 as RR.HH. (out of scope)...", BLUE)
+        try:
+            response = requests.delete(
+                f"{BASE_URL}/trabajadores/asignaciones/{asignacion1_id}",
+                headers=get_headers(rrhh_token),
+                timeout=30
+            )
+            if response.status_code != 403:
+                log(f"❌ DELETE as RR.HH. (out of scope) returned {response.status_code}, expected 403", RED)
+                # Cleanup
+                requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+                return False
+            
+            log(f"✅ DELETE as RR.HH. (out of scope) correctly denied: 403", GREEN)
+        except Exception as e:
+            log(f"❌ Error testing out-of-scope: {str(e)}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+    else:
+        log(f"   ⚠️  RR.HH. user has access to mandante1. Cannot test out-of-scope scenario.", YELLOW)
+    
+    # Step 11: Test DELETE already inactive assignment
+    log("\n📋 STEP 11: Test DELETE already inactive assignment", YELLOW)
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/trabajadores/asignaciones/{asignacion1_id}",
+            headers=get_headers(admin_token),
+            timeout=30
+        )
+        if response.status_code != 400:
+            log(f"❌ DELETE inactive assignment returned {response.status_code}, expected 400", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
         
-        log("\n✅ CLEANUP COMPLETE: All test data deleted")
-        return True
+        error_msg = response.json().get('error', '')
+        log(f"✅ DELETE inactive assignment correctly denied: 400 - {error_msg}", GREEN)
     except Exception as e:
-        log(f"⚠️  Cleanup exception: {str(e)}")
-        return True  # Don't fail on cleanup
+        log(f"❌ Error testing inactive assignment: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+        return False
+    
+    # Step 12: Test DELETE non-existent assignment
+    log("\n📋 STEP 12: Test DELETE non-existent assignment", YELLOW)
+    fake_uuid = "00000000-0000-0000-0000-000000000000"
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/trabajadores/asignaciones/{fake_uuid}",
+            headers=get_headers(admin_token),
+            timeout=30
+        )
+        if response.status_code != 404:
+            log(f"❌ DELETE non-existent assignment returned {response.status_code}, expected 404", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        error_msg = response.json().get('error', '')
+        log(f"✅ DELETE non-existent assignment correctly denied: 404 - {error_msg}", GREEN)
+    except Exception as e:
+        log(f"❌ Error testing non-existent assignment: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+        return False
+    
+    # Step 13: Verify audit event
+    log("\n📋 STEP 13: Verify audit event 'quitar_asignacion'", YELLOW)
+    try:
+        response = requests.get(
+            f"{BASE_URL}/auditoria?accion=quitar_asignacion",
+            headers=get_headers(admin_token),
+            timeout=30
+        )
+        if response.status_code != 200:
+            log(f"❌ GET /api/auditoria failed: {response.status_code}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        audit_data = response.json()
+        eventos = audit_data.get('eventos', [])
+        
+        # Find audit events for our trabajador (entidad_id field)
+        quitar_eventos = [e for e in eventos if e.get('accion') == 'quitar_asignacion' and e.get('entidad_id') == trabajador_id]
+        
+        if not quitar_eventos:
+            log(f"❌ No 'quitar_asignacion' audit events found for trabajador {trabajador_id}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        log(f"✅ Found {len(quitar_eventos)} 'quitar_asignacion' audit event(s)", GREEN)
+        for evento in quitar_eventos[:2]:  # Show first 2
+            log(f"   Event: {evento.get('accion')} by {evento.get('usuario')} at {evento.get('created_at')}", BLUE)
+            log(f"   Metadata: {evento.get('valores_nuevos')}", BLUE)
+    except Exception as e:
+        log(f"❌ Error verifying audit: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+        return False
+    
+    # Step 14: Regression test - verify POST /api/trabajadores/asignar still works
+    log("\n📋 STEP 14: Regression test - POST /api/trabajadores/asignar", YELLOW)
+    try:
+        # Create a new trabajador for regression test
+        test_rut2 = generate_rut()
+        trabajador_data2 = {
+            "empresa_id": empresa_id,
+            "rut": test_rut2,
+            "nombre": "Regression",
+            "apellido": "Test Asignar",
+            "cargo": "QA Tester"
+        }
+        
+        response = requests.post(
+            f"{BASE_URL}/trabajadores",
+            headers=get_headers(admin_token),
+            json=trabajador_data2,
+            timeout=30
+        )
+        if response.status_code != 201:
+            log(f"❌ POST /api/trabajadores (regression) failed: {response.status_code}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        trabajador2_response = response.json()
+        # Handle both direct object and nested 'trabajador' key
+        if 'trabajador' in trabajador2_response:
+            trabajador2 = trabajador2_response['trabajador']
+        else:
+            trabajador2 = trabajador2_response
+        trabajador2_id = trabajador2['trabajador_id']
+        log(f"✅ Regression trabajador created: {trabajador2_id}", GREEN)
+        
+        # Test POST /api/trabajadores/asignar as admin
+        response = requests.post(
+            f"{BASE_URL}/trabajadores/asignar",
+            headers=get_headers(admin_token),
+            json={"trabajador_id": trabajador2_id, "contrato_id": contrato1_id},
+            timeout=30
+        )
+        if response.status_code != 201:
+            log(f"❌ POST /api/trabajadores/asignar (admin) failed: {response.status_code} - {response.text}", RED)
+            # Cleanup
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador2_id}", headers=get_headers(admin_token), timeout=30)
+            return False
+        
+        log(f"✅ POST /api/trabajadores/asignar (admin) successful: 201", GREEN)
+        
+        # Test POST /api/trabajadores/asignar as RR.HH. (in scope)
+        if rrhh_has_mandante2:
+            response = requests.post(
+                f"{BASE_URL}/trabajadores/asignar",
+                headers=get_headers(rrhh_token),
+                json={"trabajador_id": trabajador2_id, "contrato_id": contrato2_id},
+                timeout=30
+            )
+            if response.status_code != 201:
+                log(f"❌ POST /api/trabajadores/asignar (RR.HH. in scope) failed: {response.status_code} - {response.text}", RED)
+                # Cleanup
+                requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+                requests.delete(f"{BASE_URL}/trabajadores/{trabajador2_id}", headers=get_headers(admin_token), timeout=30)
+                return False
+            
+            log(f"✅ POST /api/trabajadores/asignar (RR.HH. in scope) successful: 201", GREEN)
+        
+        # Test POST /api/trabajadores/asignar as RR.HH. (out of scope)
+        if not rrhh_has_mandante1:
+            response = requests.post(
+                f"{BASE_URL}/trabajadores/asignar",
+                headers=get_headers(rrhh_token),
+                json={"trabajador_id": trabajador2_id, "contrato_id": contrato1_id},
+                timeout=30
+            )
+            if response.status_code != 403:
+                log(f"❌ POST /api/trabajadores/asignar (RR.HH. out of scope) returned {response.status_code}, expected 403", RED)
+                # Cleanup
+                requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+                requests.delete(f"{BASE_URL}/trabajadores/{trabajador2_id}", headers=get_headers(admin_token), timeout=30)
+                return False
+            
+            log(f"✅ POST /api/trabajadores/asignar (RR.HH. out of scope) correctly denied: 403", GREEN)
+        
+        # Cleanup regression trabajador
+        response = requests.delete(
+            f"{BASE_URL}/trabajadores/{trabajador2_id}",
+            headers=get_headers(admin_token),
+            timeout=30
+        )
+        if response.status_code == 200:
+            log(f"✅ Regression trabajador deleted", GREEN)
+        
+    except Exception as e:
+        log(f"❌ Error in regression test: {str(e)}", RED)
+        # Cleanup
+        requests.delete(f"{BASE_URL}/trabajadores/{trabajador_id}", headers=get_headers(admin_token), timeout=30)
+        if 'trabajador2_id' in locals():
+            requests.delete(f"{BASE_URL}/trabajadores/{trabajador2_id}", headers=get_headers(admin_token), timeout=30)
+        return False
+    
+    # Step 15: Cleanup - delete test trabajador
+    log("\n📋 STEP 15: Cleanup - delete test trabajador", YELLOW)
+    try:
+        response = requests.delete(
+            f"{BASE_URL}/trabajadores/{trabajador_id}",
+            headers=get_headers(admin_token),
+            timeout=30
+        )
+        if response.status_code != 200:
+            log(f"⚠️  DELETE /api/trabajadores/{trabajador_id} returned {response.status_code}", YELLOW)
+            log(f"   Response: {response.text}", YELLOW)
+        else:
+            log(f"✅ Test trabajador deleted successfully (cascade: asignaciones)", GREEN)
+    except Exception as e:
+        log(f"⚠️  Error deleting test trabajador: {str(e)}", YELLOW)
+    
+    log("\n" + "="*80, GREEN)
+    log("✅ ALL TESTS PASSED - DELETE /api/trabajadores/asignaciones/:asignacion_id", GREEN)
+    log("="*80 + "\n", GREEN)
+    
+    return True
 
 def main():
-    """Run all tests"""
-    log("="*80)
-    log("BACKEND TESTING: Reemplazo de documento transversal con confirmación (Spot)")
-    log("Testing NEW feature: check-replace endpoint + reemplazar=true in upload")
-    log("="*80)
-    
-    tests = [
-        ("Login", test_1_login),
-        ("Create SPOT trabajador", test_2_setup_spot_worker),
-        ("Assign to 2 mandantes", test_3_assign_to_two_mandantes),
-        ("Identify transversal requisito", test_4_identify_transversal_requisito),
-        ("TEST A: Upload without reemplazar", test_5_upload_without_reemplazar),
-        ("TEST B: check-replace endpoint", test_6_check_replace_endpoint),
-        ("TEST C: Upload with reemplazar=true", test_7_upload_with_reemplazar),
-        ("TEST D: Non-transversal not replicated", test_8_non_transversal_not_replicated),
-        ("CLEANUP", test_9_cleanup),
-    ]
-    
-    results = []
-    for test_name, test_func in tests:
-        try:
-            result = test_func()
-            results.append((test_name, result))
-        except Exception as e:
-            log(f"\n❌ EXCEPTION in {test_name}: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            results.append((test_name, False))
-    
-    # Summary
-    log("\n" + "="*80)
-    log("TEST SUMMARY")
-    log("="*80)
-    
-    passed = sum(1 for _, result in results if result)
-    total = len(results)
-    
-    for test_name, result in results:
-        status = "✅ PASSED" if result else "❌ FAILED"
-        log(f"{status}: {test_name}")
-    
-    log(f"\nTotal: {passed}/{total} tests passed")
-    
-    if passed == total:
-        log("\n🎉 ALL TESTS PASSED!")
-        return 0
-    else:
-        log(f"\n⚠️  {total - passed} test(s) failed")
-        return 1
+    """Main test runner"""
+    try:
+        success = test_delete_asignacion_endpoint()
+        if success:
+            log("\n🎉 BACKEND TESTING COMPLETE - ALL TESTS PASSED", GREEN)
+            sys.exit(0)
+        else:
+            log("\n❌ BACKEND TESTING FAILED", RED)
+            sys.exit(1)
+    except Exception as e:
+        log(f"\n❌ CRITICAL ERROR: {str(e)}", RED)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

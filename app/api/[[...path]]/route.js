@@ -1340,6 +1340,18 @@ export async function DELETE(request, { params }) {
       return json({ ok: true });
     }
 
+    // Quitar asignación (sin finiquito) — RR.HH./Admin empresa/Holding. La deja inactiva.
+    if (p[0] === 'trabajadores' && p[1] === 'asignaciones' && p[2] && !p[3]) {
+      if (!canManage(profile) && !can(profile, 'crear_trab')) return json({ error: 'No autorizado' }, 403);
+      const a = (await query('select * from trabajador_asignaciones where asignacion_id=$1', [p[2]])).rows[0];
+      if (!a) return json({ error: 'Asignación no encontrada' }, 404);
+      if (!inScope(profile, a.mandante_id)) return json({ error: 'No autorizado' }, 403);
+      if (a.estado !== 'activo') return json({ error: 'La asignación ya no está activa' }, 400);
+      await query("update trabajador_asignaciones set estado='inactivo', fecha_desasignacion=now() where asignacion_id=$1", [p[2]]);
+      await audit(profile, 'quitar_asignacion', 'trabajador', a.trabajador_id, { asignacion_id: p[2], mandante_id: a.mandante_id, contrato_id: a.contrato_id });
+      return json({ ok: true });
+    }
+
     if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
 
     // Mantenedor de catálogos (solo Super Admin)
