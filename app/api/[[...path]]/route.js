@@ -296,10 +296,12 @@ async function acreditacionContrato(contratoId, mandanteId) {
 
 export async function GET(request, { params }) {
   try {
-    await ensureSchema();
     const p = (await params)?.path || [];
     const { searchParams } = new URL(request.url);
+    // Health-check SIN base de datos: responde siempre rápido para que la sonda de
+    // readiness reciba headers aunque la DB/Storage no esté disponible (evita el 520).
     if (p.length === 0 || p[0] === 'health') return json({ ok: true, service: 'aptiva-rl' });
+    await ensureSchema();
 
     // Endpoint público (sin auth) para validación por QR en terreno. Solo trabajadores, datos resumidos.
     if (p[0] === 'public' && p[1] === 'puntos') {
