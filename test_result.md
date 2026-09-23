@@ -105,6 +105,20 @@
 user_problem_statement: "Aptiva RL Corporate Platform - Sistema de gestión de acreditación de trabajadores, vehículos y equipos para holding minero Río Loa. Stack: Next.js + Supabase Postgres (pg) + Supabase Auth (GoTrue REST) + Supabase Storage. Roles: SUPER_ADMIN_HOLDING, ADMIN_EMPRESA, REVISOR, USUARIO_MANDANTE. Auto-seed: Holding Río Loa con 3 empresas, 2 mandantes, 3 contratos, 10 trabajadores, vehículos, equipos, requisitos y documentos."
 
 backend:
+  - task: "Visibilidad de trabajadores creados por usuario de mandante sin asignación (creado_por)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js, lib/db.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: "BUG REPORTADO: un usuario de mandante (RR.HH. pmiranda@rioloa.cl) creó un trabajador (RUT 25.959.268-2, Milton Johan Olivero) pero NO le aparece en el listado. Causa: GET /api/trabajadores para is_mandante sólo mostraba trabajadores con asignación activa en su scope; un trabajador recién creado SIN asignación quedaba invisible para quien lo creó. FIX: (1) nueva columna trabajadores.creado_por uuid (migración en db.js) que se setea = profile.auth_user_id al crear (POST /api/trabajadores). (2) GET /api/trabajadores para is_mandante ahora incluye OR t.creado_por = <mi auth_user_id> además del exists(asignación activa en scope). (3) backfill ejecutado desde auditoria (accion crear_trabajador) para trabajadores previos (14 filas). PROBAR: login pmiranda@rioloa.cl/Aptiva2025! (MANDANTE_RRHH). (a) GET /api/trabajadores?q=25.959.268-2 -> debe devolver a Milton Johan Olivero (RUT 25.959.268-2) aunque no tenga asignación. (b) Crear un trabajador nuevo como pmiranda SIN asignarlo (POST /api/trabajadores, empresa del holding, RUT válido único) -> luego GET /api/trabajadores?q=<ese rut> debe listarlo. (c) Regresión: un trabajador creado por pmiranda y luego visible; y que OTRO usuario de mandante con distinto scope NO vea trabajadores que no creó ni tiene asignados. (d) Holding admin sigue viendo todos. Limpiar trabajador de prueba creado en (b) (admin DELETE). NO frontend."
+        -working: true
+        -agent: "testing"
+        -comment: "✅ VISIBILIDAD TRABAJADORES CREADO_POR TESTING COMPLETE - ALL TESTS PASSED (5/5). Comprehensive backend testing performed on NEW creado_por visibility fix. Logins successful: pmiranda@rioloa.cl (MANDANTE_RRHH, auth_user_id: b8e0c423-53d7-4789-94ec-5e7bd8398a7f) ✅, crivera@rioloa.cl (MANDANTE_RRHH, auth_user_id: 5cde673f-22c8-4404-a67e-bd9e2d9fb04b) ✅, admin@aptivarl.com (SUPER_ADMIN_HOLDING) ✅. TEST 1 - MILTON VISIBLE TO PMIRANDA (BACKFILLED): GET /api/trabajadores?q=25.959.268-2 as pmiranda returns 200 with 1 trabajador ✅. Milton Johan Olivero Gutierrez (RUT 25.959.268-2) found in results ✅. Trabajador ID: 56702320-9628-406f-8aea-ca796fd32c27 ✅. Vinculado: false (no active assignments) ✅. CRITICAL VERIFICATION: Worker WITHOUT assignments is visible to pmiranda (creator) ✅. Backfill of creado_por working correctly ✅. TEST 2 - CREATE WORKER WITHOUT ASSIGNMENT: Selected empresa 'Empresa de Muellaje Rio Loa S.A' ✅. Generated valid Chilean RUT: 23.734.513-4 (with modulo 11 verification digit) ✅. POST /api/trabajadores as pmiranda returns 201 ✅. Worker created successfully (trabajador_id: 83802a1e-91ed-4468-bbb8-83d5eab20821) ✅. GET /api/trabajadores?q=23734513-4 as pmiranda returns 200 with new worker ✅. CRITICAL VERIFICATION: New worker visible to pmiranda even WITHOUT assignment ✅. creado_por logic working correctly (worker appears in list because creado_por = pmiranda's auth_user_id) ✅. TEST 3 - ISOLATION (CRIVERA CANNOT SEE): GET /api/trabajadores?q=23734513-4 as crivera returns 200 with 0 trabajadores ✅. CRITICAL VERIFICATION: crivera (different RRHH user) CANNOT see pmiranda's unassigned worker ✅. Isolation working correctly - worker only visible to creator ✅. Security check passed ✅. TEST 4 - ADMIN SEES ALL: GET /api/trabajadores?q=25.959.268-2 as admin returns 200 with Milton ✅. GET /api/trabajadores?q=23734513-4 as admin returns 200 with test worker ✅. CRITICAL VERIFICATION: Holding admin sees ALL workers (no scope restriction) ✅. Admin can see both Milton (backfilled) and test worker created by pmiranda ✅. TEST 5 - REGRESSION: GET /api/trabajadores (no filters) as pmiranda returns 200 ✅. Returned 220 trabajadores (scoped to pmiranda's mandantes + workers she created) ✅. No 500 errors ✅. List endpoint working correctly with new creado_por logic ✅. CLEANUP: DELETE /api/trabajadores/83802a1e-91ed-4468-bbb8-83d5eab20821 as admin returns 200 ✅. Test worker deleted successfully ✅. No test data left behind ✅. NO 500 ERRORS. ALL STATUS CODES CORRECT. CRITICAL FUNCTIONALITY VERIFIED: trabajadores.creado_por column working correctly (set to profile.auth_user_id on POST /api/trabajadores) ✅. GET /api/trabajadores for mandante users includes workers they created (OR t.creado_por = auth_user_id) ✅. GET /api/trabajadores for mandante users includes workers with active assignments in their scope ✅. Isolation working: mandante users only see workers they created OR workers assigned to their mandantes ✅. Holding admin sees all workers (no restriction) ✅. Backfill working: Milton (RUT 25.959.268-2) has creado_por = pmiranda and is visible ✅. Regression: List endpoint returns 200 with no errors ✅. Visibilidad trabajadores creado_por feature is production-ready."
   - task: "Quitar asignación sin finiquito (DELETE) + asignación múltiple en crear/editar (RR.HH.)"
     implemented: true
     working: true
@@ -841,7 +855,8 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Visibilidad de trabajadores creados por usuario de mandante sin asignación (creado_por)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

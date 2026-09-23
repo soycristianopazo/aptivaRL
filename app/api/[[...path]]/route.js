@@ -508,7 +508,7 @@ export async function GET(request, { params }) {
       const args = [];
       if (profile.role_codigo === 'ADMIN_EMPRESA') { args.push(profile.empresa_id); sql += ` and t.empresa_id=$${args.length}`; }
       else if (empresaFilter) { args.push(empresaFilter); sql += ` and t.empresa_id=$${args.length}`; }
-      if (profile.is_mandante) { const ids = profile.mandante_ids || []; if (ids.length === 0) { sql += ' and false'; } else { args.push(ids); sql += ` and exists(select 1 from trabajador_asignaciones a where a.trabajador_id=t.trabajador_id and a.estado='activo' and a.mandante_id = any($${args.length}::uuid[]))`; } }
+      if (profile.is_mandante) { const ids = profile.mandante_ids || []; args.push(profile.auth_user_id); const uArg = args.length; if (ids.length === 0) { sql += ` and t.creado_por = $${uArg}`; } else { args.push(ids); sql += ` and (exists(select 1 from trabajador_asignaciones a where a.trabajador_id=t.trabajador_id and a.estado='activo' and a.mandante_id = any($${args.length}::uuid[])) or t.creado_por = $${uArg})`; } }
       if (search) {
         const tokens = search.trim().split(/\s+/).filter(Boolean);
         for (const tk of tokens) {
@@ -1112,7 +1112,7 @@ export async function POST(request, { params }) {
       const dup = await query('select 1 from trabajadores where rut=$1', [rutFmt]);
       if (dup.rows.length) return json({ error: 'Ya existe un trabajador con ese RUT' }, 409);
       const id = uuid();
-      await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email, es_spot) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [id, empId, rutFmt, titleCase(nombre), titleCase(apellido), titleCase(cargo), genero || null, region || null, comuna || null, telefono || null, email || null, !!es_spot]);
+      await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email, es_spot, creado_por) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)', [id, empId, rutFmt, titleCase(nombre), titleCase(apellido), titleCase(cargo), genero || null, region || null, comuna || null, telefono || null, email || null, !!es_spot, profile.auth_user_id]);
       await audit(profile, 'crear_trabajador', 'trabajador', id, { rut: rutFmt, nombre, apellido, es_spot: !!es_spot });
       return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [id])).rows[0] }, 201);
     }
