@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { query, ensureSchema, uuid } from '@/lib/db';
+import { query, ensureSchema, uuid, ensureEmpresaReqs } from '@/lib/db';
 import { authSignIn, getAuthUser, adminCreateUser, adminDeleteUser, adminUpdateUser, storageUpload, storageSignedUrl, BUCKET } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
@@ -420,6 +420,28 @@ export async function GET(request, { params }) {
       sql += scopeSql(profile, 'm.mandante_id', args);
       sql += ' order by m.razon_social';
       return json({ mandantes: (await query(sql, args)).rows });
+    }
+
+    if (p[0] === 'mandantes' && p[1] && p[2] === 'empresa-acreditacion') {
+      const mid = p[1];
+      if (!inScope(profile, mid)) return json({ error: 'No autorizado' }, 403);
+      const empresaId = searchParams.get('empresa_id');
+      if (!empresaId) return json({ error: 'empresa_id requerido' }, 400);
+      await ensureEmpresaReqs(mid).catch(() => {});
+      const empresa = (await query('select empresa_id, razon_social, rut from empresas_grupo where empresa_id=$1', [empresaId])).rows[0];
+      const detalle = (await query(`
+        select r.requisito_id, r.nombre, r.obligatorio, cat.nombre as categoria,
+          d.documento_id, coalesce(d.estado,'faltante') as estado, d.nombre_archivo, d.fecha_vencimiento
+        from requisitos_documentales r
+        left join categorias_documentales cat on cat.categoria_id=r.categoria_id
+        left join lateral (
+          select * from documentos dd
+          where dd.requisito_id=r.requisito_id and dd.recurso_tipo='empresa' and dd.recurso_id=$2 and dd.deleted_at is null
+          order by dd.created_at desc limit 1
+        ) d on true
+        where r.mandante_id=$1 and r.tipo_recurso='empresa' and r.activo=true
+        order by cat.orden nulls last, r.orden`, [mid, empresaId])).rows;
+      return json({ empresa, detalle });
     }
 
     if (p[0] === 'mandantes' && p[1]) {
@@ -945,6 +967,7 @@ export async function POST(request, { params }) {
       if (!razon_social || !rut) return json({ error: 'Razón social y RUT requeridos' }, 400);
       const id = uuid();
       await query('insert into mandantes (mandante_id, razon_social, rut, region, comuna, direccion) values ($1,$2,$3,$4,$5,$6)', [id, razon_social, rut, region || null, comuna || null, direccion || null]);
+      await ensureEmpresaReqs(id).catch(() => {});
       await audit(profile, 'crear_mandante', 'mandante', id, { razon_social, rut });
       return json({ mandante: (await query('select * from mandantes where mandante_id=$1', [id])).rows[0] }, 201);
     }
