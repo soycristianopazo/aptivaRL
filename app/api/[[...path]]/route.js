@@ -59,6 +59,28 @@ const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
 const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
 // Visor y Prevención no pueden ver el documento "Contrato de trabajo" en ningún mandante
 const isContratoTrabajo = (nombre) => /contrato\s+de\s+trabajo/i.test(nombre || '');
+// Homologa el nombre de un requisito a una clave canónica si es un documento TRANSVERSAL
+// (el mismo para todas las faenas del trabajador). Devuelve null si es específico por mandante.
+function transversalKey(nombre) {
+  const s = (nombre || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (s.includes('contrato') && (s.includes('trabajo') || s.includes('prestacion'))) return 'contrato';
+  if (s.includes('alcohol') && s.includes('droga')) return 'examen_ad';
+  if (s.includes('examen') && s.includes('ocupacional')) return 'examen_ocup';
+  if (s.includes('antecedente')) return 'antecedentes';
+  if (s.includes('riohs') || (s.includes('reglamento') && s.includes('interno'))) return 'riohs';
+  if (s.includes('epp') || (s.includes('proteccion') && s.includes('personal'))) return 'epp';
+  if (s.includes('cedula') || s.includes('carnet de identidad')) return 'cedula';
+  if (s.includes('hoja de vida') && s.includes('conductor')) return 'hoja_conductor';
+  if (s.includes('licencia') && s.includes('conducir')) return 'licencia';
+  if (s.includes('curriculum') || s.trim() === 'cv') return 'cv';
+  if (s.includes('fotografia')) return 'foto';
+  if (s.includes('nacimiento')) return 'nacimiento';
+  if (s.includes('estudio') || s.includes('titulo') || s.includes('nivel educacional')) return 'estudios';
+  if (s.includes('seremi') || (s.includes('ministerio') && s.includes('salud'))) return 'seremi';
+  if (s.includes('curso') && s.includes('mutual')) return 'cursos_mutual';
+  if (s.includes('certificaci')) return 'certificacion';
+  return null;
+}
 const hideContratoForVisor = (p) => p?.role_codigo === 'MANDANTE_VISOR' || p?.role_codigo === 'MANDANTE_PREVENCION';
 // Limpia el string leído desde el QR/2D de la cédula chilena y devuelve el RUT normalizado (dígitos+DV, K mayúscula)
 function limpiarRutScan(raw) {
@@ -209,7 +231,7 @@ async function acreditacionTrabajador(trabajadorId) {
         else if (['en_revision', 'pendiente'].includes(estado)) revision = true;
         else if (estado === 'aprobado') okCount++;
       }
-      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, categoria: req.categoria || 'Sin categoría', obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
+      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, categoria: req.categoria || 'Sin categoría', obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null, transversal: !!transversalKey(req.nombre) });
     }
     const estadoGlobal = bloqueado ? 'BLOQUEADO' : revision ? 'EN_REVISION' : 'ACREDITADO';
     out.push({ mandante_id: a.mandante_id, mandante: a.mandante, contrato: a.numero_oc, estado: estadoGlobal, docs_ok: okCount, docs_total: obligTotal, detalle });
@@ -272,7 +294,7 @@ async function acreditacionRecurso(tipo, recursoId) {
       let estado = 'faltante';
       if (doc) { estado = doc.estado; if (doc.estado === 'aprobado' && doc.fecha_vencimiento && new Date(doc.fecha_vencimiento) < new Date()) estado = 'vencido'; }
       if (req.obligatorio) { obligTotal++; if (['faltante', 'vencido', 'rechazado'].includes(estado)) bloqueado = true; else if (['en_revision', 'pendiente'].includes(estado)) revision = true; else if (estado === 'aprobado') okCount++; }
-      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, categoria: req.categoria || 'Sin categoría', obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null });
+      detalle.push({ requisito_id: req.requisito_id, nombre: req.nombre, categoria: req.categoria || 'Sin categoría', obligatorio: req.obligatorio, estado, fecha_vencimiento: doc?.fecha_vencimiento || null, documento_id: doc?.documento_id || null, transversal: !!transversalKey(req.nombre) });
     }
     out.push({ mandante_id: a.mandante_id, mandante: a.mandante, contrato: a.numero_oc, estado: bloqueado ? 'BLOQUEADO' : revision ? 'EN_REVISION' : 'ACREDITADO', docs_ok: okCount, docs_total: obligTotal, detalle });
   }
@@ -884,6 +906,28 @@ export async function POST(request, { params }) {
         [id, recurso_tipo, recurso_id, requisito_id || null, mandante_id || null, BUCKET, path, file.name, file.type, file.size, fecha_emision || null, fecha_vencimiento || null, profile.auth_user_id]
       );
       await audit(profile, 'cargar_documento', recurso_tipo, recurso_id, { requisito_id, nombre_archivo: file.name });
+      // Réplica a faenas: para trabajadores SPOT, un documento transversal se copia (mismo archivo)
+      // al requisito equivalente de cada faena seleccionada.
+      const faenasRaw = form.get('faenas');
+      if (recurso_tipo === 'trabajador' && faenasRaw && requisito_id) {
+        const srcReq = (await query('select nombre from requisitos_documentales where requisito_id=$1', [requisito_id])).rows[0];
+        const key = srcReq ? transversalKey(srcReq.nombre) : null;
+        if (key) {
+          const targets = String(faenasRaw).split(',').map((s) => s.trim()).filter(Boolean).filter((m) => m !== mandante_id && inScope(profile, m));
+          for (const mid of targets) {
+            const reqs = (await query("select requisito_id, nombre from requisitos_documentales where mandante_id=$1 and tipo_recurso='trabajador' and activo=true", [mid])).rows;
+            const match = reqs.find((r) => transversalKey(r.nombre) === key);
+            if (!match) continue;
+            const ya = (await query("select 1 from documentos where recurso_tipo='trabajador' and recurso_id=$1 and requisito_id=$2 and mandante_id=$3 and deleted_at is null", [recurso_id, match.requisito_id, mid])).rows;
+            if (ya.length) continue;
+            await query(
+              `insert into documentos (documento_id, recurso_tipo, recurso_id, requisito_id, mandante_id, bucket, path, nombre_archivo, mime, tamano, fecha_emision, fecha_vencimiento, estado, subido_por)
+               values ($1,'trabajador',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'en_revision',$12)`,
+              [uuid(), recurso_id, match.requisito_id, mid, BUCKET, path, file.name, file.type, file.size, fecha_emision || null, fecha_vencimiento || null, profile.auth_user_id]
+            );
+          }
+        }
+      }
       return json({ documento: (await query('select * from documentos where documento_id=$1', [id])).rows[0] }, 201);
     }
 
@@ -1015,7 +1059,7 @@ export async function POST(request, { params }) {
 
     if (p[0] === 'trabajadores' && !p[1]) {
       if (!canManage(profile) && !can(profile, 'crear_trab')) return json({ error: 'No autorizado' }, 403);
-      const { empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email } = body;
+      const { empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email, es_spot } = body;
       const empId = profile.role_codigo === 'ADMIN_EMPRESA' ? profile.empresa_id : empresa_id;
       if (!empId || !rut || !nombre || !apellido) return json({ error: 'Faltan campos obligatorios' }, 400);
       if (!validarRut(rut)) return json({ error: 'RUT inválido. Verifica el número y dígito verificador.' }, 400);
@@ -1023,8 +1067,8 @@ export async function POST(request, { params }) {
       const dup = await query('select 1 from trabajadores where rut=$1', [rutFmt]);
       if (dup.rows.length) return json({ error: 'Ya existe un trabajador con ese RUT' }, 409);
       const id = uuid();
-      await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [id, empId, rutFmt, titleCase(nombre), titleCase(apellido), titleCase(cargo), genero || null, region || null, comuna || null, telefono || null, email || null]);
-      await audit(profile, 'crear_trabajador', 'trabajador', id, { rut: rutFmt, nombre, apellido });
+      await query('insert into trabajadores (trabajador_id, empresa_id, rut, nombre, apellido, cargo, genero, region, comuna, telefono, email, es_spot) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [id, empId, rutFmt, titleCase(nombre), titleCase(apellido), titleCase(cargo), genero || null, region || null, comuna || null, telefono || null, email || null, !!es_spot]);
+      await audit(profile, 'crear_trabajador', 'trabajador', id, { rut: rutFmt, nombre, apellido, es_spot: !!es_spot });
       return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [id])).rows[0] }, 201);
     }
 
@@ -1070,11 +1114,12 @@ export async function POST(request, { params }) {
     }
 
     if (p[0] === 'trabajadores' && p[1] === 'asignar') {
-      if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
+      if (!canManage(profile) && !can(profile, 'crear_trab')) return json({ error: 'No autorizado' }, 403);
       const { trabajador_id, contrato_id } = body;
       const c = (await query('select * from contratos where contrato_id=$1', [contrato_id])).rows[0];
       const t = (await query('select * from trabajadores where trabajador_id=$1', [trabajador_id])).rows[0];
       if (!c || !t) return json({ error: 'Datos inválidos' }, 400);
+      if (!inScope(profile, c.mandante_id)) return json({ error: 'No autorizado' }, 403);
       if (c.empresa_id !== t.empresa_id) return json({ error: 'El trabajador solo puede asignarse a contratos de su empresa' }, 400);
       try {
         const id = uuid();
@@ -1137,9 +1182,22 @@ export async function PUT(request, { params }) {
     const p = (await params)?.path || [];
     const profile = await getProfile(request);
     if (!profile) return json({ error: 'No autorizado' }, 401);
-    if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
     const body = await request.json().catch(() => ({}));
     const build = (allowed) => { const cols = []; const vals = []; let i = 1; for (const k of allowed) { if (body[k] !== undefined) { cols.push(`${k}=$${i++}`); vals.push(body[k]); } } return { cols, vals, i }; };
+
+    // Editar trabajador (incl. toggle Spot): Holding/Admin empresa o RR.HH.
+    if (p[0] === 'trabajadores' && p[1]) {
+      if (!canManage(profile) && !can(profile, 'crear_trab')) return json({ error: 'No autorizado' }, 403);
+      ['nombre', 'apellido', 'cargo'].forEach((k) => { if (body[k] != null) body[k] = titleCase(body[k]); });
+      const { cols, vals, i } = build(['nombre', 'apellido', 'cargo', 'genero', 'region', 'comuna', 'telefono', 'email', 'direccion', 'estado', 'es_spot']);
+      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
+      vals.push(p[1]);
+      await query(`update trabajadores set ${cols.join(', ')}, updated_at=now() where trabajador_id=$${i}`, vals);
+      await audit(profile, 'editar_trabajador', 'trabajador', p[1], body);
+      return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [p[1]])).rows[0] });
+    }
+
+    if (!canManage(profile)) return json({ error: 'No autorizado' }, 403);
 
     if (p[0] === 'puntos-acceso' && p[1]) {
       const { cols, vals, i } = build(['nombre', 'ubicacion', 'activo']);
@@ -1190,15 +1248,6 @@ export async function PUT(request, { params }) {
       await query(`update contratos set ${cols.join(', ')}, updated_at=now() where contrato_id=$${i}`, vals);
       await audit(profile, 'editar_contrato', 'contrato', p[1], body);
       return json({ contrato: (await query('select * from contratos where contrato_id=$1', [p[1]])).rows[0] });
-    }
-    if (p[0] === 'trabajadores' && p[1]) {
-      ['nombre', 'apellido', 'cargo'].forEach((k) => { if (body[k] != null) body[k] = titleCase(body[k]); });
-      const { cols, vals, i } = build(['nombre', 'apellido', 'cargo', 'genero', 'region', 'comuna', 'telefono', 'email', 'direccion', 'estado']);
-      if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
-      vals.push(p[1]);
-      await query(`update trabajadores set ${cols.join(', ')}, updated_at=now() where trabajador_id=$${i}`, vals);
-      await audit(profile, 'editar_trabajador', 'trabajador', p[1], body);
-      return json({ trabajador: (await query('select * from trabajadores where trabajador_id=$1', [p[1]])).rows[0] });
     }
     if (p[0] === 'requisitos' && p[1]) {
       const { cols, vals, i } = build(['nombre', 'descripcion', 'obligatorio', 'tiene_vencimiento', 'transversal', 'dias_alerta', 'orden', 'activo', 'categoria_id']);

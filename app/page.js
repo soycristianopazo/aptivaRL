@@ -27,6 +27,8 @@ import logoRioLoa from '@/assets/logo-rioloa.png';
 import loginBg from '@/assets/login-bg.jpg';
 import faviconAptiva from '@/assets/favicon-aptiva.png';
 import { MANUALES, manualPreviewHTML, descargarManualPDF } from '@/lib/manuales';
+import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const LOGO = logoAptiva.src;
 const LOGO_RIOLOA = logoRioLoa.src;
@@ -1520,13 +1522,13 @@ function Trabajadores({ api, openDetail, canManage, isSuper, perms = {}, profile
   const [q, setQ] = useState('');
   const [empresas] = useData(api, '/empresas');
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '' });
+  const [f, setF] = useState({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '', es_spot: false });
   const [rows, setRows] = useState(null);
   const fetchList = useCallback(async (query) => {
     try { const d = await api(`/trabajadores${query && query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''}`); setRows(d.trabajadores || []); } catch (e) { toast.error(e.message); }
   }, [api]);
   useEffect(() => { const t = setTimeout(() => fetchList(q), 300); return () => clearTimeout(t); }, [q, fetchList]);
-  const save = async () => { try { await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) }); toast.success('Trabajador creado'); setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '' }); fetchList(q); } catch (e) { toast.error(e.message); } };
+  const save = async () => { try { await api('/trabajadores', { method: 'POST', body: JSON.stringify(f) }); toast.success('Trabajador creado'); setOpen(false); setF({ empresa_id: '', rut: '', nombre: '', apellido: '', cargo: '', telefono: '', es_spot: false }); fetchList(q); } catch (e) { toast.error(e.message); } };
   return (
     <div>
       <PageHead title="Trabajadores" sub="Ficha única por trabajador (una empresa del Holding)" action={(canManage || perms.crearTrab) && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-1" />Nuevo trabajador</Button>} />
@@ -1534,6 +1536,7 @@ function Trabajadores({ api, openDetail, canManage, isSuper, perms = {}, profile
       <Table onRow={(r) => openDetail('trabajador', r.trabajador_id)} columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <span className="font-medium text-slate-800">{r.nombre} {r.apellido}</span> },
         { key: 'rut', label: 'RUT' }, { key: 'cargo', label: 'Cargo' }, { key: 'empresa', label: 'Empresa Holding' },
+        { key: 'tipo', label: 'Tipo', render: (r) => r.es_spot ? <Badge className="bg-violet-100 text-violet-700 border-0">Spot</Badge> : <Badge className="bg-slate-100 text-slate-500 border-0">Regular</Badge> },
         { key: 'estado', label: 'Estado', render: (r) => r.vinculado ? <Badge className="bg-emerald-100 text-emerald-700">activo</Badge> : <Badge className="bg-slate-100 text-slate-500">inactivo</Badge> },
         { key: 'x', label: '', render: () => <ChevronRight className="h-4 w-4 text-slate-300" /> },
       ]} rows={rows} />
@@ -1544,6 +1547,10 @@ function Trabajadores({ api, openDetail, canManage, isSuper, perms = {}, profile
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={f.nombre} onChange={(e) => setF({ ...f, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={f.apellido} onChange={(e) => setF({ ...f, apellido: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>RUT</Label><Input value={f.rut} onChange={(e) => setF({ ...f, rut: e.target.value })} className={f.rut && !validarRut(f.rut) ? 'border-red-400' : ''} />{f.rut && !validarRut(f.rut) && <p className="text-xs text-red-500">RUT inválido</p>}</div><div className="space-y-1.5"><Label>Cargo</Label><Input value={f.cargo} onChange={(e) => setF({ ...f, cargo: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Teléfono</Label><Input value={f.telefono} onChange={(e) => setF({ ...f, telefono: e.target.value })} /></div>
+          <div className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2.5">
+            <div><Label className="text-sm">Trabajador Spot</Label><p className="text-xs text-slate-400">Personal transversal que puede trabajar en varias faenas</p></div>
+            <Switch checked={f.es_spot} onCheckedChange={(v) => setF({ ...f, es_spot: v })} />
+          </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={!validarRut(f.rut)} onClick={save}>Crear</Button></DialogFooter>
       </DialogContent></Dialog>
@@ -1618,7 +1625,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
   if (!data) return <p className="text-slate-400">Cargando…</p>;
   const { trabajador: t, asignaciones, acreditacion, historial, historialDocumental } = data;
   const contratosEmp = (contratos?.contratos || []).filter((c) => c.empresa_id === t.empresa_id);
-  const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email }); setEdit(true); };
+  const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email, es_spot: !!t.es_spot }); setEdit(true); };
   const saveEdit = async () => { try { await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); toast.success('Trabajador actualizado'); setEdit(false); reload(); } catch (e) { toast.error(e.message); } };
   const desactivar = async () => { if (!(await confirmDialog({ title: '¿Desactivar trabajador?', description: 'El trabajador quedará inactivo en la plataforma.', confirmText: 'Desactivar' }))) return; try { await api(`/trabajadores/${id}`, { method: 'DELETE' }); toast.success('Trabajador desactivado'); onBack(); } catch (e) { toast.error(e.message); } };
   const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
@@ -1716,10 +1723,14 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Cargo</Label><Input value={ef.cargo || ''} onChange={(e) => setEf({ ...ef, cargo: e.target.value })} /></div><div className="space-y-1.5"><Label>Teléfono</Label><Input value={ef.telefono || ''} onChange={(e) => setEf({ ...ef, telefono: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Región</Label><Input value={ef.region || ''} onChange={(e) => setEf({ ...ef, region: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={ef.comuna || ''} onChange={(e) => setEf({ ...ef, comuna: e.target.value })} /></div></div>
           <div className="space-y-1.5"><Label>Email</Label><Input value={ef.email || ''} onChange={(e) => setEf({ ...ef, email: e.target.value })} /></div>
+          <div className="flex items-center justify-between rounded-lg border bg-slate-50 px-3 py-2.5">
+            <div><Label className="text-sm">Trabajador Spot</Label><p className="text-xs text-slate-400">Personal transversal que puede trabajar en varias faenas</p></div>
+            <Switch checked={!!ef.es_spot} onCheckedChange={(v) => setEf({ ...ef, es_spot: v })} />
+          </div>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setEdit(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={saveEdit}>Guardar</Button></DialogFooter>
       </DialogContent></Dialog>
-      {upload && <UploadDialog api={api} recurso_tipo="trabajador" recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
+      {upload && <UploadDialog api={api} recurso_tipo="trabajador" recurso_id={id} requisito={upload.requisito} mandante_id={upload.mandante_id} esSpot={t.es_spot} faenas={(acreditacion || []).map((a) => ({ mandante_id: a.mandante_id, mandante: a.mandante, contrato: a.contrato }))} onClose={() => setUpload(null)} onDone={() => { setUpload(null); reload(); }} />}
       {qrOpen && <QRDialog id={id} titulo={`${t.nombre} ${t.apellido}`} rut={t.rut} onClose={() => setQrOpen(false)} />}
       {desvincular && <DesvincularDialog api={api} trabajadorId={id} asignacion={desvincular} onClose={() => setDesvincular(null)} onDone={() => { setDesvincular(null); reload(); }} />}
       {verHistDoc && <DocViewerModal api={api} doc={verHistDoc} onClose={() => setVerHistDoc(null)} />}
@@ -1773,10 +1784,14 @@ function QRDialog({ id, titulo, rut, onClose }) {
 }
 
 
-function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, onClose, onDone }) {
+function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, onClose, onDone, esSpot, faenas = [] }) {
   const [file, setFile] = useState(null);
   const [emision, setEmision] = useState('');
   const [venc, setVenc] = useState('');
+  const mostrarFaenas = !!esSpot && !!requisito?.transversal && faenas.length > 1;
+  const otras = faenas.filter((x) => x.mandante_id !== mandante_id);
+  const [selFaenas, setSelFaenas] = useState(() => otras.map((x) => x.mandante_id));
+  const toggleFaena = (mid) => setSelFaenas((s) => s.includes(mid) ? s.filter((x) => x !== mid) : [...s, mid]);
   const [loading, setLoading] = useState(false);
   const submit = async () => {
     if (!file) return toast.error('Selecciona un archivo');
@@ -1786,8 +1801,10 @@ function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, o
       fd.append('file', file); fd.append('recurso_tipo', recurso_tipo); fd.append('recurso_id', recurso_id);
       fd.append('requisito_id', requisito.requisito_id); fd.append('mandante_id', mandante_id);
       if (emision) fd.append('fecha_emision', emision); if (venc) fd.append('fecha_vencimiento', venc);
+      if (mostrarFaenas && selFaenas.length) fd.append('faenas', selFaenas.join(','));
       await api('/documentos/upload', { method: 'POST', body: fd });
-      toast.success('Documento cargado (en revisión)'); onDone();
+      const extra = mostrarFaenas && selFaenas.length ? ` y replicado a ${selFaenas.length} faena(s)` : '';
+      toast.success(`Documento cargado (en revisión)${extra}`); onDone();
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   };
   return (
@@ -1796,6 +1813,20 @@ function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, o
       <div className="space-y-3">
         <div className="space-y-1.5"><Label>Archivo (PDF o imagen)</Label><Input type="file" accept="application/pdf,image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} /></div>
         <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Fecha emisión</Label><Input type="date" value={emision} onChange={(e) => setEmision(e.target.value)} /></div><div className="space-y-1.5"><Label>Fecha vencimiento</Label><Input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} /></div></div>
+        {mostrarFaenas && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+            <p className="text-sm font-semibold text-violet-800 mb-0.5">Documento transversal · Trabajador Spot</p>
+            <p className="text-xs text-slate-500 mb-2">Este documento aplica a varias faenas. Selecciona a cuáles cargarlo (además de esta):</p>
+            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+              {otras.map((x) => (
+                <label key={x.mandante_id} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox checked={selFaenas.includes(x.mandante_id)} onCheckedChange={() => toggleFaena(x.mandante_id)} />
+                  <span className="text-slate-700">{x.mandante}{x.contrato ? ` · ${x.contrato}` : ''}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" disabled={loading} onClick={submit}>{loading ? 'Subiendo…' : 'Subir'}</Button></DialogFooter>
     </DialogContent></Dialog>
