@@ -1293,7 +1293,7 @@ function EstandarDocumental({ id, api, categorias, requisitos, canManage, reload
   );
 }
 
-function EmpresaDocsModal({ api, mandanteId, empresa, perms = {}, onClose }) {
+function EmpresaDocsModal({ api, mandanteId, empresa, perms = {}, isSuper, onClose }) {
   const [detalle, setDetalle] = useState(null);
   const [upload, setUpload] = useState(null);
   const load = useCallback(() => {
@@ -1303,14 +1303,14 @@ function EmpresaDocsModal({ api, mandanteId, empresa, perms = {}, onClose }) {
   const ok = (detalle || []).filter((d) => d.estado === 'aprobado').length;
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
+      <DialogContent className="w-[96vw] max-w-[1200px] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><FolderOpen className="h-5 w-5 text-[#1789bf]" />Documentos de empresa · {empresa.razon_social}</DialogTitle>
           <DialogDescription>Documentación exigida a la empresa del grupo para este mandante{detalle ? ` · ${ok}/${detalle.length} aprobados` : ''}</DialogDescription>
         </DialogHeader>
         {!detalle ? <p className="text-sm text-slate-400 py-6">Cargando…</p>
           : detalle.length === 0 ? <p className="text-sm text-slate-400 py-6">No hay estándar documental de empresa configurado para este mandante.</p>
-            : <DocsPorCategoria detalle={detalle} canManage={perms.upload} puedeEliminar={perms.del} reload={load} api={api} onCargar={(d) => setUpload({ requisito: d })} />}
+            : <DocsPorCategoria detalle={detalle} canManage={!!isSuper} puedeEliminar={!!isSuper} reload={load} api={api} onCargar={(d) => setUpload({ requisito: d })} />}
         <DialogFooter><Button variant="outline" onClick={onClose}>Cerrar</Button></DialogFooter>
         {upload && <UploadDialog api={api} recurso_tipo="empresa" recurso_id={empresa.empresa_id} requisito={upload.requisito} mandante_id={mandanteId} onClose={() => setUpload(null)} onDone={() => { setUpload(null); load(); }} />}
       </DialogContent>
@@ -1357,8 +1357,8 @@ function MandanteDetail({ api, id, onBack, openDetail, canManage, isSuper, perms
         </div></TabsContent>
         <TabsContent value="empresas">
           {canManage && <div className="flex gap-2 mb-3 max-w-md"><Select value={addEmp} onValueChange={setAddEmp}><SelectTrigger><SelectValue placeholder="Habilitar empresa del Holding…" /></SelectTrigger><SelectContent>{noAsoc.map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={linkEmp}>Agregar</Button></div>}
-          <Table columns={[{ key: 'razon_social', label: 'Empresa del Holding' }, { key: 'rut', label: 'RUT' }, { key: 'comuna', label: 'Comuna' }, { key: 'docs', label: '', render: (r) => <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => setDocsEmp(r)}><FolderOpen className="h-3.5 w-3.5 mr-1" />Documentos</Button> }, { key: 'x', label: '', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => unlinkEmp(r.empresa_id)}>Quitar</Button> : null }]} rows={empresas} empty="Sin empresas habilitadas" />
-          {docsEmp && <EmpresaDocsModal api={api} mandanteId={id} empresa={docsEmp} perms={perms} onClose={() => setDocsEmp(null)} />}
+          <Table columns={[{ key: 'razon_social', label: 'Empresa del Holding' }, { key: 'rut', label: 'RUT' }, { key: 'comuna', label: 'Comuna' }, { key: 'docs', label: '', render: (r) => isSuper ? <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => setDocsEmp(r)}><FolderOpen className="h-3.5 w-3.5 mr-1" />Documentos</Button> : null }, { key: 'x', label: '', render: (r) => canManage ? <Button size="sm" variant="ghost" className="text-red-500 h-7" onClick={() => unlinkEmp(r.empresa_id)}>Quitar</Button> : null }]} rows={empresas} empty="Sin empresas habilitadas" />
+          {docsEmp && <EmpresaDocsModal api={api} mandanteId={id} empresa={docsEmp} perms={perms} isSuper={isSuper} onClose={() => setDocsEmp(null)} />}
         </TabsContent>
         <TabsContent value="gerencias">
           {canManage && <div className="flex gap-2 mb-3 max-w-md"><Input placeholder="Nueva gerencia…" value={newGer} onChange={(e) => setNewGer(e.target.value)} /><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={addGer}>Agregar</Button></div>}
