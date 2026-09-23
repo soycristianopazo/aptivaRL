@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query, ensureSchema, uuid, ensureEmpresaReqs } from '@/lib/db';
-import { authSignIn, getAuthUser, adminCreateUser, adminDeleteUser, adminUpdateUser, storageUpload, storageSignedUrl, BUCKET } from '@/lib/supabase';
+import { authSignIn, getAuthUser, adminCreateUser, adminDeleteUser, adminUpdateUser, storageUpload, storageSignedUrl, storageDelete, BUCKET } from '@/lib/supabase';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -895,6 +895,14 @@ export async function POST(request, { params }) {
       if (mandante_id && !inScope(profile, mandante_id)) return json({ error: 'No autorizado' }, 403);
       const fecha_emision = form.get('fecha_emision') || null;
       const fecha_vencimiento = form.get('fecha_vencimiento') || null;
+      const reemplazar = String(form.get('reemplazar') || '') === 'true';
+      const oldPaths = new Set();
+      // Reemplazo (trabajador Spot / re-carga): al confirmar, el documento anterior del mismo
+      // requisito+mandante queda soft-deleted y sólo permanece el nuevo archivo.
+      if (reemplazar && requisito_id) {
+        const olds = (await query('select documento_id, path from documentos where recurso_tipo=$1 and recurso_id=$2 and requisito_id=$3 and mandante_id=$4 and deleted_at is null', [recurso_tipo, recurso_id, requisito_id, mandante_id || null])).rows;
+        for (const o of olds) { await query('update documentos set deleted_at=now() where documento_id=$1', [o.documento_id]); if (o.path) oldPaths.add(o.path); }
+      }
       const safe = (file.name || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_');
       const path = `${recurso_tipo}/${recurso_id}/${uuid()}-${safe}`;
       const bytes = Buffer.from(await file.arrayBuffer());
@@ -918,8 +926,11 @@ export async function POST(request, { params }) {
             const reqs = (await query("select requisito_id, nombre from requisitos_documentales where mandante_id=$1 and tipo_recurso='trabajador' and activo=true", [mid])).rows;
             const match = reqs.find((r) => transversalKey(r.nombre) === key);
             if (!match) continue;
-            const ya = (await query("select 1 from documentos where recurso_tipo='trabajador' and recurso_id=$1 and requisito_id=$2 and mandante_id=$3 and deleted_at is null", [recurso_id, match.requisito_id, mid])).rows;
-            if (ya.length) continue;
+            const ya = (await query("select documento_id, path from documentos where recurso_tipo='trabajador' and recurso_id=$1 and requisito_id=$2 and mandante_id=$3 and deleted_at is null", [recurso_id, match.requisito_id, mid])).rows;
+            if (ya.length) {
+              if (!reemplazar) continue;
+              for (const o of ya) { await query('update documentos set deleted_at=now() where documento_id=$1', [o.documento_id]); if (o.path) oldPaths.add(o.path); }
+            }
             await query(
               `insert into documentos (documento_id, recurso_tipo, recurso_id, requisito_id, mandante_id, bucket, path, nombre_archivo, mime, tamano, fecha_emision, fecha_vencimiento, estado, subido_por)
                values ($1,'trabajador',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'en_revision',$12)`,
@@ -928,12 +939,46 @@ export async function POST(request, { params }) {
           }
         }
       }
+      // Limpieza best-effort de archivos huérfanos en Storage (solo si ningún documento activo los referencia y no es el archivo recién subido)
+      for (const op of oldPaths) {
+        if (op === path) continue;
+        const ref = (await query('select 1 from documentos where path=$1 and deleted_at is null limit 1', [op])).rows;
+        if (!ref.length) await storageDelete(op);
+      }
       return json({ documento: (await query('select * from documentos where documento_id=$1', [id])).rows[0] }, 201);
     }
 
     const profile = await getProfile(request);
     if (!profile) return json({ error: 'No autorizado' }, 401);
     const body = await request.json().catch(() => ({}));
+
+    // Verifica qué faenas (incluida la de origen) ya tienen un documento en el requisito homologado,
+    // para advertir antes de reemplazar (trabajador Spot · documento transversal).
+    if (p[0] === 'documentos' && p[1] === 'check-replace') {
+      if (!can(profile, 'upload')) return json({ error: 'No autorizado' }, 403);
+      const { recurso_id, requisito_id, mandante_id, faenas } = body;
+      if (!recurso_id || !requisito_id) return json({ conflicts: [] });
+      const srcReq = (await query('select nombre from requisitos_documentales where requisito_id=$1', [requisito_id])).rows[0];
+      const key = srcReq ? transversalKey(srcReq.nombre) : null;
+      const list = Array.isArray(faenas) ? faenas : String(faenas || '').split(',').map((s) => s.trim()).filter(Boolean);
+      const targetIds = [mandante_id, ...list].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).filter((m) => inScope(profile, m));
+      const conflicts = [];
+      for (const mid of targetIds) {
+        let reqId = null;
+        if (mid === mandante_id) reqId = requisito_id;
+        else if (key) {
+          const reqs = (await query("select requisito_id, nombre from requisitos_documentales where mandante_id=$1 and tipo_recurso='trabajador' and activo=true", [mid])).rows;
+          reqId = (reqs.find((r) => transversalKey(r.nombre) === key) || {}).requisito_id || null;
+        }
+        if (!reqId) continue;
+        const ex = (await query("select estado, nombre_archivo from documentos where recurso_tipo='trabajador' and recurso_id=$1 and requisito_id=$2 and mandante_id=$3 and deleted_at is null order by created_at desc limit 1", [recurso_id, reqId, mid])).rows[0];
+        if (!ex) continue;
+        const m = (await query('select razon_social from mandantes where mandante_id=$1', [mid])).rows[0];
+        const c = (await query("select c.numero_oc from trabajador_asignaciones a join contratos c on c.contrato_id=a.contrato_id where a.trabajador_id=$1 and a.mandante_id=$2 and a.estado='activo' limit 1", [recurso_id, mid])).rows[0];
+        conflicts.push({ mandante_id: mid, mandante: m?.razon_social || '', contrato: c?.numero_oc || null, estado: ex.estado, nombre_archivo: ex.nombre_archivo || null, es_origen: mid === mandante_id });
+      }
+      return json({ conflicts });
+    }
 
     if (p[0] === 'accesos') {
       const { rut: rawRut, raw, tipo } = body;

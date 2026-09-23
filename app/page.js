@@ -1793,8 +1793,7 @@ function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, o
   const [selFaenas, setSelFaenas] = useState(() => otras.map((x) => x.mandante_id));
   const toggleFaena = (mid) => setSelFaenas((s) => s.includes(mid) ? s.filter((x) => x !== mid) : [...s, mid]);
   const [loading, setLoading] = useState(false);
-  const submit = async () => {
-    if (!file) return toast.error('Selecciona un archivo');
+  const doUpload = async (reemplazar) => {
     setLoading(true);
     try {
       const fd = new FormData();
@@ -1802,10 +1801,34 @@ function UploadDialog({ api, recurso_tipo, recurso_id, requisito, mandante_id, o
       fd.append('requisito_id', requisito.requisito_id); fd.append('mandante_id', mandante_id);
       if (emision) fd.append('fecha_emision', emision); if (venc) fd.append('fecha_vencimiento', venc);
       if (mostrarFaenas && selFaenas.length) fd.append('faenas', selFaenas.join(','));
+      if (reemplazar) fd.append('reemplazar', 'true');
       await api('/documentos/upload', { method: 'POST', body: fd });
       const extra = mostrarFaenas && selFaenas.length ? ` y replicado a ${selFaenas.length} faena(s)` : '';
       toast.success(`Documento cargado (en revisión)${extra}`); onDone();
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+  const submit = async () => {
+    if (!file) return toast.error('Selecciona un archivo');
+    if (mostrarFaenas) {
+      setLoading(true);
+      let conflicts = [];
+      try {
+        const r = await api('/documentos/check-replace', { method: 'POST', body: JSON.stringify({ recurso_id, requisito_id: requisito.requisito_id, mandante_id, faenas: selFaenas }) });
+        conflicts = r?.conflicts || [];
+      } catch (e) { /* si falla la verificación, continuamos como carga normal */ }
+      setLoading(false);
+      if (conflicts.length) {
+        const lista = conflicts.map((c) => `• ${c.mandante}${c.contrato ? ` · ${c.contrato}` : ''}${c.es_origen ? ' (esta faena)' : ''}`).join('\n');
+        const ok = await confirmDialog({
+          title: 'Reemplazar documento existente',
+          description: `El nuevo archivo "${file.name}" reemplazará el documento ya cargado en ${conflicts.length} faena(s):\n\n${lista}\n\nLos documentos anteriores quedarán sin efecto y el nuevo quedará en revisión. ¿Deseas continuar?`,
+          confirmText: 'Reemplazar',
+        });
+        if (!ok) return;
+        return doUpload(true);
+      }
+    }
+    return doUpload(false);
   };
   return (
     <Dialog open onOpenChange={onClose}><DialogContent>
