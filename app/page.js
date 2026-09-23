@@ -172,7 +172,7 @@ const NAV = [
   { group: 'Operación', items: [{ id: 'mandantes', label: 'Mandantes', icon: Building2 }, { id: 'contratos', label: 'Contratos', icon: FileSignature }] },
   { group: 'Recursos', items: [{ id: 'trabajadores', label: 'Trabajadores', icon: Users }, { id: 'vehiculos', label: 'Vehículos', icon: Truck }, { id: 'equipos', label: 'Equipos', icon: Wrench }] },
   { group: 'Acreditación', items: [{ id: 'revision', label: 'Pendientes de Revisión', icon: FileClock }, { id: 'vencimientos', label: 'Vencimientos', icon: CalendarClock }, { id: 'desvinculaciones', label: 'Personal Finiquitado', icon: UserMinus }] },
-  { group: 'Administración', holding: true, items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'accesos', label: 'Control de Acceso', icon: QrCode }, { id: 'manuales', label: 'Manuales', icon: BookOpen, super: true }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings, super: true }, { id: 'auditoria', label: 'Auditoría', icon: History }] },
+  { group: 'Administración', holding: true, items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'accesos', label: 'Control de Acceso', icon: QrCode }, { id: 'manuales', label: 'Manuales', icon: BookOpen, super: true }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings, super: true }, { id: 'auditoria', label: 'Auditoría', icon: History, super: true }] },
 ];
 
 function Shell({ token, profile, onLogout }) {
@@ -197,10 +197,10 @@ function Shell({ token, profile, onLogout }) {
   const isMandante = ['MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_VISOR', 'MANDANTE_PREVENCION'].includes(role);
   const perms = {
     upload: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_PREVENCION'].includes(role),
-    review: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'REVISOR', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
-    desvincular: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
-    del: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
-    crearTrab: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_ADMIN', 'MANDANTE_RRHH'].includes(role),
+    review: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'REVISOR', 'MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_PREVENCION'].includes(role),
+    desvincular: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_RRHH'].includes(role),
+    del: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_RRHH'].includes(role),
+    crearTrab: ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA', 'MANDANTE_RRHH'].includes(role),
   };
   const ctx = { api, profile, isSuper, canManage, perms, isMandante, openDetail, go };
 
@@ -268,7 +268,7 @@ function Shell({ token, profile, onLogout }) {
           {!detail && view === 'accesos' && <AccesosAdmin {...ctx} />}
           {!detail && view === 'manuales' && isSuper && <Manuales {...ctx} />}
           {!detail && view === 'mantenedores' && isSuper && <Mantenedores {...ctx} />}
-          {!detail && view === 'auditoria' && <Auditoria {...ctx} />}
+          {!detail && view === 'auditoria' && isSuper && <Auditoria {...ctx} />}
         </main>
 
         <footer className="border-t bg-white px-6 py-3 flex items-center justify-center gap-2 text-xs text-slate-400">
@@ -2537,16 +2537,76 @@ function Usuarios({ api, isSuper }) {
     </div>
   );
 }
+const AUDIT_LABEL = {
+  ver_documento: { t: 'Observó / descargó', c: 'bg-slate-100 text-slate-600' },
+  cargar_documento: { t: 'Cargó documento', c: 'bg-blue-100 text-[#1789bf]' },
+  aprobar_documento: { t: 'Aprobó documento', c: 'bg-emerald-100 text-emerald-700' },
+  rechazar_documento: { t: 'Rechazó documento', c: 'bg-red-100 text-red-700' },
+  eliminar_documento: { t: 'Eliminó documento', c: 'bg-red-100 text-red-700' },
+  crear_trabajador: { t: 'Creó trabajador', c: 'bg-emerald-100 text-emerald-700' },
+  editar_trabajador: { t: 'Editó trabajador', c: 'bg-amber-100 text-amber-700' },
+  desactivar_trabajador: { t: 'Desactivó trabajador', c: 'bg-slate-100 text-slate-600' },
+  desvincular_trabajador: { t: 'Finiquitó trabajador', c: 'bg-orange-100 text-orange-700' },
+  crear_usuario: { t: 'Creó usuario', c: 'bg-emerald-100 text-emerald-700' },
+  editar_usuario: { t: 'Editó usuario', c: 'bg-amber-100 text-amber-700' },
+  eliminar_usuario: { t: 'Eliminó usuario', c: 'bg-red-100 text-red-700' },
+  crear_mandante: { t: 'Creó mandante', c: 'bg-emerald-100 text-emerald-700' },
+  editar_mandante: { t: 'Editó mandante', c: 'bg-amber-100 text-amber-700' },
+  crear_contrato: { t: 'Creó contrato', c: 'bg-emerald-100 text-emerald-700' },
+  asignar_trabajador: { t: 'Asignó trabajador', c: 'bg-blue-100 text-[#1789bf]' },
+  asignar_vehiculo: { t: 'Asignó vehículo', c: 'bg-blue-100 text-[#1789bf]' },
+  asignar_equipo: { t: 'Asignó equipo', c: 'bg-blue-100 text-[#1789bf]' },
+};
+const auditLabel = (a) => AUDIT_LABEL[a] || { t: String(a || '').replace(/_/g, ' '), c: 'bg-slate-100 text-slate-600' };
+
 function Auditoria({ api }) {
-  const [data] = useData(api, '/auditoria');
+  const [eventos, setEventos] = useState(null);
+  const [acciones, setAcciones] = useState([]);
+  const [f, setF] = useState({ q: '', accion: 'all', desde: '', hasta: '' });
+  const load = useCallback(() => {
+    const qs = new URLSearchParams();
+    if (f.q.trim().length >= 2) qs.set('q', f.q.trim());
+    if (f.accion !== 'all') qs.set('accion', f.accion);
+    if (f.desde) qs.set('desde', f.desde);
+    if (f.hasta) qs.set('hasta', f.hasta);
+    api(`/auditoria?${qs.toString()}`).then((d) => { setEventos(d.eventos || []); if (d.acciones) setAcciones(d.acciones); }).catch((e) => toast.error(e.message));
+  }, [api, f]);
+  useEffect(() => { const t = setTimeout(load, 350); return () => clearTimeout(t); }, [load]);
+
+  const detalle = (r) => {
+    const v = r.valores_nuevos;
+    if (!v) return '—';
+    try { const o = typeof v === 'string' ? JSON.parse(v) : v; return Object.entries(o).map(([k, val]) => `${k}: ${val}`).join(' · ').slice(0, 90); } catch { return '—'; }
+  };
+  const exportar = () => {
+    const rows = (eventos || []).map((r) => [fdatetime(r.created_at), r.usuario, auditLabel(r.accion).t, r.entidad || '', detalle(r)]);
+    xlsxDownload('auditoria.xlsx', ['Fecha/Hora', 'Usuario', 'Acción', 'Entidad', 'Detalle'], rows, 'Auditoría');
+  };
+
   return (
     <div>
-      <PageHead title="Auditoría" sub="Trazabilidad de operaciones importantes" />
+      <PageHead title="Control de Cambios y Auditoría" sub="Quién cargó, observó, aprobó, rechazó, eliminó, finiquitó y más"
+        action={<Button variant="outline" onClick={exportar} disabled={!eventos?.length}><Download className="h-4 w-4 mr-1" />Exportar Excel</Button>} />
+      <div className="flex flex-wrap gap-2 mb-4">
+        <div className="relative">
+          <Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" />
+          <Input className="pl-9 w-64" placeholder="Buscar usuario, acción o entidad…" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} />
+        </div>
+        <Select value={f.accion} onValueChange={(v) => setF({ ...f, accion: v })}>
+          <SelectTrigger className="w-56"><SelectValue placeholder="Acción" /></SelectTrigger>
+          <SelectContent><SelectItem value="all">Todas las acciones</SelectItem>{acciones.map((a) => <SelectItem key={a} value={a}>{auditLabel(a).t}</SelectItem>)}</SelectContent>
+        </Select>
+        <div className="flex items-center gap-1"><Label className="text-xs text-slate-500">Desde</Label><Input type="date" className="w-40" value={f.desde} onChange={(e) => setF({ ...f, desde: e.target.value })} /></div>
+        <div className="flex items-center gap-1"><Label className="text-xs text-slate-500">Hasta</Label><Input type="date" className="w-40" value={f.hasta} onChange={(e) => setF({ ...f, hasta: e.target.value })} /></div>
+        {(f.q || f.accion !== 'all' || f.desde || f.hasta) && <Button variant="ghost" onClick={() => setF({ q: '', accion: 'all', desde: '', hasta: '' })}>Limpiar</Button>}
+      </div>
       <Table columns={[
-        { key: 'created_at', label: 'Fecha', render: (r) => fdatetime(r.created_at) },
-        { key: 'usuario', label: 'Usuario' }, { key: 'accion', label: 'Acción', render: (r) => <Badge variant="secondary">{r.accion}</Badge> },
-        { key: 'entidad', label: 'Entidad' },
-      ]} rows={data?.eventos} empty="Sin eventos" />
+        { key: 'created_at', label: 'Fecha / Hora', render: (r) => fdatetime(r.created_at) },
+        { key: 'usuario', label: 'Usuario', render: (r) => <span className="font-medium text-slate-700">{r.usuario}</span> },
+        { key: 'accion', label: 'Acción', render: (r) => <Badge className={`${auditLabel(r.accion).c} border-0`}>{auditLabel(r.accion).t}</Badge> },
+        { key: 'entidad', label: 'Entidad', render: (r) => <span className="capitalize text-slate-600">{r.entidad || '—'}</span> },
+        { key: 'detalle', label: 'Detalle', render: (r) => <span className="text-xs text-slate-500">{detalle(r)}</span> },
+      ]} rows={eventos} empty="Sin eventos" pageSize={20} />
     </div>
   );
 }

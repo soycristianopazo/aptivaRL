@@ -31,9 +31,9 @@ async function getProfile(request) {
 }
 const MANDANTE_ROLES = ['MANDANTE_ADMIN', 'MANDANTE_RRHH', 'MANDANTE_VISOR', 'MANDANTE_PREVENCION'];
 const ROLE_PERMS = {
-  MANDANTE_ADMIN: { upload: true, review: true, del: true, desvincular: true, manage: true, crear_trab: true },
+  MANDANTE_ADMIN: { upload: true, review: true, del: false, desvincular: false, manage: true, crear_trab: false },
   MANDANTE_RRHH: { upload: true, review: true, del: true, desvincular: true, manage: false, crear_trab: true },
-  MANDANTE_PREVENCION: { upload: true, review: false, del: false, desvincular: false, manage: false, crear_trab: false },
+  MANDANTE_PREVENCION: { upload: true, review: true, del: false, desvincular: false, manage: false, crear_trab: false },
   MANDANTE_VISOR: { upload: false, review: false, del: false, desvincular: false, manage: false, crear_trab: false },
 };
 // ¿Puede el usuario realizar 'action'? Holding (super/admin_empresa) siempre; mandante según su rol.
@@ -57,9 +57,9 @@ const scopeSql = (p, col, args) => {
 };
 const isSuper = (p) => p?.role_codigo === 'SUPER_ADMIN_HOLDING';
 const canManage = (p) => p && ['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(p.role_codigo);
-// Visor no puede ver el documento "Contrato de trabajo" en ningún mandante
+// Visor y Prevención no pueden ver el documento "Contrato de trabajo" en ningún mandante
 const isContratoTrabajo = (nombre) => /contrato\s+de\s+trabajo/i.test(nombre || '');
-const hideContratoForVisor = (p) => p?.role_codigo === 'MANDANTE_VISOR';
+const hideContratoForVisor = (p) => p?.role_codigo === 'MANDANTE_VISOR' || p?.role_codigo === 'MANDANTE_PREVENCION';
 // Limpia el string leído desde el QR/2D de la cédula chilena y devuelve el RUT normalizado (dígitos+DV, K mayúscula)
 function limpiarRutScan(raw) {
   let s = String(raw || '').trim();
@@ -569,6 +569,7 @@ export async function GET(request, { params }) {
     if (p[0] === 'documentos' && p[1] && p[2] === 'url') {
       const d = (await query('select * from documentos where documento_id=$1', [p[1]])).rows[0];
       if (!d?.path) return json({ error: 'Sin archivo' }, 404);
+      await audit(profile, 'ver_documento', d.recurso_tipo, d.recurso_id, { documento_id: p[1], nombre_archivo: d.nombre_archivo });
       return json({ url: await storageSignedUrl(d.path, 900), mime: d.mime || null, nombre_archivo: d.nombre_archivo || null });
     }
 
@@ -623,7 +624,18 @@ export async function GET(request, { params }) {
       sql += ' order by a.marcado_at desc, a.created_at desc limit 2000';
       return json({ accesos: (await query(sql, args)).rows });
     }
-    if (p[0] === 'auditoria') { if (!canManage(profile)) return json({ error: 'No autorizado' }, 403); return json({ eventos: (await query('select * from auditoria order by created_at desc limit 200')).rows }); }
+    if (p[0] === 'auditoria') {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const args = []; let sql = 'select * from auditoria where 1=1';
+      const acc = searchParams.get('accion'); if (acc) { args.push(acc); sql += ` and accion = $${args.length}`; }
+      const qq = (searchParams.get('q') || '').trim(); if (qq.length >= 2) { args.push(`%${qq}%`); sql += ` and (usuario ilike $${args.length} or accion ilike $${args.length} or entidad ilike $${args.length})`; }
+      const desde = searchParams.get('desde'); if (desde) { args.push(desde); sql += ` and created_at >= $${args.length}::date`; }
+      const hasta = searchParams.get('hasta'); if (hasta) { args.push(hasta); sql += ` and created_at < ($${args.length}::date + interval '1 day')`; }
+      sql += ' order by created_at desc limit 1000';
+      const eventos = (await query(sql, args)).rows;
+      const acciones = (await query('select distinct accion from auditoria order by accion')).rows.map((r) => r.accion);
+      return json({ eventos, acciones });
+    }
 
     if (p[0] === 'notificaciones') {
       const rows = (await query(`select d.documento_id, d.recurso_tipo, d.recurso_id, d.fecha_vencimiento, coalesce(r.nombre, d.nombre_archivo) as documento, coalesce(r.dias_alerta,30) as dias_alerta, m.razon_social as mandante, (d.fecha_vencimiento - current_date) as dias_restantes,
