@@ -19,9 +19,16 @@ async function getProfile(request) {
   const r = await query('select * from usuarios_perfiles where auth_user_id=$1 and activo=true', [authUser.id]);
   const profile = r.rows[0] || null;
   if (profile && MANDANTE_ROLES.includes(profile.role_codigo)) {
-    const ms = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [profile.perfil_id])).rows.map((x) => x.mandante_id);
-    profile.mandante_ids = ms;
-    profile.is_mandante = true;
+    if (profile.role_codigo === 'MANDANTE_RRHH') {
+      // RR.HH.: alcance GLOBAL (ve y actúa sobre todos los mandantes, sin requerir asignación),
+      // conservando su set de permisos de RR.HH. (crear trabajador, cargar/descargar/eliminar, aprobar/rechazar, asignar/quitar, finiquitar).
+      profile.is_mandante = false;
+      profile.mandante_ids = [];
+    } else {
+      const ms = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [profile.perfil_id])).rows.map((x) => x.mandante_id);
+      profile.mandante_ids = ms;
+      profile.is_mandante = true;
+    }
   } else if (profile) {
     profile.is_mandante = false;
   }

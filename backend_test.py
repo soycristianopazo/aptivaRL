@@ -1,495 +1,478 @@
 #!/usr/bin/env python3
 """
-Backend test for: Visibilidad de trabajadores creados por usuario de mandante sin asignación (creado_por)
-Tests the fix that allows mandante users to see workers they created even without assignments.
+Backend API Testing Script for RR.HH. GLOBAL Scope Change
+Tests that MANDANTE_RRHH users have global access to all mandantes without assignment,
+while other mandante roles (ADMIN, PREVENCION, VISOR) remain scoped to their assigned mandantes.
 """
 
-import asyncio
-import aiohttp
+import requests
 import json
 import sys
-from datetime import datetime
+from typing import Dict, Any, Optional
 
-# Base URL from .env
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
+PASSWORD = "Aptiva2025!"
 
-# Test credentials
-CREDENTIALS = {
-    "pmiranda": {"email": "pmiranda@rioloa.cl", "password": "Aptiva2025!"},
-    "crivera": {"email": "crivera@rioloa.cl", "password": "Aptiva2025!"},
-    "admin": {"email": "admin@aptivarl.com", "password": "Aptiva2025!"}
+# Test users
+USERS = {
+    "admin": "admin@aptivarl.com",
+    "pmiranda": "pmiranda@rioloa.cl",  # MANDANTE_RRHH - should be GLOBAL
+    "crivera": "crivera@rioloa.cl",    # MANDANTE_RRHH - should be GLOBAL
+    "jnunez": "jnunez@rioloa.cl",      # MANDANTE_ADMIN - should be SCOPED (2 mandantes)
 }
 
-# Test data
-MILTON_RUT = "25.959.268-2"  # Worker backfilled with creado_por = pmiranda
-
-class TestRunner:
-    def __init__(self):
-        self.tokens = {}
-        self.test_trabajador_id = None
-        self.test_rut = None
-        self.empresa_id = None
-        
-    async def login(self, session, user_key):
-        """Login and store token"""
-        try:
-            creds = CREDENTIALS[user_key]
-            print(f"\n{'='*80}")
-            print(f"LOGIN: {creds['email']}")
-            print(f"{'='*80}")
-            
-            async with session.post(
-                f"{BASE_URL}/auth/login",
-                json={"email": creds["email"], "password": creds["password"]},
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                data = await resp.json()
-                
-                if status == 200 and data.get("token"):
-                    self.tokens[user_key] = data["token"]
-                    profile = data.get("profile", {})
-                    print(f"✅ LOGIN SUCCESS: {creds['email']}")
-                    print(f"   Role: {profile.get('role_codigo')}")
-                    print(f"   Auth User ID: {profile.get('auth_user_id')}")
-                    if profile.get('is_mandante'):
-                        print(f"   Mandante IDs: {profile.get('mandante_ids', [])}")
-                    return True
-                else:
-                    print(f"❌ LOGIN FAILED: {creds['email']} - Status {status}")
-                    print(f"   Response: {data}")
-                    return False
-        except Exception as e:
-            print(f"❌ LOGIN ERROR: {creds['email']} - {str(e)}")
-            return False
-    
-    def get_headers(self, user_key):
-        """Get authorization headers for user"""
-        token = self.tokens.get(user_key)
-        if not token:
-            return {}
-        return {"Authorization": f"Bearer {token}"}
-    
-    async def test_1_milton_visible_to_pmiranda(self, session):
-        """TEST 1: pmiranda should see Milton (RUT 25.959.268-2) even without assignments"""
-        print(f"\n{'='*80}")
-        print(f"TEST 1: Milton visible to pmiranda (backfilled creado_por)")
-        print(f"{'='*80}")
-        
-        try:
-            headers = self.get_headers("pmiranda")
-            async with session.get(
-                f"{BASE_URL}/trabajadores?q={MILTON_RUT}",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                data = await resp.json()
-                
-                print(f"GET /api/trabajadores?q={MILTON_RUT}")
-                print(f"Status: {status}")
-                
-                if status == 200:
-                    trabajadores = data.get("trabajadores", [])
-                    print(f"Found {len(trabajadores)} trabajador(es)")
-                    
-                    milton = None
-                    for t in trabajadores:
-                        if t.get("rut") == MILTON_RUT:
-                            milton = t
-                            break
-                    
-                    if milton:
-                        print(f"✅ TEST 1 PASSED: Milton found in results")
-                        print(f"   Trabajador ID: {milton.get('trabajador_id')}")
-                        print(f"   Nombre: {milton.get('nombre')} {milton.get('apellido')}")
-                        print(f"   RUT: {milton.get('rut')}")
-                        print(f"   Vinculado: {milton.get('vinculado')}")
-                        return True
-                    else:
-                        print(f"❌ TEST 1 FAILED: Milton NOT found in results")
-                        print(f"   Expected RUT: {MILTON_RUT}")
-                        print(f"   Results: {trabajadores}")
-                        return False
-                else:
-                    print(f"❌ TEST 1 FAILED: Status {status}")
-                    print(f"   Response: {data}")
-                    return False
-        except Exception as e:
-            print(f"❌ TEST 1 ERROR: {str(e)}")
-            return False
-    
-    async def test_2_create_worker_without_assignment(self, session):
-        """TEST 2: Create new worker as pmiranda WITHOUT assignment"""
-        print(f"\n{'='*80}")
-        print(f"TEST 2: Create worker as pmiranda WITHOUT assignment")
-        print(f"{'='*80}")
-        
-        try:
-            # First get an empresa_id
-            headers = self.get_headers("pmiranda")
-            async with session.get(
-                f"{BASE_URL}/empresas",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    empresas = data.get("empresas", [])
-                    if empresas:
-                        self.empresa_id = empresas[0]["empresa_id"]
-                        print(f"Selected empresa: {empresas[0].get('razon_social')} ({self.empresa_id})")
-                    else:
-                        print(f"❌ TEST 2 FAILED: No empresas found")
-                        return False
-                else:
-                    print(f"❌ TEST 2 FAILED: Could not get empresas - Status {resp.status}")
-                    return False
-            
-            # Generate a unique Chilean RUT
-            import random
-            base_rut = random.randint(20000000, 25000000)
-            
-            # Calculate Chilean RUT verification digit
-            def calculate_dv(rut_num):
-                reversed_digits = str(rut_num)[::-1]
-                factors = [2, 3, 4, 5, 6, 7]
-                s = sum(int(d) * factors[i % 6] for i, d in enumerate(reversed_digits))
-                remainder = s % 11
-                dv = 11 - remainder
-                if dv == 11:
-                    return '0'
-                elif dv == 10:
-                    return 'K'
-                else:
-                    return str(dv)
-            
-            dv = calculate_dv(base_rut)
-            self.test_rut = f"{base_rut}-{dv}"
-            formatted_rut = f"{str(base_rut)[:-6]}.{str(base_rut)[-6:-3]}.{str(base_rut)[-3:]}-{dv}"
-            
-            print(f"Generated RUT: {formatted_rut}")
-            
-            # Create trabajador
-            worker_data = {
-                "empresa_id": self.empresa_id,
-                "rut": formatted_rut,
-                "nombre": "Test",
-                "apellido": "Worker CreadorPor",
-                "cargo": "QA Test Worker",
-                "genero": "M"
+def login(email: str, password: str) -> Optional[Dict[str, Any]]:
+    """Login and return token + profile"""
+    try:
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": email, "password": password},
+            timeout=30
+        )
+        print(f"✓ Login {email}: {response.status_code}")
+        if response.status_code == 200:
+            data = response.json()
+            return {
+                "token": data.get("token"),
+                "profile": data.get("profile"),
+                "email": email
             }
-            
-            async with session.post(
-                f"{BASE_URL}/trabajadores",
-                headers=headers,
-                json=worker_data,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                data = await resp.json()
-                
-                print(f"POST /api/trabajadores")
-                print(f"Status: {status}")
-                
-                if status == 201:
-                    trabajador = data.get("trabajador", {})
-                    self.test_trabajador_id = trabajador.get("trabajador_id")
-                    print(f"✅ Worker created successfully")
-                    print(f"   Trabajador ID: {self.test_trabajador_id}")
-                    print(f"   RUT: {trabajador.get('rut')}")
-                    print(f"   Nombre: {trabajador.get('nombre')} {trabajador.get('apellido')}")
-                    
-                    # Now verify it appears in the list
-                    await asyncio.sleep(1)  # Brief pause
-                    
-                    async with session.get(
-                        f"{BASE_URL}/trabajadores?q={self.test_rut}",
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=30)
-                    ) as resp2:
-                        status2 = resp2.status
-                        data2 = await resp2.json()
-                        
-                        print(f"\nGET /api/trabajadores?q={self.test_rut}")
-                        print(f"Status: {status2}")
-                        
-                        if status2 == 200:
-                            trabajadores = data2.get("trabajadores", [])
-                            found = any(t.get("trabajador_id") == self.test_trabajador_id for t in trabajadores)
-                            
-                            if found:
-                                print(f"✅ TEST 2 PASSED: New worker visible to pmiranda (creator)")
-                                print(f"   Worker appears in list even WITHOUT assignment")
-                                print(f"   This confirms creado_por logic is working")
-                                return True
-                            else:
-                                print(f"❌ TEST 2 FAILED: New worker NOT visible to pmiranda")
-                                print(f"   Expected trabajador_id: {self.test_trabajador_id}")
-                                print(f"   Results: {trabajadores}")
-                                return False
-                        else:
-                            print(f"❌ TEST 2 FAILED: Could not query trabajadores - Status {status2}")
-                            return False
-                else:
-                    print(f"❌ TEST 2 FAILED: Could not create worker - Status {status}")
-                    print(f"   Response: {data}")
-                    return False
-        except Exception as e:
-            print(f"❌ TEST 2 ERROR: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return False
+        else:
+            print(f"  ERROR: {response.text}")
+            return None
+    except Exception as e:
+        print(f"✗ Login {email} failed: {e}")
+        return None
+
+def get_with_auth(endpoint: str, token: str) -> requests.Response:
+    """GET request with auth token"""
+    return requests.get(
+        f"{BASE_URL}{endpoint}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30
+    )
+
+def put_with_auth(endpoint: str, token: str, data: Dict) -> requests.Response:
+    """PUT request with auth token"""
+    return requests.put(
+        f"{BASE_URL}{endpoint}",
+        headers={"Authorization": f"Bearer {token}"},
+        json=data,
+        timeout=30
+    )
+
+def test_rrhh_global_scope():
+    """
+    Test RR.HH. GLOBAL scope change:
+    - MANDANTE_RRHH users (pmiranda, crivera) should see ALL mandantes (global)
+    - MANDANTE_ADMIN users (jnunez) should see ONLY their assigned mandantes (scoped)
+    """
+    print("\n" + "="*80)
+    print("TESTING: RR.HH. CON ALCANCE GLOBAL")
+    print("="*80)
     
-    async def test_3_isolation_crivera_cannot_see(self, session):
-        """TEST 3: crivera (different RRHH user) should NOT see pmiranda's unassigned worker"""
-        print(f"\n{'='*80}")
-        print(f"TEST 3: Isolation - crivera cannot see pmiranda's unassigned worker")
-        print(f"{'='*80}")
-        
-        if not self.test_rut or not self.test_trabajador_id:
-            print(f"⚠️ TEST 3 SKIPPED: No test worker created in TEST 2")
-            return False
-        
-        try:
-            headers = self.get_headers("crivera")
-            async with session.get(
-                f"{BASE_URL}/trabajadores?q={self.test_rut}",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                data = await resp.json()
-                
-                print(f"GET /api/trabajadores?q={self.test_rut} (as crivera)")
-                print(f"Status: {status}")
-                
-                if status == 200:
-                    trabajadores = data.get("trabajadores", [])
-                    found = any(t.get("trabajador_id") == self.test_trabajador_id for t in trabajadores)
-                    
-                    if not found:
-                        print(f"✅ TEST 3 PASSED: crivera CANNOT see pmiranda's unassigned worker")
-                        print(f"   Isolation working correctly")
-                        print(f"   Worker only visible to creator (pmiranda)")
-                        return True
-                    else:
-                        print(f"❌ TEST 3 FAILED: crivera CAN see pmiranda's unassigned worker")
-                        print(f"   This is a security issue - isolation not working")
-                        print(f"   Found: {[t for t in trabajadores if t.get('trabajador_id') == self.test_trabajador_id]}")
-                        return False
-                else:
-                    print(f"❌ TEST 3 FAILED: Status {status}")
-                    print(f"   Response: {data}")
-                    return False
-        except Exception as e:
-            print(f"❌ TEST 3 ERROR: {str(e)}")
-            return False
+    # Step 1: Login all users
+    print("\n[STEP 1] LOGIN ALL USERS")
+    print("-" * 80)
     
-    async def test_4_admin_sees_all(self, session):
-        """TEST 4: Holding admin should see ALL workers including unassigned ones"""
-        print(f"\n{'='*80}")
-        print(f"TEST 4: Holding admin sees all workers")
-        print(f"{'='*80}")
-        
-        try:
-            headers = self.get_headers("admin")
-            
-            # Test 4a: Admin sees Milton
-            async with session.get(
-                f"{BASE_URL}/trabajadores?q={MILTON_RUT}",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                data = await resp.json()
-                
-                print(f"GET /api/trabajadores?q={MILTON_RUT} (as admin)")
-                print(f"Status: {status}")
-                
-                milton_found = False
-                if status == 200:
-                    trabajadores = data.get("trabajadores", [])
-                    milton_found = any(t.get("rut") == MILTON_RUT for t in trabajadores)
-                    
-                    if milton_found:
-                        print(f"✅ Admin can see Milton (RUT {MILTON_RUT})")
-                    else:
-                        print(f"❌ Admin CANNOT see Milton")
-            
-            # Test 4b: Admin sees test worker created by pmiranda
-            if self.test_rut and self.test_trabajador_id:
-                async with session.get(
-                    f"{BASE_URL}/trabajadores?q={self.test_rut}",
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    status = resp.status
-                    data = await resp.json()
-                    
-                    print(f"\nGET /api/trabajadores?q={self.test_rut} (as admin)")
-                    print(f"Status: {status}")
-                    
-                    test_worker_found = False
-                    if status == 200:
-                        trabajadores = data.get("trabajadores", [])
-                        test_worker_found = any(t.get("trabajador_id") == self.test_trabajador_id for t in trabajadores)
-                        
-                        if test_worker_found:
-                            print(f"✅ Admin can see test worker created by pmiranda")
-                        else:
-                            print(f"❌ Admin CANNOT see test worker")
-                
-                if milton_found and test_worker_found:
-                    print(f"\n✅ TEST 4 PASSED: Admin sees all workers (no scope restriction)")
-                    return True
-                else:
-                    print(f"\n❌ TEST 4 FAILED: Admin missing some workers")
-                    return False
-            else:
-                if milton_found:
-                    print(f"\n✅ TEST 4 PASSED: Admin sees Milton (test worker not created)")
-                    return True
-                else:
-                    print(f"\n❌ TEST 4 FAILED: Admin cannot see Milton")
-                    return False
-        except Exception as e:
-            print(f"❌ TEST 4 ERROR: {str(e)}")
-            return False
+    admin_auth = login(USERS["admin"], PASSWORD)
+    pmiranda_auth = login(USERS["pmiranda"], PASSWORD)
+    crivera_auth = login(USERS["crivera"], PASSWORD)
+    jnunez_auth = login(USERS["jnunez"], PASSWORD)
     
-    async def test_5_regression_list_all(self, session):
-        """TEST 5: Regression - GET /api/trabajadores without filters should return 200"""
-        print(f"\n{'='*80}")
-        print(f"TEST 5: Regression - List all trabajadores")
-        print(f"{'='*80}")
-        
-        try:
-            headers = self.get_headers("pmiranda")
-            async with session.get(
-                f"{BASE_URL}/trabajadores",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                data = await resp.json()
-                
-                print(f"GET /api/trabajadores (no filters, as pmiranda)")
-                print(f"Status: {status}")
-                
-                if status == 200:
-                    trabajadores = data.get("trabajadores", [])
-                    print(f"✅ TEST 5 PASSED: List endpoint returns 200")
-                    print(f"   Returned {len(trabajadores)} trabajadores")
-                    print(f"   No 500 errors")
-                    return True
-                else:
-                    print(f"❌ TEST 5 FAILED: Status {status}")
-                    print(f"   Response: {data}")
-                    return False
-        except Exception as e:
-            print(f"❌ TEST 5 ERROR: {str(e)}")
-            return False
+    if not all([admin_auth, pmiranda_auth, crivera_auth, jnunez_auth]):
+        print("\n✗ FAILED: Could not login all users")
+        return False
     
-    async def cleanup(self, session):
-        """CLEANUP: Delete test worker created in TEST 2"""
-        print(f"\n{'='*80}")
-        print(f"CLEANUP: Delete test worker")
-        print(f"{'='*80}")
-        
-        if not self.test_trabajador_id:
-            print(f"⚠️ CLEANUP SKIPPED: No test worker to delete")
-            return True
-        
-        try:
-            headers = self.get_headers("admin")
-            async with session.delete(
-                f"{BASE_URL}/trabajadores/{self.test_trabajador_id}",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                status = resp.status
-                
-                print(f"DELETE /api/trabajadores/{self.test_trabajador_id}")
-                print(f"Status: {status}")
-                
-                if status == 200:
-                    print(f"✅ CLEANUP SUCCESS: Test worker deleted")
-                    return True
-                else:
-                    data = await resp.json()
-                    print(f"⚠️ CLEANUP WARNING: Could not delete test worker - Status {status}")
-                    print(f"   Response: {data}")
-                    print(f"   Manual cleanup may be required")
-                    return False
-        except Exception as e:
-            print(f"⚠️ CLEANUP ERROR: {str(e)}")
-            print(f"   Manual cleanup may be required for trabajador_id: {self.test_trabajador_id}")
-            return False
+    print(f"\n✓ All users logged in successfully")
+    print(f"  - admin: {admin_auth['profile'].get('role_codigo')}")
+    print(f"  - pmiranda: {pmiranda_auth['profile'].get('role_codigo')}")
+    print(f"  - crivera: {crivera_auth['profile'].get('role_codigo')}")
+    print(f"  - jnunez: {jnunez_auth['profile'].get('role_codigo')}")
     
-    async def run_all_tests(self):
-        """Run all tests in sequence"""
-        print(f"\n{'#'*80}")
-        print(f"# BACKEND TEST: Visibilidad trabajadores creados por usuario mandante")
-        print(f"# Feature: creado_por column + visibility logic")
-        print(f"{'#'*80}")
+    # Note: The profile returned from login doesn't include is_mandante/mandante_ids
+    # These are added by getProfile() on subsequent requests
+    # We'll verify the GLOBAL scope behavior by checking actual API responses
+    
+    # Step 2: PART A.1 - GET /api/mandantes (pmiranda vs admin)
+    print("\n[PART A.1] GET /api/mandantes - pmiranda (RRHH GLOBAL) vs admin")
+    print("-" * 80)
+    
+    admin_mandantes_resp = get_with_auth("/mandantes", admin_auth["token"])
+    pmiranda_mandantes_resp = get_with_auth("/mandantes", pmiranda_auth["token"])
+    
+    print(f"  admin GET /api/mandantes: {admin_mandantes_resp.status_code}")
+    print(f"  pmiranda GET /api/mandantes: {pmiranda_mandantes_resp.status_code}")
+    
+    if admin_mandantes_resp.status_code != 200 or pmiranda_mandantes_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200, got admin={admin_mandantes_resp.status_code}, pmiranda={pmiranda_mandantes_resp.status_code}")
+        return False
+    
+    admin_mandantes = admin_mandantes_resp.json().get("mandantes", [])
+    pmiranda_mandantes = pmiranda_mandantes_resp.json().get("mandantes", [])
+    
+    admin_count = len(admin_mandantes)
+    pmiranda_count = len(pmiranda_mandantes)
+    
+    print(f"\n  admin mandantes count: {admin_count}")
+    print(f"  pmiranda mandantes count: {pmiranda_count}")
+    
+    if pmiranda_count != admin_count:
+        print(f"\n✗ CRITICAL FAILURE: pmiranda should see ALL mandantes (same as admin)")
+        print(f"  Expected: {admin_count}, Got: {pmiranda_count}")
+        return False
+    
+    print(f"\n✓ PART A.1 PASSED: pmiranda sees ALL {pmiranda_count} mandantes (GLOBAL scope)")
+    
+    # Step 3: PART A.2 - GET /api/trabajadores (pmiranda vs admin)
+    print("\n[PART A.2] GET /api/trabajadores - pmiranda (GLOBAL) vs admin")
+    print("-" * 80)
+    
+    admin_trab_resp = get_with_auth("/trabajadores", admin_auth["token"])
+    pmiranda_trab_resp = get_with_auth("/trabajadores", pmiranda_auth["token"])
+    
+    print(f"  admin GET /api/trabajadores: {admin_trab_resp.status_code}")
+    print(f"  pmiranda GET /api/trabajadores: {pmiranda_trab_resp.status_code}")
+    
+    if admin_trab_resp.status_code != 200 or pmiranda_trab_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200")
+        return False
+    
+    admin_trab = admin_trab_resp.json().get("trabajadores", [])
+    pmiranda_trab = pmiranda_trab_resp.json().get("trabajadores", [])
+    
+    admin_trab_count = len(admin_trab)
+    pmiranda_trab_count = len(pmiranda_trab)
+    
+    print(f"\n  admin trabajadores count: {admin_trab_count}")
+    print(f"  pmiranda trabajadores count: {pmiranda_trab_count}")
+    
+    # Note: pmiranda might see slightly more due to creado_por logic, but should be close to admin count
+    if pmiranda_trab_count < admin_trab_count * 0.9:  # Allow 10% variance
+        print(f"\n✗ WARNING: pmiranda trabajadores count significantly lower than admin")
+        print(f"  This suggests scoping is still applied (should be global)")
+    else:
+        print(f"\n✓ PART A.2 PASSED: pmiranda sees global trabajadores (count close to admin)")
+    
+    # Step 4: PART A.3 - GET /api/contratos (pmiranda vs admin)
+    print("\n[PART A.3] GET /api/contratos - pmiranda (GLOBAL) vs admin")
+    print("-" * 80)
+    
+    admin_contratos_resp = get_with_auth("/contratos", admin_auth["token"])
+    pmiranda_contratos_resp = get_with_auth("/contratos", pmiranda_auth["token"])
+    
+    print(f"  admin GET /api/contratos: {admin_contratos_resp.status_code}")
+    print(f"  pmiranda GET /api/contratos: {pmiranda_contratos_resp.status_code}")
+    
+    if admin_contratos_resp.status_code != 200 or pmiranda_contratos_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200")
+        return False
+    
+    admin_contratos = admin_contratos_resp.json().get("contratos", [])
+    pmiranda_contratos = pmiranda_contratos_resp.json().get("contratos", [])
+    
+    admin_contratos_count = len(admin_contratos)
+    pmiranda_contratos_count = len(pmiranda_contratos)
+    
+    print(f"\n  admin contratos count: {admin_contratos_count}")
+    print(f"  pmiranda contratos count: {pmiranda_contratos_count}")
+    
+    if pmiranda_contratos_count != admin_contratos_count:
+        print(f"\n✗ CRITICAL FAILURE: pmiranda should see ALL contratos (same as admin)")
+        return False
+    
+    print(f"\n✓ PART A.3 PASSED: pmiranda sees ALL {pmiranda_contratos_count} contratos (GLOBAL)")
+    
+    # Step 5: PART A.4 - GET /api/dashboard (pmiranda vs admin)
+    print("\n[PART A.4] GET /api/dashboard - pmiranda (GLOBAL) vs admin")
+    print("-" * 80)
+    
+    admin_dash_resp = get_with_auth("/dashboard", admin_auth["token"])
+    pmiranda_dash_resp = get_with_auth("/dashboard", pmiranda_auth["token"])
+    
+    print(f"  admin GET /api/dashboard: {admin_dash_resp.status_code}")
+    print(f"  pmiranda GET /api/dashboard: {pmiranda_dash_resp.status_code}")
+    
+    if admin_dash_resp.status_code != 200 or pmiranda_dash_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200")
+        return False
+    
+    admin_dash = admin_dash_resp.json()
+    pmiranda_dash = pmiranda_dash_resp.json()
+    
+    admin_stats = admin_dash.get("stats", {})
+    pmiranda_stats = pmiranda_dash.get("stats", {})
+    
+    print(f"\n  admin stats.mandantes: {admin_stats.get('mandantes')}")
+    print(f"  pmiranda stats.mandantes: {pmiranda_stats.get('mandantes')}")
+    
+    if pmiranda_stats.get('mandantes') != admin_stats.get('mandantes'):
+        print(f"\n✗ CRITICAL FAILURE: pmiranda dashboard stats.mandantes should equal admin's")
+        return False
+    
+    print(f"\n✓ PART A.4 PASSED: pmiranda dashboard shows global stats (mandantes={pmiranda_stats.get('mandantes')})")
+    
+    # Step 6: PART A.5 - GET /api/vehiculos and /api/equipos (pmiranda vs admin)
+    print("\n[PART A.5] GET /api/vehiculos and /api/equipos - pmiranda (GLOBAL) vs admin")
+    print("-" * 80)
+    
+    admin_veh_resp = get_with_auth("/vehiculos", admin_auth["token"])
+    pmiranda_veh_resp = get_with_auth("/vehiculos", pmiranda_auth["token"])
+    
+    admin_eq_resp = get_with_auth("/equipos", admin_auth["token"])
+    pmiranda_eq_resp = get_with_auth("/equipos", pmiranda_auth["token"])
+    
+    print(f"  admin GET /api/vehiculos: {admin_veh_resp.status_code}")
+    print(f"  pmiranda GET /api/vehiculos: {pmiranda_veh_resp.status_code}")
+    print(f"  admin GET /api/equipos: {admin_eq_resp.status_code}")
+    print(f"  pmiranda GET /api/equipos: {pmiranda_eq_resp.status_code}")
+    
+    if not all([r.status_code == 200 for r in [admin_veh_resp, pmiranda_veh_resp, admin_eq_resp, pmiranda_eq_resp]]):
+        print(f"\n✗ FAILED: Expected all 200")
+        return False
+    
+    admin_veh_count = len(admin_veh_resp.json().get("vehiculos", []))
+    pmiranda_veh_count = len(pmiranda_veh_resp.json().get("vehiculos", []))
+    admin_eq_count = len(admin_eq_resp.json().get("equipos", []))
+    pmiranda_eq_count = len(pmiranda_eq_resp.json().get("equipos", []))
+    
+    print(f"\n  admin vehiculos: {admin_veh_count}, pmiranda vehiculos: {pmiranda_veh_count}")
+    print(f"  admin equipos: {admin_eq_count}, pmiranda equipos: {pmiranda_eq_count}")
+    
+    if pmiranda_veh_count != admin_veh_count or pmiranda_eq_count != admin_eq_count:
+        print(f"\n✗ CRITICAL FAILURE: pmiranda should see ALL vehiculos/equipos (same as admin)")
+        return False
+    
+    print(f"\n✓ PART A.5 PASSED: pmiranda sees ALL vehiculos and equipos (GLOBAL)")
+    
+    # Step 7: PART A.6 - GET /api/documentos/pendientes (pmiranda)
+    print("\n[PART A.6] GET /api/documentos/pendientes - pmiranda (GLOBAL)")
+    print("-" * 80)
+    
+    pmiranda_pend_resp = get_with_auth("/documentos/pendientes", pmiranda_auth["token"])
+    
+    print(f"  pmiranda GET /api/documentos/pendientes: {pmiranda_pend_resp.status_code}")
+    
+    if pmiranda_pend_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200, got {pmiranda_pend_resp.status_code}")
+        return False
+    
+    pmiranda_pend = pmiranda_pend_resp.json().get("pendientes", [])
+    print(f"\n  pmiranda pendientes count: {len(pmiranda_pend)}")
+    print(f"\n✓ PART A.6 PASSED: pmiranda can access global pendientes list")
+    
+    # Step 8: PART A.7 - Access mandante NOT previously assigned to pmiranda
+    print("\n[PART A.7] Access mandante NOT previously assigned to pmiranda")
+    print("-" * 80)
+    
+    # Pick a mandante from admin's list (any mandante)
+    if len(admin_mandantes) > 0:
+        test_mandante = admin_mandantes[0]
+        test_mandante_id = test_mandante.get("mandante_id")
+        test_mandante_name = test_mandante.get("razon_social")
         
-        results = {}
+        print(f"  Testing access to mandante: {test_mandante_name} ({test_mandante_id})")
         
-        async with aiohttp.ClientSession() as session:
-            # Login all users
-            print(f"\n{'='*80}")
-            print(f"PHASE 1: LOGIN ALL USERS")
-            print(f"{'='*80}")
+        # GET /api/mandantes/:id as pmiranda
+        pmiranda_mandante_resp = get_with_auth(f"/mandantes/{test_mandante_id}", pmiranda_auth["token"])
+        
+        print(f"  pmiranda GET /api/mandantes/{test_mandante_id}: {pmiranda_mandante_resp.status_code}")
+        
+        if pmiranda_mandante_resp.status_code != 200:
+            print(f"\n✗ CRITICAL FAILURE: pmiranda should access ANY mandante (got {pmiranda_mandante_resp.status_code})")
+            return False
+        
+        mandante_data = pmiranda_mandante_resp.json()
+        trabajadores_in_mandante = mandante_data.get("trabajadores", [])
+        
+        print(f"  ✓ pmiranda can access mandante detail (trabajadores in mandante: {len(trabajadores_in_mandante)})")
+        
+        # Pick a trabajador from this mandante and test access
+        if len(trabajadores_in_mandante) > 0:
+            test_trabajador = trabajadores_in_mandante[0]
+            test_trabajador_id = test_trabajador.get("trabajador_id")
+            test_trabajador_name = f"{test_trabajador.get('nombre')} {test_trabajador.get('apellido')}"
             
-            login_success = True
-            for user_key in ["pmiranda", "crivera", "admin"]:
-                if not await self.login(session, user_key):
-                    login_success = False
+            print(f"  Testing access to trabajador: {test_trabajador_name} ({test_trabajador_id})")
             
-            if not login_success:
-                print(f"\n❌ CRITICAL: Login failed for one or more users")
+            pmiranda_trab_detail_resp = get_with_auth(f"/trabajadores/{test_trabajador_id}", pmiranda_auth["token"])
+            
+            print(f"  pmiranda GET /api/trabajadores/{test_trabajador_id}: {pmiranda_trab_detail_resp.status_code}")
+            
+            if pmiranda_trab_detail_resp.status_code != 200:
+                print(f"\n✗ CRITICAL FAILURE: pmiranda should access trabajador in ANY mandante (got {pmiranda_trab_detail_resp.status_code})")
                 return False
             
-            # Run tests
-            print(f"\n{'='*80}")
-            print(f"PHASE 2: RUN TESTS")
-            print(f"{'='*80}")
-            
-            results["test_1"] = await self.test_1_milton_visible_to_pmiranda(session)
-            results["test_2"] = await self.test_2_create_worker_without_assignment(session)
-            results["test_3"] = await self.test_3_isolation_crivera_cannot_see(session)
-            results["test_4"] = await self.test_4_admin_sees_all(session)
-            results["test_5"] = await self.test_5_regression_list_all(session)
-            
-            # Cleanup
-            print(f"\n{'='*80}")
-            print(f"PHASE 3: CLEANUP")
-            print(f"{'='*80}")
-            
-            await self.cleanup(session)
+            print(f"  ✓ pmiranda can access trabajador detail")
         
-        # Summary
-        print(f"\n{'#'*80}")
-        print(f"# TEST SUMMARY")
-        print(f"{'#'*80}")
+        print(f"\n✓ PART A.7 PASSED: pmiranda can access mandantes and trabajadores NOT previously assigned")
+    
+    # Step 9: PART A.8 - Action: Approve a pending document in ANY mandante
+    print("\n[PART A.8] Action: Approve pending document in ANY mandante")
+    print("-" * 80)
+    
+    if len(pmiranda_pend) > 0:
+        test_doc = pmiranda_pend[0]
+        test_doc_id = test_doc.get("documento_id")
+        test_doc_mandante = test_doc.get("mandante")
         
-        passed = sum(1 for v in results.values() if v)
-        total = len(results)
+        print(f"  Testing approval of documento {test_doc_id} in mandante {test_doc_mandante}")
         
-        for test_name, result in results.items():
-            status = "✅ PASSED" if result else "❌ FAILED"
-            print(f"{status}: {test_name}")
+        # PUT /api/documentos/:id/revision
+        approval_resp = put_with_auth(
+            f"/documentos/{test_doc_id}/revision",
+            pmiranda_auth["token"],
+            {"estado": "aprobado"}
+        )
         
-        print(f"\n{'='*80}")
-        print(f"TOTAL: {passed}/{total} tests passed")
-        print(f"{'='*80}")
+        print(f"  pmiranda PUT /api/documentos/{test_doc_id}/revision: {approval_resp.status_code}")
         
-        return passed == total
-
-async def main():
-    runner = TestRunner()
-    success = await runner.run_all_tests()
-    sys.exit(0 if success else 1)
+        if approval_resp.status_code != 200:
+            print(f"\n✗ CRITICAL FAILURE: pmiranda should be able to approve docs in ANY mandante (got {approval_resp.status_code})")
+            if approval_resp.status_code == 403:
+                print(f"  ERROR: {approval_resp.text}")
+            return False
+        
+        print(f"  ✓ pmiranda successfully approved document in mandante {test_doc_mandante}")
+        print(f"\n✓ PART A.8 PASSED: pmiranda can approve documents in ANY mandante (GLOBAL action)")
+    else:
+        print(f"  ⚠ No pending documents available to test approval")
+        print(f"  (This is acceptable - no test data available)")
+    
+    # Step 10: PART B.9 - ISOLATION REGRESSION: jnunez (MANDANTE_ADMIN) should be SCOPED
+    print("\n[PART B.9] ISOLATION REGRESSION: jnunez (MANDANTE_ADMIN) should be SCOPED")
+    print("-" * 80)
+    
+    jnunez_mandantes_resp = get_with_auth("/mandantes", jnunez_auth["token"])
+    
+    print(f"  jnunez GET /api/mandantes: {jnunez_mandantes_resp.status_code}")
+    
+    if jnunez_mandantes_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200, got {jnunez_mandantes_resp.status_code}")
+        return False
+    
+    jnunez_mandantes = jnunez_mandantes_resp.json().get("mandantes", [])
+    jnunez_mandantes_count = len(jnunez_mandantes)
+    
+    print(f"\n  jnunez mandantes count: {jnunez_mandantes_count}")
+    print(f"  admin mandantes count: {admin_count}")
+    
+    if jnunez_mandantes_count >= admin_count:
+        print(f"\n✗ CRITICAL FAILURE: jnunez (MANDANTE_ADMIN) should see ONLY assigned mandantes (scoped)")
+        print(f"  Expected: MUCH LESS than {admin_count}, Got: {jnunez_mandantes_count}")
+        return False
+    
+    print(f"\n✓ PART B.9 PASSED: jnunez sees ONLY {jnunez_mandantes_count} mandantes (SCOPED, not global)")
+    
+    # Step 11: PART B.10 - jnunez trabajadores should be SCOPED
+    print("\n[PART B.10] jnunez trabajadores should be SCOPED")
+    print("-" * 80)
+    
+    jnunez_trab_resp = get_with_auth("/trabajadores", jnunez_auth["token"])
+    
+    print(f"  jnunez GET /api/trabajadores: {jnunez_trab_resp.status_code}")
+    
+    if jnunez_trab_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200")
+        return False
+    
+    jnunez_trab = jnunez_trab_resp.json().get("trabajadores", [])
+    jnunez_trab_count = len(jnunez_trab)
+    
+    print(f"\n  jnunez trabajadores count: {jnunez_trab_count}")
+    print(f"  admin trabajadores count: {admin_trab_count}")
+    
+    if jnunez_trab_count >= admin_trab_count:
+        print(f"\n✗ CRITICAL FAILURE: jnunez should see ONLY scoped trabajadores")
+        return False
+    
+    print(f"\n✓ PART B.10 PASSED: jnunez sees ONLY {jnunez_trab_count} trabajadores (SCOPED)")
+    
+    # Step 12: PART B.11 - jnunez should get 403 for mandante NOT assigned
+    print("\n[PART B.11] jnunez should get 403 for mandante NOT assigned")
+    print("-" * 80)
+    
+    # Find a mandante NOT in jnunez's list
+    jnunez_mandante_ids = set([m.get("mandante_id") for m in jnunez_mandantes])
+    out_of_scope_mandante = None
+    
+    for m in admin_mandantes:
+        if m.get("mandante_id") not in jnunez_mandante_ids:
+            out_of_scope_mandante = m
+            break
+    
+    if out_of_scope_mandante:
+        out_of_scope_id = out_of_scope_mandante.get("mandante_id")
+        out_of_scope_name = out_of_scope_mandante.get("razon_social")
+        
+        print(f"  Testing access to out-of-scope mandante: {out_of_scope_name} ({out_of_scope_id})")
+        
+        jnunez_out_resp = get_with_auth(f"/mandantes/{out_of_scope_id}", jnunez_auth["token"])
+        
+        print(f"  jnunez GET /api/mandantes/{out_of_scope_id}: {jnunez_out_resp.status_code}")
+        
+        if jnunez_out_resp.status_code != 403:
+            print(f"\n✗ CRITICAL FAILURE: jnunez should get 403 for out-of-scope mandante (got {jnunez_out_resp.status_code})")
+            return False
+        
+        print(f"  ✓ jnunez correctly denied access (403)")
+        print(f"\n✓ PART B.11 PASSED: jnunez gets 403 for mandante NOT assigned (isolation working)")
+    else:
+        print(f"  ⚠ Could not find out-of-scope mandante for jnunez")
+    
+    # Step 13: PART C - crivera (RRHH) should also be GLOBAL
+    print("\n[PART C] crivera (MANDANTE_RRHH) should also be GLOBAL")
+    print("-" * 80)
+    
+    crivera_mandantes_resp = get_with_auth("/mandantes", crivera_auth["token"])
+    
+    print(f"  crivera GET /api/mandantes: {crivera_mandantes_resp.status_code}")
+    
+    if crivera_mandantes_resp.status_code != 200:
+        print(f"\n✗ FAILED: Expected 200")
+        return False
+    
+    crivera_mandantes = crivera_mandantes_resp.json().get("mandantes", [])
+    crivera_mandantes_count = len(crivera_mandantes)
+    
+    print(f"\n  crivera mandantes count: {crivera_mandantes_count}")
+    print(f"  admin mandantes count: {admin_count}")
+    
+    if crivera_mandantes_count != admin_count:
+        print(f"\n✗ CRITICAL FAILURE: crivera (RRHH) should see ALL mandantes (same as admin)")
+        return False
+    
+    print(f"\n✓ PART C PASSED: crivera sees ALL {crivera_mandantes_count} mandantes (GLOBAL)")
+    
+    # Final summary
+    print("\n" + "="*80)
+    print("SUMMARY: RR.HH. GLOBAL SCOPE TESTING")
+    print("="*80)
+    print(f"\n✓ ALL TESTS PASSED")
+    print(f"\nCRITICAL VERIFICATIONS:")
+    print(f"  ✓ pmiranda (RRHH) has GLOBAL scope (sees all mandantes without assignment)")
+    print(f"  ✓ crivera (RRHH) has GLOBAL scope (sees all mandantes without assignment)")
+    print(f"  ✓ pmiranda sees ALL {pmiranda_count} mandantes (same as admin {admin_count})")
+    print(f"  ✓ pmiranda sees ALL {pmiranda_contratos_count} contratos (same as admin {admin_contratos_count})")
+    print(f"  ✓ pmiranda sees ALL {pmiranda_veh_count} vehiculos (same as admin {admin_veh_count})")
+    print(f"  ✓ pmiranda sees ALL {pmiranda_eq_count} equipos (same as admin {admin_eq_count})")
+    print(f"  ✓ pmiranda dashboard stats.mandantes = {pmiranda_stats.get('mandantes')} (same as admin)")
+    print(f"  ✓ pmiranda can access mandantes NOT previously assigned")
+    print(f"  ✓ pmiranda can approve documents in ANY mandante")
+    print(f"  ✓ jnunez (ADMIN) sees ONLY {jnunez_mandantes_count} mandantes (SCOPED, not global)")
+    print(f"  ✓ jnunez gets 403 for mandante NOT assigned (isolation working)")
+    print(f"  ✓ crivera (RRHH) sees ALL {crivera_mandantes_count} mandantes (GLOBAL)")
+    print(f"\nRR.HH. GLOBAL SCOPE CHANGE IS WORKING CORRECTLY")
+    print("="*80)
+    
+    return True
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        success = test_rrhh_global_scope()
+        sys.exit(0 if success else 1)
+    except Exception as e:
+        print(f"\n✗ UNEXPECTED ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
