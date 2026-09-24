@@ -173,8 +173,9 @@ const NAV = [
   { group: '', items: [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }] },
   { group: 'Operación', items: [{ id: 'mandantes', label: 'Mandantes', icon: Building2 }, { id: 'contratos', label: 'Contratos', icon: FileSignature }] },
   { group: 'Recursos', items: [{ id: 'trabajadores', label: 'Trabajadores', icon: Users }, { id: 'vehiculos', label: 'Vehículos', icon: Truck }, { id: 'equipos', label: 'Equipos', icon: Wrench }] },
-  { group: 'Acreditación', items: [{ id: 'revision', label: 'Pendientes de Revisión', icon: FileClock }, { id: 'vencimientos', label: 'Vencimientos', icon: CalendarClock }, { id: 'desvinculaciones', label: 'Personal Finiquitado', icon: UserMinus }] },
-  { group: 'Administración', holding: true, items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'accesos', label: 'Control de Acceso', icon: QrCode }, { id: 'manuales', label: 'Manuales', icon: BookOpen, super: true }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings, super: true }, { id: 'auditoria', label: 'Auditoría', icon: History, super: true }] },
+  { group: 'Acreditación', items: [{ id: 'revision', label: 'Pendientes de Revisión', icon: FileClock }, { id: 'vencimientos', label: 'Vencimientos', icon: CalendarClock }, { id: 'desvinculaciones', label: 'Personal Finiquitado', icon: UserMinus, hideRoles: ['MANDANTE_PREVENCION'] }] },
+  { group: 'Administración', super: true, items: [{ id: 'empresas', label: 'Empresas', icon: Building }, { id: 'usuarios', label: 'Usuarios', icon: UserCog }, { id: 'accesos', label: 'Control de Acceso', icon: QrCode }, { id: 'mantenedores', label: 'Mantenedores', icon: Settings }, { id: 'auditoria', label: 'Auditoría', icon: History }] },
+  { group: 'Ayuda', items: [{ id: 'manuales', label: 'Manuales', icon: BookOpen }] },
 ];
 
 function Shell({ token, profile, onLogout }) {
@@ -214,11 +215,11 @@ function Shell({ token, profile, onLogout }) {
           <img src={LOGO_RIOLOA} alt="Río Loa" className="h-12 w-auto max-w-full object-contain" />
         </div>
         <nav className="flex-1 overflow-y-auto p-3 space-y-5">
-          {NAV.filter((sec) => !(sec.holding && isMandante)).map((sec, i) => (
+          {NAV.filter((sec) => !(sec.holding && isMandante) && !(sec.super && !isSuper)).map((sec, i) => (
             <div key={i}>
               {sec.group && <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-teal-200/45">{sec.group}</p>}
               <div className="space-y-1">
-                {sec.items.filter((it) => !it.super || isSuper).map((it) => {
+                {sec.items.filter((it) => (!it.super || isSuper) && !(it.hideRoles && it.hideRoles.includes(role))).map((it) => {
                   const active = view === it.id && !detail;
                   return (
                     <button key={it.id} onClick={() => go(it.id)} className={`group w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 relative ${active ? 'bg-[#1c9dd7] text-white shadow-lg shadow-cyan-950/40' : 'text-teal-50/70 hover:bg-white/10 hover:text-white'}`}>
@@ -268,7 +269,7 @@ function Shell({ token, profile, onLogout }) {
           {!detail && view === 'empresas' && <Empresas {...ctx} />}
           {!detail && view === 'usuarios' && <Usuarios {...ctx} />}
           {!detail && view === 'accesos' && <AccesosAdmin {...ctx} />}
-          {!detail && view === 'manuales' && isSuper && <Manuales {...ctx} />}
+          {!detail && view === 'manuales' && <Manuales {...ctx} />}
           {!detail && view === 'mantenedores' && isSuper && <Mantenedores {...ctx} />}
           {!detail && view === 'auditoria' && isSuper && <Auditoria {...ctx} />}
         </main>
@@ -2200,20 +2201,36 @@ function Visor({ api }) {
   );
 }
 
-function Manuales() {
+const MANUAL_FOR_ROLE = {
+  ADMIN_EMPRESA: 'super_admin',
+  MANDANTE_RRHH: 'rrhh',
+  MANDANTE_PREVENCION: 'prevencion',
+  MANDANTE_VISOR: 'visor',
+};
+
+function Manuales({ profile }) {
   const [ver, setVer] = useState(null);
+  const isSuperM = profile?.role_codigo === 'SUPER_ADMIN_HOLDING';
+  const myId = MANUAL_FOR_ROLE[profile?.role_codigo];
+  const list = isSuperM ? MANUALES : MANUALES.filter((m) => m.id === myId);
   const descargar = (m) => {
     try { descargarManualPDF(m); toast.success('Abriendo vista de impresión…'); }
     catch (e) { toast.error('Habilite las ventanas emergentes para descargar el PDF'); }
   };
   return (
     <div>
-      <PageHead title="Manuales" sub="Guías de uso de la Plataforma Aptiva por perfil · pensadas para personal de Río Loa asignado a sus mandantes (clientes)" />
+      <PageHead title={isSuperM ? 'Manuales' : 'Mi Manual'} sub="Guía de uso de la Plataforma Aptiva para su perfil · con capturas reales y paso a paso" />
+      {list.length === 0 ? (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3">
+          El manual para su perfil estará disponible próximamente.
+        </div>
+      ) : (
+      <>
       <div className="rounded-lg bg-sky-50 border border-sky-200 text-sky-800 text-sm px-4 py-2.5 mb-4">
         Presione <b>Ver</b> para leer el manual en pantalla, o <b>Descargar PDF</b> para abrir la vista de impresión y elegir «Guardar como PDF».
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        {MANUALES.map((m) => (
+        {list.map((m) => (
           <div key={m.id} className="rounded-xl border bg-card p-5 flex flex-col shadow-sm">
             <div className="flex items-start gap-3">
               <div className="h-11 w-11 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${m.color}1a` }}>
@@ -2232,6 +2249,8 @@ function Manuales() {
           </div>
         ))}
       </div>
+      </>
+      )}
 
       <Dialog open={!!ver} onOpenChange={(o) => !o && setVer(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0">
