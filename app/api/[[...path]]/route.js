@@ -1241,7 +1241,14 @@ export async function PUT(request, { params }) {
     if (p[0] === 'trabajadores' && p[1]) {
       if (!canManage(profile) && !can(profile, 'crear_trab')) return json({ error: 'No autorizado' }, 403);
       ['nombre', 'apellido', 'cargo'].forEach((k) => { if (body[k] != null) body[k] = titleCase(body[k]); });
-      const { cols, vals, i } = build(['nombre', 'apellido', 'cargo', 'genero', 'region', 'comuna', 'telefono', 'email', 'direccion', 'estado', 'es_spot']);
+      if (body.rut !== undefined && body.rut !== null && String(body.rut).trim() !== '') {
+        if (!validarRut(body.rut)) return json({ error: 'RUT inválido. Verifica el número y dígito verificador.' }, 400);
+        const rutFmt = fmtRutStr(body.rut);
+        const dup = await query('select 1 from trabajadores where rut=$1 and trabajador_id<>$2', [rutFmt, p[1]]);
+        if (dup.rows.length) return json({ error: 'Ya existe otro trabajador con ese RUT' }, 409);
+        body.rut = rutFmt;
+      } else { delete body.rut; }
+      const { cols, vals, i } = build(['rut', 'nombre', 'apellido', 'cargo', 'genero', 'region', 'comuna', 'telefono', 'email', 'direccion', 'estado', 'es_spot']);
       if (!cols.length) return json({ error: 'Nada que actualizar' }, 400);
       vals.push(p[1]);
       await query(`update trabajadores set ${cols.join(', ')}, updated_at=now() where trabajador_id=$${i}`, vals);

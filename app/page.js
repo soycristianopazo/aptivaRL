@@ -1663,8 +1663,26 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
   const asignadasActivas = new Set((asignaciones || []).filter((a) => a.estado === 'activo').map((a) => a.contrato_id));
   const contratosDisp = contratosEmp.filter((c) => !asignadasActivas.has(c.contrato_id));
   const toggleConEdit = (cid) => setSelConEdit((s) => s.includes(cid) ? s.filter((x) => x !== cid) : [...s, cid]);
-  const openEdit = () => { setEf({ nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email, es_spot: !!t.es_spot }); setSelConEdit([]); setEdit(true); };
-  const saveEdit = async () => { try { await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) }); if (selConEdit.length) { let ok = 0, fail = 0; for (const cid of selConEdit) { try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: cid }) }); ok++; } catch { fail++; } } toast.success(`Trabajador actualizado · asignado a ${ok} contrato(s)${fail ? ` · ${fail} no se pudo` : ''}`); } else { toast.success('Trabajador actualizado'); } setEdit(false); setSelConEdit([]); reload(); } catch (e) { toast.error(e.message); } };
+  const openEdit = () => { setEf({ rut: t.rut, nombre: t.nombre, apellido: t.apellido, cargo: t.cargo, telefono: t.telefono, region: t.region, comuna: t.comuna, email: t.email, es_spot: !!t.es_spot }); setSelConEdit([]); setEdit(true); };
+  const saveEdit = async () => {
+    const rutChanged = String(ef.rut || '').trim() !== String(t.rut || '').trim();
+    if (rutChanged) {
+      const mands = [...new Set((asignaciones || []).filter((a) => a.estado === 'activo').map((a) => a.mandante).filter(Boolean))];
+      if (mands.length >= 2) {
+        const ok = await confirmDialog({
+          title: 'Este cambio afecta a toda la plataforma',
+          description: `${t.nombre} ${t.apellido} está asignado a ${mands.length} mandantes:\n\n${mands.map((m) => `• ${m}`).join('\n')}\n\nAl cambiar el RUT, la modificación se reflejará en TODAS sus faenas y documentación en la plataforma (donde esté asignado). ¿Deseas continuar?`,
+          confirmText: 'Sí, cambiar RUT',
+        });
+        if (!ok) return;
+      }
+    }
+    try {
+      await api(`/trabajadores/${id}`, { method: 'PUT', body: JSON.stringify(ef) });
+      if (selConEdit.length) { let ok = 0, fail = 0; for (const cid of selConEdit) { try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: cid }) }); ok++; } catch { fail++; } } toast.success(`Trabajador actualizado · asignado a ${ok} contrato(s)${fail ? ` · ${fail} no se pudo` : ''}`); } else { toast.success('Trabajador actualizado'); }
+      setEdit(false); setSelConEdit([]); reload();
+    } catch (e) { toast.error(e.message); }
+  };
   const desactivar = async () => { if (!(await confirmDialog({ title: '¿Desactivar trabajador?', description: 'El trabajador quedará inactivo en la plataforma.', confirmText: 'Desactivar' }))) return; try { await api(`/trabajadores/${id}`, { method: 'DELETE' }); toast.success('Trabajador desactivado'); onBack(); } catch (e) { toast.error(e.message); } };
   const doAsignar = async () => { if (!asig) return; try { await api('/trabajadores/asignar', { method: 'POST', body: JSON.stringify({ trabajador_id: id, contrato_id: asig }) }); toast.success('Asignado a contrato'); setAsig(''); reload(); } catch (e) { toast.error(e.message); } };
   const quitarAsig = async (a) => { if (!(await confirmDialog({ title: 'Quitar asignación', description: `¿Quitar la asignación al contrato ${a.numero_oc || ''} (${a.mandante})? Quedará inactiva sin generar finiquito.`, confirmText: 'Quitar' }))) return; try { await api(`/trabajadores/asignaciones/${a.asignacion_id}`, { method: 'DELETE' }); toast.success('Asignación quitada'); reload(); } catch (e) { toast.error(e.message); } };
@@ -1758,6 +1776,7 @@ function TrabajadorDetail({ api, id, onBack, canManage, isSuper, perms = {} }) {
       <Dialog open={edit} onOpenChange={setEdit}><DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Editar trabajador</DialogTitle></DialogHeader>
         <div className="space-y-3">
+          <div className="space-y-1.5"><Label>RUT</Label><Input value={ef.rut || ''} onChange={(e) => setEf({ ...ef, rut: e.target.value })} placeholder="12.345.678-9" /><p className="text-xs text-slate-400">El RUT identifica al trabajador en toda la plataforma. Si está en varios mandantes, el cambio se reflejará en todas sus faenas.</p></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Nombre</Label><Input value={ef.nombre || ''} onChange={(e) => setEf({ ...ef, nombre: e.target.value })} /></div><div className="space-y-1.5"><Label>Apellido</Label><Input value={ef.apellido || ''} onChange={(e) => setEf({ ...ef, apellido: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Cargo</Label><Input value={ef.cargo || ''} onChange={(e) => setEf({ ...ef, cargo: e.target.value })} /></div><div className="space-y-1.5"><Label>Teléfono</Label><Input value={ef.telefono || ''} onChange={(e) => setEf({ ...ef, telefono: e.target.value })} /></div></div>
           <div className="grid grid-cols-2 gap-3"><div className="space-y-1.5"><Label>Región</Label><Input value={ef.region || ''} onChange={(e) => setEf({ ...ef, region: e.target.value })} /></div><div className="space-y-1.5"><Label>Comuna</Label><Input value={ef.comuna || ''} onChange={(e) => setEf({ ...ef, comuna: e.target.value })} /></div></div>
