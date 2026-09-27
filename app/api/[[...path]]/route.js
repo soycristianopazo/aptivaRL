@@ -415,7 +415,9 @@ export async function GET(request, { params }) {
         order by up.created_at`);
       const roles = (await query('select codigo, nombre from roles order by nombre')).rows;
       const mandantesAll = (await query('select mandante_id, razon_social from mandantes where deleted_at is null order by razon_social')).rows;
-      return json({ usuarios: r.rows, roles, mandantesAll });
+      const empresasAll = (await query('select empresa_id, razon_social from empresas_grupo where deleted_at is null order by razon_social')).rows;
+      const empresaMandantes = (await query('select distinct c.empresa_id, c.mandante_id from contratos c join mandantes m on m.mandante_id=c.mandante_id where c.deleted_at is null and m.deleted_at is null')).rows;
+      return json({ usuarios: r.rows, roles, mandantesAll, empresasAll, empresaMandantes });
     }
 
     if (p[0] === 'tipos-vehiculo') return json({ tipos: (await query('select id, nombre from tipos_vehiculo order by nombre')).rows });

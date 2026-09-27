@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, Fragment } from 'react';
+import { useEffect, useState, useCallback, useMemo, Fragment } from 'react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip as RTooltip, Legend, AreaChart, Area,
@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, ChevronDown, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus, BookOpen,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus, BookOpen, Check,
 } from 'lucide-react';
 import logoAptiva from '@/assets/logo-aptiva.png';
 import logoRioLoa from '@/assets/logo-rioloa.png';
@@ -2667,9 +2667,41 @@ function Usuarios({ api, isSuper }) {
   const editing = !!f.perfil_id;
   const roles = data?.roles || [];
   const mandAll = data?.mandantesAll || [];
-  const openNew = () => { setF(empty); setOpen(true); };
-  const openEdit = (r) => { setF({ perfil_id: r.perfil_id, email: r.email, password: '', nombre: r.nombre || '', telefono: r.telefono || '', role_codigo: r.role_codigo, empresa_id: r.empresa_id || '', mandante_id: r.mandante_id || '', activo: r.activo, mandantes: (r.mandantes || []).map((m) => m.mandante_id) }); setOpen(true); };
+  const empresasHold = data?.empresasAll || [];
+  const empMandMap = useMemo(() => {
+    const map = {};
+    (data?.empresaMandantes || []).forEach((row) => {
+      if (!map[row.empresa_id]) map[row.empresa_id] = [];
+      map[row.empresa_id].push(row.mandante_id);
+    });
+    return map;
+  }, [data]);
+  const [selEmp, setSelEmp] = useState([]);
+  const openNew = () => { setF(empty); setSelEmp([]); setOpen(true); };
+  const openEdit = (r) => {
+    const mids = (r.mandantes || []).map((m) => m.mandante_id);
+    setF({ perfil_id: r.perfil_id, email: r.email, password: '', nombre: r.nombre || '', telefono: r.telefono || '', role_codigo: r.role_codigo, empresa_id: r.empresa_id || '', mandante_id: r.mandante_id || '', activo: r.activo, mandantes: mids });
+    const midSet = new Set(mids);
+    setSelEmp(empresasHold.filter((e) => { const ms = empMandMap[e.empresa_id] || []; return ms.length > 0 && ms.every((m) => midSet.has(m)); }).map((e) => e.empresa_id));
+    setOpen(true);
+  };
   const toggleMand = (id) => setF((s) => ({ ...s, mandantes: s.mandantes.includes(id) ? s.mandantes.filter((x) => x !== id) : [...s.mandantes, id] }));
+  const toggleEmp = (eid) => {
+    const on = selEmp.includes(eid);
+    const next = on ? selEmp.filter((x) => x !== eid) : [...selEmp, eid];
+    const mids = empMandMap[eid] || [];
+    setSelEmp(next);
+    setF((s) => {
+      const set = new Set(s.mandantes);
+      if (!on) { mids.forEach((m) => set.add(m)); }
+      else {
+        const covered = new Set();
+        next.forEach((e2) => (empMandMap[e2] || []).forEach((m) => covered.add(m)));
+        mids.forEach((m) => { if (!covered.has(m)) set.delete(m); });
+      }
+      return { ...s, mandantes: [...set] };
+    });
+  };
   const save = async () => {
     try {
       if (editing) { await api(`/usuarios/${f.perfil_id}`, { method: 'PUT', body: JSON.stringify(f) }); toast.success('Usuario actualizado'); }
@@ -2721,6 +2753,21 @@ function Usuarios({ api, isSuper }) {
           {f.role_codigo === 'ADMIN_EMPRESA' && <div className="space-y-1.5"><Label>Empresa</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           {showMand && (
             <div className="space-y-1.5">
+              {empresasHold.length > 0 && (
+                <div className="space-y-1.5 mb-1">
+                  <Label className="text-xs text-slate-500">Empresa del Holding <span className="font-normal">(marca automáticamente sus mandantes)</span></Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {empresasHold.filter((e) => (empMandMap[e.empresa_id] || []).length > 0).map((e) => {
+                      const active = selEmp.includes(e.empresa_id);
+                      return (
+                        <button type="button" key={e.empresa_id} onClick={() => toggleEmp(e.empresa_id)} className={`text-xs rounded-full border px-2.5 py-1 transition ${active ? 'bg-[#1789bf] border-[#1789bf] text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-[#1c9dd7] hover:text-[#1789bf]'}`}>
+                          {active && <Check className="h-3 w-3 mr-1 inline-block align-[-1px]" />}{e.razon_social}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between">
                 <Label>Mandantes asignados</Label>
                 <div className="flex items-center gap-3">
