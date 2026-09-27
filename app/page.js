@@ -2721,7 +2721,13 @@ function Usuarios({ api, isSuper }) {
           {f.role_codigo === 'ADMIN_EMPRESA' && <div className="space-y-1.5"><Label>Empresa</Label><Select value={f.empresa_id} onValueChange={(v) => setF({ ...f, empresa_id: v })}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(empresas?.empresas || []).map((e) => <SelectItem key={e.empresa_id} value={e.empresa_id}>{e.razon_social}</SelectItem>)}</SelectContent></Select></div>}
           {showMand && (
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between"><Label>Mandantes asignados</Label><span className="text-xs text-slate-400">{f.mandantes.length} seleccionados</span></div>
+              <div className="flex items-center justify-between">
+                <Label>Mandantes asignados</Label>
+                <div className="flex items-center gap-3">
+                  {mandAll.length > 0 && <button type="button" className="text-xs font-medium text-[#1789bf] hover:underline" onClick={() => setF((s) => ({ ...s, mandantes: s.mandantes.length === mandAll.length ? [] : mandAll.map((m) => m.mandante_id) }))}>{f.mandantes.length === mandAll.length ? 'Quitar todos' : 'Seleccionar todos'}</button>}
+                  <span className="text-xs text-slate-400">{f.mandantes.length} seleccionados</span>
+                </div>
+              </div>
               <div className="border rounded-lg max-h-52 overflow-y-auto divide-y">
                 {mandAll.map((m) => (
                   <label key={m.mandante_id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
