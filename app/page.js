@@ -2710,6 +2710,20 @@ function Usuarios({ api, isSuper }) {
     } catch (e) { toast.error(e.message); }
   };
   const del = async (r) => { if (!(await confirmDialog({ title: 'Eliminar usuario', description: `¿Eliminar al usuario ${r.nombre} (${r.email})? Esta acción no se puede deshacer.`, confirmText: 'Eliminar' }))) return; try { await api(`/usuarios/${r.perfil_id}`, { method: 'DELETE' }); toast.success('Usuario eliminado'); reload(); } catch (e) { toast.error(e.message); } };
+  const [delTarget, setDelTarget] = useState(null); // { user, deps, loading }
+  const [deleting, setDeleting] = useState(false);
+  const askDelete = async (r) => {
+    setDelTarget({ user: r, deps: null, loading: true });
+    try { const deps = await api(`/usuarios/${r.perfil_id}/dependencias`); setDelTarget({ user: r, deps, loading: false }); }
+    catch (e) { toast.error(e.message); setDelTarget({ user: r, deps: {}, loading: false }); }
+  };
+  const doDelete = async () => {
+    if (!delTarget?.user) return;
+    setDeleting(true);
+    try { await api(`/usuarios/${delTarget.user.perfil_id}`, { method: 'DELETE' }); toast.success('Usuario eliminado'); setDelTarget(null); reload(); }
+    catch (e) { toast.error(e.message); }
+    finally { setDeleting(false); }
+  };
   if (!isSuper) return <div><PageHead title="Usuarios" /><p className="text-slate-400">Solo el Super Administrador puede gestionar usuarios.</p></div>;
   const showMand = !['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(f.role_codigo);
   const q = fq.trim().toLowerCase();
@@ -2735,7 +2749,7 @@ function Usuarios({ api, isSuper }) {
         { key: 'role_codigo', label: 'Rol', render: (r) => <Badge variant="outline" className={roleBadgeClass(r.role_codigo)}>{roleLabel[r.role_codigo] || r.role_codigo}</Badge> },
         { key: 'mandantes', label: 'Mandantes', render: (r) => (r.mandantes && r.mandantes.length) ? <span className="text-slate-600" title={r.mandantes.map((m) => m.razon_social).join(', ')}>{r.mandantes.length === 1 ? r.mandantes[0].razon_social : `${r.mandantes.length} mandantes`}</span> : (r.mandante || <span className="text-slate-300">—</span>) },
         { key: 'activo', label: 'Estado', render: (r) => r.activo ? <Badge className="bg-emerald-100 text-emerald-700 border-0">Activo</Badge> : <Badge className="bg-slate-100 text-slate-500 border-0">Inactivo</Badge> },
-        { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}><Settings className="h-3.5 w-3.5 mr-1" />Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" onClick={() => del(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
+        { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}><Settings className="h-3.5 w-3.5 mr-1" />Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" onClick={() => askDelete(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
       ]} rows={filtered} />
       <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{editing ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle></DialogHeader>
@@ -2788,6 +2802,35 @@ function Usuarios({ api, isSuper }) {
           )}
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>{editing ? 'Guardar' : 'Crear'}</Button></DialogFooter>
+      </DialogContent></Dialog>
+      <Dialog open={!!delTarget} onOpenChange={(o) => { if (!o && !deleting) setDelTarget(null); }}><DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-amber-500" />Eliminar usuario</DialogTitle>
+          <DialogDescription>{delTarget?.user?.nombre} · {delTarget?.user?.email}</DialogDescription>
+        </DialogHeader>
+        {delTarget?.loading ? <p className="text-sm text-slate-400 py-4">Revisando vínculos…</p> : (() => {
+          const d = delTarget?.deps || {};
+          const items = [];
+          if (d.mandantes?.length) items.push(['Mandantes asignados', d.mandantes.join(', ')]);
+          if (d.empresa) items.push(['Empresa', d.empresa]);
+          if (d.docs_subidos) items.push(['Documentos cargados', d.docs_subidos]);
+          if (d.docs_revisados) items.push(['Documentos revisados', d.docs_revisados]);
+          if (d.trabajadores_creados) items.push(['Trabajadores creados', d.trabajadores_creados]);
+          if (d.accesos) items.push(['Registros de acceso', d.accesos]);
+          return items.length ? (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-600">Este usuario está vinculado a los siguientes recursos:</p>
+              <div className="rounded-lg border border-amber-200 bg-amber-50 divide-y divide-amber-100 max-h-56 overflow-y-auto">
+                {items.map(([k, v]) => <div key={k} className="flex justify-between gap-3 px-3 py-2 text-sm"><span className="text-slate-500 shrink-0">{k}</span><span className="text-slate-800 font-medium text-right">{v}</span></div>)}
+              </div>
+              <p className="text-xs text-slate-500">Se eliminará el usuario junto con sus accesos y vínculos a mandantes. El historial documental (cargas/revisiones) se conserva. Esta acción no se puede deshacer.</p>
+            </div>
+          ) : <p className="text-sm text-slate-600 py-2">Este usuario no está vinculado a ningún mandante ni recurso. Esta acción no se puede deshacer.</p>;
+        })()}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setDelTarget(null)} disabled={deleting}>Cancelar</Button>
+          <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={doDelete} disabled={deleting || delTarget?.loading}>{deleting ? 'Eliminando…' : 'Eliminar de todas formas'}</Button>
+        </DialogFooter>
       </DialogContent></Dialog>
     </div>
   );

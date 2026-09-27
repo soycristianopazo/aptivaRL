@@ -404,6 +404,21 @@ export async function GET(request, { params }) {
       return json({ items, total: items.reduce((s, i) => s + i.count, 0) });
     }
 
+    if (p[0] === 'usuarios' && p[1] && p[2] === 'dependencias') {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const perfil = (await query('select perfil_id, auth_user_id, email, nombre, empresa_id from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
+      if (!perfil) return json({ error: 'No encontrado' }, 404);
+      const mandantes = (await query('select mn.razon_social from usuario_mandantes umm join mandantes mn on mn.mandante_id=umm.mandante_id where umm.perfil_id=$1 order by mn.razon_social', [perfil.perfil_id])).rows.map((r) => r.razon_social);
+      const empresa = perfil.empresa_id ? ((await query('select razon_social from empresas_grupo where empresa_id=$1', [perfil.empresa_id])).rows[0]?.razon_social || null) : null;
+      const c1 = async (sql, a) => (await query(sql, a)).rows[0]?.c || 0;
+      const docs_subidos = await c1('select count(*)::int c from documentos where subido_por=$1 and deleted_at is null', [perfil.auth_user_id]);
+      const docs_revisados = await c1('select count(*)::int c from documentos where revisado_por=$1 and deleted_at is null', [perfil.auth_user_id]);
+      const trabajadores_creados = await c1('select count(*)::int c from trabajadores where creado_por=$1 and deleted_at is null', [perfil.auth_user_id]);
+      const accesos = await c1('select count(*)::int c from accesos where registrado_por=$1', [perfil.perfil_id]);
+      const total = mandantes.length + (empresa ? 1 : 0) + docs_subidos + docs_revisados + trabajadores_creados + accesos;
+      return json({ mandantes, empresa, docs_subidos, docs_revisados, trabajadores_creados, accesos, vinculado: total > 0 });
+    }
+
     if (p[0] === 'usuarios' && isSuper(profile)) {
       const r = await query(`select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, up.telefono, up.empresa_id, up.mandante_id,
         e.razon_social as empresa, m.razon_social as mandante,

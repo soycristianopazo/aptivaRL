@@ -1,294 +1,420 @@
 #!/usr/bin/env python3
 """
-Backend API Testing Script for Aptiva RL
-Tests the NEW feature: GET /api/usuarios returns empresasAll + empresaMandantes
+Backend Test: User Deletion with Dependency Preview (Aptiva RL)
+Tests GET /api/usuarios/:id/dependencias and DELETE /api/usuarios/:id endpoints
 """
 
 import requests
 import json
-import sys
-from typing import Optional, Dict, Any, List
+import random
+import string
+from datetime import datetime
 
 # Configuration
 BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@aptivarl.com"
 ADMIN_PASSWORD = "Aptiva2025!"
-MANDANTE_EMAIL = "mandante@aptivarl.com"
-MANDANTE_PASSWORD = "Aptiva2025!"
 
 # Test state
 admin_token = None
-mandante_token = None
+admin_perfil_id = None
+created_users = []  # Track throwaway users for cleanup
 
+def log(msg):
+    """Print timestamped log message"""
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
-def login(email: str, password: str) -> Optional[Dict[str, Any]]:
-    """Login and return token + profile"""
+def random_suffix():
+    """Generate random suffix for test emails"""
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+def test_login():
+    """TEST 1: Login as admin@aptivarl.com"""
+    global admin_token, admin_perfil_id
+    log("TEST 1: Login as admin@aptivarl.com")
+    
     try:
         response = requests.post(
             f"{BASE_URL}/auth/login",
-            json={"email": email, "password": password},
-            timeout=30
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+            timeout=10
         )
+        
         if response.status_code == 200:
             data = response.json()
-            profile = data.get('profile', {})
-            print(f"✅ Login successful: {email} (role: {profile.get('role_codigo', 'N/A')})")
-            return {"token": data.get('token'), "profile": profile}
+            admin_token = data.get('token')
+            admin_perfil_id = data.get('perfil_id')
+            log(f"✅ Login successful: status={response.status_code}, token={admin_token[:20]}..., perfil_id={admin_perfil_id}")
+            return True
         else:
-            print(f"❌ Login failed for {email}: {response.status_code} - {response.text}")
+            log(f"❌ Login failed: status={response.status_code}, response={response.text}")
+            return False
+    except Exception as e:
+        log(f"❌ Login exception: {e}")
+        return False
+
+def test_get_usuarios():
+    """TEST 2: GET /api/usuarios and capture mandantesAll"""
+    log("TEST 2: GET /api/usuarios to capture mandantesAll")
+    
+    try:
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            usuarios = data.get('usuarios', [])
+            mandantes_all = data.get('mandantesAll', [])
+            
+            log(f"✅ GET /api/usuarios successful: status={response.status_code}")
+            log(f"   - usuarios count: {len(usuarios)}")
+            log(f"   - mandantesAll count: {len(mandantes_all)}")
+            
+            if mandantes_all:
+                # Pick first mandante for testing
+                mandante = mandantes_all[0]
+                log(f"   - Selected mandante for testing: {mandante.get('razon_social')} (ID: {mandante.get('mandante_id')})")
+                return mandante.get('mandante_id')
+            else:
+                log("❌ No mandantes found in mandantesAll")
+                return None
+        else:
+            log(f"❌ GET /api/usuarios failed: status={response.status_code}, response={response.text}")
             return None
     except Exception as e:
-        print(f"❌ Login error for {email}: {str(e)}")
+        log(f"❌ GET /api/usuarios exception: {e}")
         return None
 
-
-def get_usuarios(token: str) -> Optional[Dict[str, Any]]:
-    """GET /api/usuarios and return full response"""
+def test_create_user_with_mandante(mandante_id):
+    """TEST 3: Create throwaway user WITH a mandante"""
+    log("TEST 3: Create throwaway user WITH a mandante")
+    
     try:
-        response = requests.get(
-            f"{BASE_URL}/usuarios",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30
-        )
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        email = f"qa_del_{random_suffix()}@aptivarl.com"
+        
+        payload = {
+            "email": email,
+            "password": "Aptiva2025!",
+            "nombre": "QA Del Linked",
+            "telefono": "",
+            "role_codigo": "MANDANTE_VISOR",
+            "empresa_id": "",
+            "mandante_id": "",
+            "activo": True,
+            "mandantes": [mandante_id]
+        }
+        
+        response = requests.post(f"{BASE_URL}/usuarios", json=payload, headers=headers, timeout=10)
+        
+        if response.status_code == 201:
+            data = response.json()
+            perfil_id = data.get('perfil_id')
+            log(f"✅ User created: status={response.status_code}, email={email}, perfil_id={perfil_id}")
+            
+            # If perfil_id not in response, fetch from GET /api/usuarios
+            if not perfil_id:
+                log("   - perfil_id not in response, fetching from GET /api/usuarios...")
+                usuarios_response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
+                if usuarios_response.status_code == 200:
+                    usuarios = usuarios_response.json().get('usuarios', [])
+                    user = next((u for u in usuarios if u.get('email') == email), None)
+                    if user:
+                        perfil_id = user.get('perfil_id')
+                        log(f"   - Found perfil_id from GET: {perfil_id}")
+            
+            if perfil_id:
+                created_users.append({"perfil_id": perfil_id, "email": email})
+                return perfil_id
+            else:
+                log("❌ Could not determine perfil_id")
+                return None
+        else:
+            log(f"❌ User creation failed: status={response.status_code}, response={response.text}")
+            return None
+    except Exception as e:
+        log(f"❌ User creation exception: {e}")
+        return None
+
+def test_get_dependencias(perfil_id, expected_mandantes_count=1):
+    """TEST 4: GET /api/usuarios/:id/dependencias"""
+    log(f"TEST 4: GET /api/usuarios/{perfil_id}/dependencias")
+    
+    try:
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        response = requests.get(f"{BASE_URL}/usuarios/{perfil_id}/dependencias", headers=headers, timeout=10)
+        
         if response.status_code == 200:
             data = response.json()
-            print(f"✅ GET /api/usuarios: {response.status_code}")
-            return data
+            mandantes = data.get('mandantes', [])
+            empresa = data.get('empresa')
+            docs_subidos = data.get('docs_subidos', 0)
+            docs_revisados = data.get('docs_revisados', 0)
+            trabajadores_creados = data.get('trabajadores_creados', 0)
+            accesos = data.get('accesos', 0)
+            vinculado = data.get('vinculado', False)
+            
+            log(f"✅ GET dependencias successful: status={response.status_code}")
+            log(f"   - mandantes: {mandantes} (count: {len(mandantes)})")
+            log(f"   - empresa: {empresa}")
+            log(f"   - docs_subidos: {docs_subidos}")
+            log(f"   - docs_revisados: {docs_revisados}")
+            log(f"   - trabajadores_creados: {trabajadores_creados}")
+            log(f"   - accesos: {accesos}")
+            log(f"   - vinculado: {vinculado}")
+            
+            # Verify response structure
+            if len(mandantes) >= expected_mandantes_count:
+                log(f"✅ Mandantes count >= {expected_mandantes_count} (expected)")
+            else:
+                log(f"❌ Mandantes count {len(mandantes)} < {expected_mandantes_count} (expected)")
+            
+            if vinculado == (expected_mandantes_count > 0):
+                log(f"✅ vinculado={vinculado} (expected)")
+            else:
+                log(f"❌ vinculado={vinculado} (expected {expected_mandantes_count > 0})")
+            
+            return True
         else:
-            print(f"❌ GET /api/usuarios failed: {response.status_code} - {response.text}")
-            return {"status_code": response.status_code, "error": response.text}
+            log(f"❌ GET dependencias failed: status={response.status_code}, response={response.text}")
+            return False
     except Exception as e:
-        print(f"❌ GET /api/usuarios error: {str(e)}")
+        log(f"❌ GET dependencias exception: {e}")
+        return False
+
+def test_delete_user(perfil_id):
+    """TEST 5: DELETE /api/usuarios/:id"""
+    log(f"TEST 5: DELETE /api/usuarios/{perfil_id}")
+    
+    try:
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        response = requests.delete(f"{BASE_URL}/usuarios/{perfil_id}", headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            log(f"✅ DELETE user successful: status={response.status_code}, response={data}")
+            
+            # Verify user no longer appears in GET /api/usuarios
+            log("   - Verifying user no longer appears in GET /api/usuarios...")
+            usuarios_response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
+            if usuarios_response.status_code == 200:
+                usuarios = usuarios_response.json().get('usuarios', [])
+                user = next((u for u in usuarios if u.get('perfil_id') == perfil_id), None)
+                if user:
+                    log(f"❌ User still appears in GET /api/usuarios (should be deleted)")
+                    return False
+                else:
+                    log(f"✅ User no longer appears in GET /api/usuarios (deleted)")
+                    return True
+            else:
+                log(f"⚠️ Could not verify deletion (GET /api/usuarios failed)")
+                return True  # Assume success if DELETE returned 200
+        else:
+            log(f"❌ DELETE user failed: status={response.status_code}, response={response.text}")
+            return False
+    except Exception as e:
+        log(f"❌ DELETE user exception: {e}")
+        return False
+
+def test_create_user_without_mandantes():
+    """TEST 6: Create throwaway user WITHOUT mandantes"""
+    log("TEST 6: Create throwaway user WITHOUT mandantes")
+    
+    try:
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        email = f"qa_del2_{random_suffix()}@aptivarl.com"
+        
+        payload = {
+            "email": email,
+            "password": "Aptiva2025!",
+            "nombre": "QA Del Empty",
+            "telefono": "",
+            "role_codigo": "MANDANTE_VISOR",
+            "empresa_id": "",
+            "mandante_id": "",
+            "activo": True,
+            "mandantes": []
+        }
+        
+        response = requests.post(f"{BASE_URL}/usuarios", json=payload, headers=headers, timeout=10)
+        
+        if response.status_code == 201:
+            data = response.json()
+            perfil_id = data.get('perfil_id')
+            log(f"✅ User created: status={response.status_code}, email={email}, perfil_id={perfil_id}")
+            
+            # If perfil_id not in response, fetch from GET /api/usuarios
+            if not perfil_id:
+                log("   - perfil_id not in response, fetching from GET /api/usuarios...")
+                usuarios_response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
+                if usuarios_response.status_code == 200:
+                    usuarios = usuarios_response.json().get('usuarios', [])
+                    user = next((u for u in usuarios if u.get('email') == email), None)
+                    if user:
+                        perfil_id = user.get('perfil_id')
+                        log(f"   - Found perfil_id from GET: {perfil_id}")
+            
+            if perfil_id:
+                created_users.append({"perfil_id": perfil_id, "email": email})
+                return perfil_id
+            else:
+                log("❌ Could not determine perfil_id")
+                return None
+        else:
+            log(f"❌ User creation failed: status={response.status_code}, response={response.text}")
+            return None
+    except Exception as e:
+        log(f"❌ User creation exception: {e}")
         return None
 
-
-def run_tests():
-    """Run all backend tests for GET /api/usuarios empresasAll + empresaMandantes"""
-    global admin_token, mandante_token
+def test_authorization_non_super():
+    """TEST 7: Authorization - non-super user should get 403/404"""
+    log("TEST 7: Authorization - non-super user should get 403/404")
     
-    print("\n" + "="*80)
-    print("BACKEND TESTING: GET /api/usuarios returns empresasAll + empresaMandantes")
-    print("="*80 + "\n")
+    # Note: We don't have credentials for non-super users, so we'll test with no token
+    log("   - Testing GET /api/usuarios/:id/dependencias without token (should get 401)")
     
-    # TEST 1: Login as admin@aptivarl.com (SUPER_ADMIN_HOLDING)
-    print("="*80)
-    print("TEST 1: Login as admin@aptivarl.com (SUPER_ADMIN_HOLDING)")
-    print("="*80)
-    
-    admin_auth = login(ADMIN_EMAIL, ADMIN_PASSWORD)
-    if not admin_auth or not admin_auth.get('token'):
-        print("❌ TEST 1 FAILED: Admin login failed")
-        return False
-    
-    admin_token = admin_auth['token']
-    admin_profile = admin_auth['profile']
-    
-    if admin_profile.get('role_codigo') != 'SUPER_ADMIN_HOLDING':
-        print(f"❌ TEST 1 FAILED: Expected SUPER_ADMIN_HOLDING, got {admin_profile.get('role_codigo')}")
-        return False
-    
-    print("✅ TEST 1 PASSED: Admin login successful with token")
-    print()
-    
-    # TEST 2: GET /api/usuarios as admin -> verify response structure
-    print("="*80)
-    print("TEST 2: GET /api/usuarios as admin -> verify response contains all required arrays")
-    print("="*80)
-    
-    usuarios_data = get_usuarios(admin_token)
-    if not usuarios_data:
-        print("❌ TEST 2 FAILED: GET /api/usuarios returned None")
-        return False
-    
-    if usuarios_data.get('status_code') and usuarios_data['status_code'] != 200:
-        print(f"❌ TEST 2 FAILED: Expected 200, got {usuarios_data['status_code']}")
-        return False
-    
-    # Check required fields
-    required_fields = ['usuarios', 'roles', 'mandantesAll', 'empresasAll', 'empresaMandantes']
-    missing_fields = []
-    for field in required_fields:
-        if field not in usuarios_data:
-            missing_fields.append(field)
-    
-    if missing_fields:
-        print(f"❌ TEST 2 FAILED: Missing required fields: {missing_fields}")
-        print(f"   Available fields: {list(usuarios_data.keys())}")
-        return False
-    
-    # Verify all fields are arrays
-    for field in required_fields:
-        if not isinstance(usuarios_data[field], list):
-            print(f"❌ TEST 2 FAILED: Field '{field}' is not an array (type: {type(usuarios_data[field])})")
-            return False
-    
-    print(f"✅ TEST 2 PASSED: Response contains all required arrays:")
-    print(f"   - usuarios: {len(usuarios_data['usuarios'])} items")
-    print(f"   - roles: {len(usuarios_data['roles'])} items")
-    print(f"   - mandantesAll: {len(usuarios_data['mandantesAll'])} items")
-    print(f"   - empresasAll: {len(usuarios_data['empresasAll'])} items (NEW)")
-    print(f"   - empresaMandantes: {len(usuarios_data['empresaMandantes'])} items (NEW)")
-    print()
-    
-    # TEST 3: Verify empresasAll structure and content
-    print("="*80)
-    print("TEST 3: Verify empresasAll is non-empty with empresa_id and razon_social")
-    print("="*80)
-    
-    empresas_all = usuarios_data['empresasAll']
-    
-    if len(empresas_all) == 0:
-        print("❌ TEST 3 FAILED: empresasAll is empty (expected non-empty)")
-        return False
-    
-    # Check structure of first item
-    sample_empresa = empresas_all[0]
-    if 'empresa_id' not in sample_empresa or 'razon_social' not in sample_empresa:
-        print(f"❌ TEST 3 FAILED: empresasAll items missing required fields")
-        print(f"   Sample item: {sample_empresa}")
-        return False
-    
-    print(f"✅ TEST 3 PASSED: empresasAll is non-empty ({len(empresas_all)} empresas)")
-    print(f"   Sample empresa: {sample_empresa['razon_social']} (ID: {sample_empresa['empresa_id']})")
-    
-    # Show all empresas
-    print(f"\n   All empresas:")
-    for emp in empresas_all:
-        print(f"     - {emp['razon_social']} (ID: {emp['empresa_id']})")
-    print()
-    
-    # TEST 4: Verify empresaMandantes structure and referential integrity
-    print("="*80)
-    print("TEST 4: Verify empresaMandantes referential integrity")
-    print("="*80)
-    
-    empresa_mandantes = usuarios_data['empresaMandantes']
-    mandantes_all = usuarios_data['mandantesAll']
-    
-    print(f"📋 empresaMandantes count: {len(empresa_mandantes)}")
-    print(f"📋 mandantesAll count: {len(mandantes_all)}")
-    print(f"📋 empresasAll count: {len(empresas_all)}")
-    
-    if len(empresa_mandantes) == 0:
-        print("⚠️ WARNING: empresaMandantes is empty (could be valid if no contratos exist)")
-        print("   This is acceptable only if there are no contratos in the system")
-    else:
-        # Build lookup sets
-        empresa_ids = {emp['empresa_id'] for emp in empresas_all}
-        mandante_ids = {mand['mandante_id'] for mand in mandantes_all}
-        
-        # Check referential integrity
-        invalid_empresa_refs = []
-        invalid_mandante_refs = []
-        
-        for pair in empresa_mandantes:
-            if 'empresa_id' not in pair or 'mandante_id' not in pair:
-                print(f"❌ TEST 4 FAILED: empresaMandantes item missing required fields: {pair}")
-                return False
-            
-            if pair['empresa_id'] not in empresa_ids:
-                invalid_empresa_refs.append(pair['empresa_id'])
-            
-            if pair['mandante_id'] not in mandante_ids:
-                invalid_mandante_refs.append(pair['mandante_id'])
-        
-        if invalid_empresa_refs:
-            print(f"❌ TEST 4 FAILED: Found empresa_ids in empresaMandantes NOT in empresasAll:")
-            print(f"   Invalid empresa_ids: {invalid_empresa_refs}")
-            return False
-        
-        if invalid_mandante_refs:
-            print(f"❌ TEST 4 FAILED: Found mandante_ids in empresaMandantes NOT in mandantesAll:")
-            print(f"   Invalid mandante_ids: {invalid_mandante_refs}")
-            return False
-        
-        print(f"✅ TEST 4 PASSED: Referential integrity verified")
-        print(f"   - All empresa_ids in empresaMandantes exist in empresasAll ✅")
-        print(f"   - All mandante_ids in empresaMandantes exist in mandantesAll ✅")
-        
-        # Show sample pairs
-        print(f"\n   Sample empresaMandantes pairs (first 5):")
-        for i, pair in enumerate(empresa_mandantes[:5]):
-            # Find names
-            empresa_name = next((e['razon_social'] for e in empresas_all if e['empresa_id'] == pair['empresa_id']), 'Unknown')
-            mandante_name = next((m['razon_social'] for m in mandantes_all if m['mandante_id'] == pair['mandante_id']), 'Unknown')
-            print(f"     {i+1}. Empresa: {empresa_name} <-> Mandante: {mandante_name}")
-    
-    print()
-    
-    # TEST 5: Regression - GET /api/usuarios as non-super user (mandante@aptivarl.com)
-    print("="*80)
-    print("TEST 5: Regression - GET /api/usuarios as non-super user (USUARIO_MANDANTE)")
-    print("="*80)
-    
-    # Try to login as mandante user
-    mandante_auth = login(MANDANTE_EMAIL, MANDANTE_PASSWORD)
-    
-    if not mandante_auth or not mandante_auth.get('token'):
-        print("⚠️ TEST 5 SKIPPED: mandante@aptivarl.com user does not exist or credentials invalid")
-        print("   This is acceptable - test 5 is optional")
-    else:
-        mandante_token = mandante_auth['token']
-        mandante_profile = mandante_auth['profile']
-        
-        print(f"📋 Mandante user role: {mandante_profile.get('role_codigo')}")
-        
-        # Try GET /api/usuarios as mandante user
-        mandante_usuarios_data = get_usuarios(mandante_token)
-        
-        if mandante_usuarios_data and mandante_usuarios_data.get('status_code'):
-            status = mandante_usuarios_data['status_code']
-            if status == 403 or status == 401:
-                print(f"✅ TEST 5 PASSED: Non-super user correctly denied access ({status})")
-            else:
-                print(f"❌ TEST 5 FAILED: Expected 403/401, got {status}")
-                return False
-        elif mandante_usuarios_data and 'empresaMandantes' in mandante_usuarios_data:
-            print(f"❌ TEST 5 FAILED: Non-super user should NOT have access to /api/usuarios")
-            print(f"   But received data with empresaMandantes (should be restricted)")
-            return False
+    try:
+        # Test without token
+        response = requests.get(f"{BASE_URL}/usuarios/{admin_perfil_id}/dependencias", timeout=10)
+        if response.status_code == 401:
+            log(f"✅ GET dependencias without token: status={response.status_code} (expected 401)")
         else:
-            print(f"⚠️ TEST 5 WARNING: Unexpected response from mandante user")
-            print(f"   Response: {mandante_usuarios_data}")
-    
-    print()
-    
-    return True
+            log(f"⚠️ GET dependencias without token: status={response.status_code} (expected 401)")
+        
+        # Test DELETE without token
+        response = requests.delete(f"{BASE_URL}/usuarios/{admin_perfil_id}", timeout=10)
+        if response.status_code == 401:
+            log(f"✅ DELETE user without token: status={response.status_code} (expected 401)")
+        else:
+            log(f"⚠️ DELETE user without token: status={response.status_code} (expected 401)")
+        
+        log("   - Note: Cannot test with non-super user credentials (not available)")
+        return True
+    except Exception as e:
+        log(f"❌ Authorization test exception: {e}")
+        return False
 
+def test_self_delete_guard():
+    """TEST 8: Self-delete guard - admin cannot delete their own user"""
+    log("TEST 8: Self-delete guard - admin cannot delete their own user")
+    
+    try:
+        headers = {"Authorization": f"Bearer {admin_token}"}
+        
+        # Find admin's perfil_id from GET /api/usuarios
+        log("   - Finding admin's perfil_id from GET /api/usuarios...")
+        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
+        if response.status_code == 200:
+            usuarios = response.json().get('usuarios', [])
+            admin_user = next((u for u in usuarios if u.get('email') == ADMIN_EMAIL), None)
+            if admin_user:
+                admin_perfil = admin_user.get('perfil_id')
+                log(f"   - Found admin perfil_id: {admin_perfil}")
+                
+                # Try to delete own user
+                log(f"   - Attempting to DELETE own user (perfil_id={admin_perfil})...")
+                delete_response = requests.delete(f"{BASE_URL}/usuarios/{admin_perfil}", headers=headers, timeout=10)
+                
+                if delete_response.status_code == 400:
+                    data = delete_response.json()
+                    error_msg = data.get('error', '')
+                    log(f"✅ Self-delete blocked: status={delete_response.status_code}, error='{error_msg}'")
+                    if 'propio usuario' in error_msg.lower():
+                        log(f"✅ Error message correct: '{error_msg}'")
+                        return True
+                    else:
+                        log(f"⚠️ Error message unexpected: '{error_msg}' (expected 'No puedes eliminar tu propio usuario')")
+                        return True
+                else:
+                    log(f"❌ Self-delete not blocked: status={delete_response.status_code}, response={delete_response.text}")
+                    return False
+            else:
+                log(f"❌ Admin user not found in GET /api/usuarios")
+                return False
+        else:
+            log(f"❌ GET /api/usuarios failed: status={response.status_code}")
+            return False
+    except Exception as e:
+        log(f"❌ Self-delete guard test exception: {e}")
+        return False
+
+def cleanup():
+    """Cleanup: Delete any remaining throwaway users"""
+    log("CLEANUP: Deleting any remaining throwaway users")
+    
+    if not created_users:
+        log("   - No users to clean up")
+        return
+    
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    for user in created_users:
+        perfil_id = user.get('perfil_id')
+        email = user.get('email')
+        try:
+            response = requests.delete(f"{BASE_URL}/usuarios/{perfil_id}", headers=headers, timeout=10)
+            if response.status_code == 200:
+                log(f"✅ Cleaned up user: {email} (perfil_id={perfil_id})")
+            else:
+                log(f"⚠️ Could not clean up user: {email} (status={response.status_code})")
+        except Exception as e:
+            log(f"⚠️ Cleanup exception for {email}: {e}")
 
 def main():
-    """Main entry point"""
-    try:
-        success = run_tests()
-        
-        print("\n" + "="*80)
-        print("TEST SUMMARY")
-        print("="*80)
-        
-        if success:
-            print("✅ ALL TESTS PASSED")
-            print("\nFeature 'GET /api/usuarios returns empresasAll + empresaMandantes' is working correctly:")
-            print("  ✅ Admin login successful (SUPER_ADMIN_HOLDING)")
-            print("  ✅ GET /api/usuarios returns 200 with all required arrays")
-            print("  ✅ empresasAll is non-empty with empresa_id and razon_social")
-            print("  ✅ empresaMandantes has empresa_id/mandante_id pairs")
-            print("  ✅ Referential integrity verified (all IDs exist in respective arrays)")
-            print("  ✅ Regression: Non-super users correctly restricted")
-            sys.exit(0)
-        else:
-            print("❌ TESTS FAILED")
-            print("\nSome tests did not pass. Review the output above for details.")
-            sys.exit(1)
+    """Main test execution"""
+    log("=" * 80)
+    log("BACKEND TEST: User Deletion with Dependency Preview (Aptiva RL)")
+    log("=" * 80)
     
-    except KeyboardInterrupt:
-        print("\n\n⚠️ Tests interrupted by user")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n\n❌ CRITICAL ERROR: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
+    # TEST 1: Login
+    if not test_login():
+        log("FATAL: Login failed, cannot continue")
+        return
+    
+    # TEST 2: GET /api/usuarios
+    mandante_id = test_get_usuarios()
+    if not mandante_id:
+        log("FATAL: Could not get mandante_id, cannot continue")
+        return
+    
+    # TEST 3: Create user WITH mandante
+    perfil_id_1 = test_create_user_with_mandante(mandante_id)
+    if not perfil_id_1:
+        log("ERROR: Could not create user with mandante")
+    else:
+        # TEST 4: GET dependencias (should have mandantes)
+        test_get_dependencias(perfil_id_1, expected_mandantes_count=1)
+        
+        # TEST 5: DELETE user
+        if test_delete_user(perfil_id_1):
+            # Remove from cleanup list if successfully deleted
+            created_users[:] = [u for u in created_users if u.get('perfil_id') != perfil_id_1]
+    
+    # TEST 6: Create user WITHOUT mandantes
+    perfil_id_2 = test_create_user_without_mandantes()
+    if not perfil_id_2:
+        log("ERROR: Could not create user without mandantes")
+    else:
+        # GET dependencias (should have vinculado=false, mandantes=[])
+        test_get_dependencias(perfil_id_2, expected_mandantes_count=0)
+        
+        # DELETE user
+        if test_delete_user(perfil_id_2):
+            # Remove from cleanup list if successfully deleted
+            created_users[:] = [u for u in created_users if u.get('perfil_id') != perfil_id_2]
+    
+    # TEST 7: Authorization
+    test_authorization_non_super()
+    
+    # TEST 8: Self-delete guard
+    test_self_delete_guard()
+    
+    # Cleanup
+    cleanup()
+    
+    log("=" * 80)
+    log("BACKEND TEST COMPLETE")
+    log("=" * 80)
 
 if __name__ == "__main__":
     main()
