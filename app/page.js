@@ -2203,6 +2203,7 @@ function Visor({ api }) {
 
 const MANUAL_FOR_ROLE = {
   ADMIN_EMPRESA: 'super_admin',
+  MANDANTE_ADMIN: 'admin',
   MANDANTE_RRHH: 'rrhh',
   MANDANTE_PREVENCION: 'prevencion',
   MANDANTE_VISOR: 'visor',
