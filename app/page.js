@@ -2660,6 +2660,9 @@ function Usuarios({ api, isSuper }) {
   const [open, setOpen] = useState(false);
   const empty = { perfil_id: null, email: '', password: '', nombre: '', telefono: '', role_codigo: 'MANDANTE_VISOR', empresa_id: '', mandante_id: '', activo: true, mandantes: [] };
   const [f, setF] = useState(empty);
+  const [fq, setFq] = useState('');
+  const [fRole, setFRole] = useState('all');
+  const [fMand, setFMand] = useState('all');
   const editing = !!f.perfil_id;
   const roles = data?.roles || [];
   const mandAll = data?.mandantesAll || [];
@@ -2676,9 +2679,23 @@ function Usuarios({ api, isSuper }) {
   const del = async (r) => { if (!(await confirmDialog({ title: 'Eliminar usuario', description: `¿Eliminar al usuario ${r.nombre} (${r.email})? Esta acción no se puede deshacer.`, confirmText: 'Eliminar' }))) return; try { await api(`/usuarios/${r.perfil_id}`, { method: 'DELETE' }); toast.success('Usuario eliminado'); reload(); } catch (e) { toast.error(e.message); } };
   if (!isSuper) return <div><PageHead title="Usuarios" /><p className="text-slate-400">Solo el Super Administrador puede gestionar usuarios.</p></div>;
   const showMand = !['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(f.role_codigo);
+  const q = fq.trim().toLowerCase();
+  const filtered = (data?.usuarios || []).filter((r) => {
+    if (q && !((r.nombre || '').toLowerCase().includes(q) || (r.email || '').toLowerCase().includes(q))) return false;
+    if (fRole !== 'all' && r.role_codigo !== fRole) return false;
+    if (fMand !== 'all') { const ids = (r.mandantes || []).map((m) => m.mandante_id); if (!ids.includes(fMand) && r.mandante_id !== fMand) return false; }
+    return true;
+  });
   return (
     <div>
       <PageHead title="Usuarios y permisos" sub="Cuentas gestionadas con Supabase Auth" action={<Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={openNew}><Plus className="h-4 w-4 mr-1" />Nuevo usuario</Button>} />
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" /><Input value={fq} onChange={(e) => setFq(e.target.value)} placeholder="Buscar por nombre o correo…" className="pl-9" /></div>
+        <Select value={fRole} onValueChange={setFRole}><SelectTrigger className="sm:w-52"><SelectValue placeholder="Tipo de usuario" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los roles</SelectItem>{roles.map((r) => <SelectItem key={r.codigo} value={r.codigo}>{roleLabel[r.codigo] || r.nombre}</SelectItem>)}</SelectContent></Select>
+        <Select value={fMand} onValueChange={setFMand}><SelectTrigger className="sm:w-60"><SelectValue placeholder="Mandante" /></SelectTrigger><SelectContent><SelectItem value="all">Todos los mandantes</SelectItem>{mandAll.map((m) => <SelectItem key={m.mandante_id} value={m.mandante_id}>{m.razon_social}</SelectItem>)}</SelectContent></Select>
+        {(q || fRole !== 'all' || fMand !== 'all') && <Button variant="outline" onClick={() => { setFq(''); setFRole('all'); setFMand('all'); }}>Limpiar</Button>}
+      </div>
+      <p className="text-xs text-slate-400 mb-2">{filtered.length} de {(data?.usuarios || []).length} usuarios</p>
       <Table columns={[
         { key: 'nombre', label: 'Nombre', render: (r) => <div><p className="font-medium text-slate-800">{r.nombre}</p><p className="text-xs text-slate-400">{r.email}</p></div> },
         { key: 'telefono', label: 'Teléfono', render: (r) => r.telefono || <span className="text-slate-300">—</span> },
@@ -2686,7 +2703,7 @@ function Usuarios({ api, isSuper }) {
         { key: 'mandantes', label: 'Mandantes', render: (r) => (r.mandantes && r.mandantes.length) ? <span className="text-slate-600" title={r.mandantes.map((m) => m.razon_social).join(', ')}>{r.mandantes.length === 1 ? r.mandantes[0].razon_social : `${r.mandantes.length} mandantes`}</span> : (r.mandante || <span className="text-slate-300">—</span>) },
         { key: 'activo', label: 'Estado', render: (r) => r.activo ? <Badge className="bg-emerald-100 text-emerald-700 border-0">Activo</Badge> : <Badge className="bg-slate-100 text-slate-500 border-0">Inactivo</Badge> },
         { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}><Settings className="h-3.5 w-3.5 mr-1" />Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" onClick={() => del(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
-      ]} rows={data?.usuarios} />
+      ]} rows={filtered} />
       <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{editing ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle></DialogHeader>
         <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
