@@ -2659,7 +2659,7 @@ function Usuarios({ api, isSuper }) {
   const [data, reload] = useData(api, isSuper ? '/usuarios' : '/me');
   const [empresas] = useData(api, '/empresas');
   const [open, setOpen] = useState(false);
-  const empty = { perfil_id: null, email: '', password: '', nombre: '', telefono: '', role_codigo: 'MANDANTE_VISOR', empresa_id: '', mandante_id: '', activo: true, mandantes: [], notificar_email: false };
+  const empty = { perfil_id: null, email: '', password: '', nombre: '', telefono: '', role_codigo: 'MANDANTE_VISOR', empresa_id: '', mandante_id: '', activo: true, mandantes: [], notificar_email: false, copia_email: false };
   const [f, setF] = useState(empty);
   const [fq, setFq] = useState('');
   const [fRole, setFRole] = useState('all');
@@ -2680,7 +2680,7 @@ function Usuarios({ api, isSuper }) {
   const openNew = () => { setF(empty); setSelEmp([]); setOpen(true); };
   const openEdit = (r) => {
     const mids = (r.mandantes || []).map((m) => m.mandante_id);
-    setF({ perfil_id: r.perfil_id, email: r.email, password: '', nombre: r.nombre || '', telefono: r.telefono || '', role_codigo: r.role_codigo, empresa_id: r.empresa_id || '', mandante_id: r.mandante_id || '', activo: r.activo, mandantes: mids, notificar_email: !!r.notificar_email });
+    setF({ perfil_id: r.perfil_id, email: r.email, password: '', nombre: r.nombre || '', telefono: r.telefono || '', role_codigo: r.role_codigo, empresa_id: r.empresa_id || '', mandante_id: r.mandante_id || '', activo: r.activo, mandantes: mids, notificar_email: !!r.notificar_email, copia_email: !!r.copia_email });
     const midSet = new Set(mids);
     setSelEmp(empresasHold.filter((e) => { const ms = empMandMap[e.empresa_id] || []; return ms.length > 0 && ms.every((m) => midSet.has(m)); }).map((e) => e.empresa_id));
     setOpen(true);
@@ -2823,6 +2823,15 @@ function Usuarios({ api, isSuper }) {
               </span>
             </label>
           )}
+          {f.role_codigo !== 'MANDANTE_ADMIN' && (
+            <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer">
+              <input type="checkbox" checked={!!f.copia_email} onChange={(e) => setF({ ...f, copia_email: e.target.checked })} className="h-4 w-4 mt-0.5 rounded border-slate-300" />
+              <span className="text-sm">
+                <span className="font-medium text-slate-700">Recibir copia (CC) de alertas de vencimientos</span>
+                <span className="block text-xs text-slate-500">Irá en copia de los correos de vencimientos/documentos vencidos. Si tiene mandantes asignados, recibe copia solo de esos; si es RR.HH./Holding, de todos.</span>
+              </span>
+            </label>
+          )}
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>{editing ? 'Guardar' : 'Crear'}</Button></DialogFooter>
       </DialogContent></Dialog>
@@ -2874,6 +2883,7 @@ function Usuarios({ api, isSuper }) {
                 </div>
               )}
               <div className="text-sm"><span className="text-slate-500">Asunto:</span> <span className="font-medium text-slate-800">{c.subject}</span></div>
+              {(c.cc || []).length > 0 && <div className="text-xs text-slate-500"><span className="font-medium text-slate-600">CC:</span> {c.cc.map((x) => `${x.nombre} <${x.email}>`).join(', ')}</div>}
               <div className="border rounded-lg overflow-hidden bg-white">
                 <iframe title="preview" srcDoc={c.html} className="w-full h-[420px] bg-white" />
               </div>

@@ -426,12 +426,12 @@ export async function GET(request, { params }) {
       const perfil = (await query('select perfil_id, email, nombre, notificar_email from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
       if (!perfil) return json({ error: 'No encontrado' }, 404);
       const mIds = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [perfil.perfil_id])).rows.map((x) => x.mandante_id);
-      const correos = await buildCorreosParaAdmin({ encargado: perfil.nombre, mandanteIds: mIds });
+      const correos = await buildCorreosParaAdmin({ encargado: perfil.nombre, mandanteIds: mIds, excludeEmail: perfil.email });
       return json({ email: perfil.email, encargado: perfil.nombre, notificar_email: perfil.notificar_email, email_configurado: emailConfigured(), total_mandantes: mIds.length, correos });
     }
 
     if (p[0] === 'usuarios' && isSuper(profile)) {
-      const r = await query(`select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, up.telefono, up.empresa_id, up.mandante_id, up.notificar_email,
+      const r = await query(`select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, up.telefono, up.empresa_id, up.mandante_id, up.notificar_email, up.copia_email,
         e.razon_social as empresa, m.razon_social as mandante,
         coalesce((select json_agg(json_build_object('mandante_id', mm.mandante_id, 'razon_social', mn.razon_social) order by mn.razon_social)
           from usuario_mandantes mm join mandantes mn on mn.mandante_id=mm.mandante_id where mm.perfil_id=up.perfil_id), '[]') as mandantes
@@ -852,9 +852,9 @@ async function processVencimientosCron() {
   for (const a of admins) {
     try {
       const mIds = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [a.perfil_id])).rows.map((x) => x.mandante_id);
-      const correos = await buildCorreosParaAdmin({ encargado: a.nombre, mandanteIds: mIds });
+      const correos = await buildCorreosParaAdmin({ encargado: a.nombre, mandanteIds: mIds, excludeEmail: a.email });
       for (const c of correos) {
-        try { await sendEmail({ to: a.email, subject: c.subject, html: c.html }); enviados++; }
+        try { await sendEmail({ to: a.email, subject: c.subject, html: c.html, cc: c.cc_emails }); enviados++; }
         catch (e) { errores++; console.warn('[cron-venc] send', a.email, e?.message || e); }
       }
     } catch (e) { errores++; console.warn('[cron-venc] admin', a.email, e?.message || e); }
@@ -1030,11 +1030,11 @@ export async function POST(request, { params }) {
       if (!perfil) return json({ error: 'No encontrado' }, 404);
       if (!perfil.email) return json({ error: 'El usuario no tiene correo' }, 400);
       const mIds = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [perfil.perfil_id])).rows.map((x) => x.mandante_id);
-      const correos = await buildCorreosParaAdmin({ encargado: perfil.nombre, mandanteIds: mIds });
+      const correos = await buildCorreosParaAdmin({ encargado: perfil.nombre, mandanteIds: mIds, excludeEmail: perfil.email });
       if (correos.length === 0) return json({ error: 'No hay documentos por vencer ni vencidos para este administrador.' }, 400);
       let enviados = 0; const fallos = [];
       for (const c of correos) {
-        try { await sendEmail({ to: perfil.email, subject: c.subject, html: c.html }); enviados++; }
+        try { await sendEmail({ to: perfil.email, subject: c.subject, html: c.html, cc: c.cc_emails }); enviados++; }
         catch (e) { fallos.push(`${c.mandante}: ${e.message}`); }
       }
       await audit(profile, 'enviar_correo_vencimientos', 'usuario', p[1], { enviados, fallos: fallos.length, destino: perfil.email });
@@ -1116,12 +1116,12 @@ export async function POST(request, { params }) {
 
     if (p[0] === 'usuarios') {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
-      const { email, password, nombre, role_codigo, empresa_id, mandante_id, telefono, mandantes, notificar_email } = body;
+      const { email, password, nombre, role_codigo, empresa_id, mandante_id, telefono, mandantes, notificar_email, copia_email } = body;
       if (!email || !password || !nombre || !role_codigo) return json({ error: 'Faltan campos' }, 400);
       const authUser = await adminCreateUser(email, password, { nombre, rol: role_codigo });
       const authId = authUser.id || authUser.user?.id;
       const id = uuid();
-      await query('insert into usuarios_perfiles (perfil_id, auth_user_id, email, nombre, role_codigo, empresa_id, mandante_id, telefono, notificar_email) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, authId, email.toLowerCase(), nombre, role_codigo, empresa_id || null, mandante_id || null, telefono || null, !!notificar_email]);
+      await query('insert into usuarios_perfiles (perfil_id, auth_user_id, email, nombre, role_codigo, empresa_id, mandante_id, telefono, notificar_email, copia_email) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [id, authId, email.toLowerCase(), nombre, role_codigo, empresa_id || null, mandante_id || null, telefono || null, !!notificar_email, !!copia_email]);
       if (Array.isArray(mandantes)) {
         for (const mid of mandantes) await query('insert into usuario_mandantes (perfil_id, mandante_id) values ($1,$2) on conflict do nothing', [id, mid]);
       }
@@ -1353,9 +1353,9 @@ export async function PUT(request, { params }) {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
       const perfil = (await query('select * from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
       if (!perfil) return json({ error: 'No encontrado' }, 404);
-      const { nombre, role_codigo, telefono, empresa_id, mandante_id, activo, mandantes, password, notificar_email } = body;
-      await query('update usuarios_perfiles set nombre=coalesce($2,nombre), role_codigo=coalesce($3,role_codigo), telefono=$4, empresa_id=$5, mandante_id=$6, activo=coalesce($7,activo), notificar_email=coalesce($8,notificar_email), updated_at=now() where perfil_id=$1',
-        [p[1], nombre ?? null, role_codigo ?? null, telefono ?? null, empresa_id || null, mandante_id || null, (activo === undefined ? null : activo), (notificar_email === undefined ? null : !!notificar_email)]);
+      const { nombre, role_codigo, telefono, empresa_id, mandante_id, activo, mandantes, password, notificar_email, copia_email } = body;
+      await query('update usuarios_perfiles set nombre=coalesce($2,nombre), role_codigo=coalesce($3,role_codigo), telefono=$4, empresa_id=$5, mandante_id=$6, activo=coalesce($7,activo), notificar_email=coalesce($8,notificar_email), copia_email=coalesce($9,copia_email), updated_at=now() where perfil_id=$1',
+        [p[1], nombre ?? null, role_codigo ?? null, telefono ?? null, empresa_id || null, mandante_id || null, (activo === undefined ? null : activo), (notificar_email === undefined ? null : !!notificar_email), (copia_email === undefined ? null : !!copia_email)]);
       if (Array.isArray(mandantes)) {
         await query('delete from usuario_mandantes where perfil_id=$1', [p[1]]);
         for (const mid of mandantes) await query('insert into usuario_mandantes (perfil_id, mandante_id) values ($1,$2) on conflict do nothing', [p[1], mid]);
