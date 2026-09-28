@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { query, ensureSchema, uuid, ensureEmpresaReqs } from '@/lib/db';
 import { authSignIn, getAuthUser, adminCreateUser, adminDeleteUser, adminUpdateUser, storageUpload, storageSignedUrl, storageDelete, BUCKET } from '@/lib/supabase';
+import { buildCorreosParaAdmin, sendEmail, emailConfigured } from '@/lib/email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -419,8 +421,17 @@ export async function GET(request, { params }) {
       return json({ mandantes, empresa, docs_subidos, docs_revisados, trabajadores_creados, accesos, vinculado: total > 0 });
     }
 
+    if (p[0] === 'usuarios' && p[1] && p[2] === 'preview-correos') {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      const perfil = (await query('select perfil_id, email, nombre, notificar_email from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
+      if (!perfil) return json({ error: 'No encontrado' }, 404);
+      const mIds = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [perfil.perfil_id])).rows.map((x) => x.mandante_id);
+      const correos = await buildCorreosParaAdmin({ encargado: perfil.nombre, mandanteIds: mIds });
+      return json({ email: perfil.email, encargado: perfil.nombre, notificar_email: perfil.notificar_email, email_configurado: emailConfigured(), total_mandantes: mIds.length, correos });
+    }
+
     if (p[0] === 'usuarios' && isSuper(profile)) {
-      const r = await query(`select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, up.telefono, up.empresa_id, up.mandante_id,
+      const r = await query(`select up.perfil_id, up.email, up.nombre, up.role_codigo, up.activo, up.telefono, up.empresa_id, up.mandante_id, up.notificar_email,
         e.razon_social as empresa, m.razon_social as mandante,
         coalesce((select json_agg(json_build_object('mandante_id', mm.mandante_id, 'razon_social', mn.razon_social) order by mn.razon_social)
           from usuario_mandantes mm join mandantes mn on mn.mandante_id=mm.mandante_id where mm.perfil_id=up.perfil_id), '[]') as mandantes
@@ -833,10 +844,45 @@ export async function GET(request, { params }) {
   }
 }
 
+const cronRuns = new Set();
+// Envía a cada administrador con notificar_email=true un correo por mandante con documentos por vencer/vencidos.
+async function processVencimientosCron() {
+  const admins = (await query('select perfil_id, email, nombre from usuarios_perfiles where notificar_email=true and activo=true and email is not null')).rows;
+  let enviados = 0, errores = 0;
+  for (const a of admins) {
+    try {
+      const mIds = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [a.perfil_id])).rows.map((x) => x.mandante_id);
+      const correos = await buildCorreosParaAdmin({ encargado: a.nombre, mandanteIds: mIds });
+      for (const c of correos) {
+        try { await sendEmail({ to: a.email, subject: c.subject, html: c.html }); enviados++; }
+        catch (e) { errores++; console.warn('[cron-venc] send', a.email, e?.message || e); }
+      }
+    } catch (e) { errores++; console.warn('[cron-venc] admin', a.email, e?.message || e); }
+  }
+  console.log(`[cron-venc] done enviados=${enviados} errores=${errores}`);
+  return { enviados, errores };
+}
+
 export async function POST(request, { params }) {
   try {
     await ensureSchema();
     const p = (await params)?.path || [];
+
+    // Cron: notificación diaria (L-V 08:15 Santiago) de documentos por vencer/vencidos a administradores.
+    // Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if (p[0] === 'cron' && p[1] === 'vencimientos') {
+      const auth = request.headers.get('authorization') || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const secret = process.env.WEBHOOK_CRON_SECRET || '';
+      const okAuth = !!secret && !!token && token.length === secret.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(secret));
+      if (!okAuth) return json({ error: 'No autorizado' }, 401);
+      const runId = request.headers.get('x-webhook-id') || '';
+      if (runId && cronRuns.has(runId)) return json({ ok: true, duplicate: true }, 202);
+      if (runId) { cronRuns.add(runId); if (cronRuns.size > 2000) cronRuns.clear(); }
+      // Fire-and-forget: el servidor Node persistente continúa el trabajo tras responder.
+      processVencimientosCron().catch((e) => console.error('[cron-venc]', e?.message || e));
+      return json({ ok: true, accepted: true }, 202);
+    }
 
     // Endpoint PÚBLICO para el control de acceso (página /visor en PDA). Sin autenticación.
     if (p[0] === 'public' && p[1] === 'acceso') {
@@ -976,6 +1022,26 @@ export async function POST(request, { params }) {
     if (!profile) return json({ error: 'No autorizado' }, 401);
     const body = await request.json().catch(() => ({}));
 
+    // Envío MANUAL de las notificaciones de vencimientos a un administrador (uno por mandante con documentos).
+    if (p[0] === 'usuarios' && p[1] && p[2] === 'enviar-correos') {
+      if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
+      if (!emailConfigured()) return json({ error: 'El envío de correos aún no está configurado.' }, 400);
+      const perfil = (await query('select perfil_id, email, nombre from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
+      if (!perfil) return json({ error: 'No encontrado' }, 404);
+      if (!perfil.email) return json({ error: 'El usuario no tiene correo' }, 400);
+      const mIds = (await query('select mandante_id from usuario_mandantes where perfil_id=$1', [perfil.perfil_id])).rows.map((x) => x.mandante_id);
+      const correos = await buildCorreosParaAdmin({ encargado: perfil.nombre, mandanteIds: mIds });
+      if (correos.length === 0) return json({ error: 'No hay documentos por vencer ni vencidos para este administrador.' }, 400);
+      let enviados = 0; const fallos = [];
+      for (const c of correos) {
+        try { await sendEmail({ to: perfil.email, subject: c.subject, html: c.html }); enviados++; }
+        catch (e) { fallos.push(`${c.mandante}: ${e.message}`); }
+      }
+      await audit(profile, 'enviar_correo_vencimientos', 'usuario', p[1], { enviados, fallos: fallos.length, destino: perfil.email });
+      if (enviados === 0) return json({ error: fallos[0] || 'No se pudo enviar el correo.' }, 502);
+      return json({ ok: true, enviados, fallos });
+    }
+
     // Verifica qué faenas (incluida la de origen) ya tienen un documento en el requisito homologado,
     // para advertir antes de reemplazar (trabajador Spot · documento transversal).
     if (p[0] === 'documentos' && p[1] === 'check-replace') {
@@ -1050,12 +1116,12 @@ export async function POST(request, { params }) {
 
     if (p[0] === 'usuarios') {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
-      const { email, password, nombre, role_codigo, empresa_id, mandante_id, telefono, mandantes } = body;
+      const { email, password, nombre, role_codigo, empresa_id, mandante_id, telefono, mandantes, notificar_email } = body;
       if (!email || !password || !nombre || !role_codigo) return json({ error: 'Faltan campos' }, 400);
       const authUser = await adminCreateUser(email, password, { nombre, rol: role_codigo });
       const authId = authUser.id || authUser.user?.id;
       const id = uuid();
-      await query('insert into usuarios_perfiles (perfil_id, auth_user_id, email, nombre, role_codigo, empresa_id, mandante_id, telefono) values ($1,$2,$3,$4,$5,$6,$7,$8)', [id, authId, email.toLowerCase(), nombre, role_codigo, empresa_id || null, mandante_id || null, telefono || null]);
+      await query('insert into usuarios_perfiles (perfil_id, auth_user_id, email, nombre, role_codigo, empresa_id, mandante_id, telefono, notificar_email) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, authId, email.toLowerCase(), nombre, role_codigo, empresa_id || null, mandante_id || null, telefono || null, !!notificar_email]);
       if (Array.isArray(mandantes)) {
         for (const mid of mandantes) await query('insert into usuario_mandantes (perfil_id, mandante_id) values ($1,$2) on conflict do nothing', [id, mid]);
       }
@@ -1287,9 +1353,9 @@ export async function PUT(request, { params }) {
       if (!isSuper(profile)) return json({ error: 'No autorizado' }, 403);
       const perfil = (await query('select * from usuarios_perfiles where perfil_id=$1', [p[1]])).rows[0];
       if (!perfil) return json({ error: 'No encontrado' }, 404);
-      const { nombre, role_codigo, telefono, empresa_id, mandante_id, activo, mandantes, password } = body;
-      await query('update usuarios_perfiles set nombre=coalesce($2,nombre), role_codigo=coalesce($3,role_codigo), telefono=$4, empresa_id=$5, mandante_id=$6, activo=coalesce($7,activo), updated_at=now() where perfil_id=$1',
-        [p[1], nombre ?? null, role_codigo ?? null, telefono ?? null, empresa_id || null, mandante_id || null, (activo === undefined ? null : activo)]);
+      const { nombre, role_codigo, telefono, empresa_id, mandante_id, activo, mandantes, password, notificar_email } = body;
+      await query('update usuarios_perfiles set nombre=coalesce($2,nombre), role_codigo=coalesce($3,role_codigo), telefono=$4, empresa_id=$5, mandante_id=$6, activo=coalesce($7,activo), notificar_email=coalesce($8,notificar_email), updated_at=now() where perfil_id=$1',
+        [p[1], nombre ?? null, role_codigo ?? null, telefono ?? null, empresa_id || null, mandante_id || null, (activo === undefined ? null : activo), (notificar_email === undefined ? null : !!notificar_email)]);
       if (Array.isArray(mandantes)) {
         await query('delete from usuario_mandantes where perfil_id=$1', [p[1]]);
         for (const mid of mandantes) await query('insert into usuario_mandantes (perfil_id, mandante_id) values ($1,$2) on conflict do nothing', [p[1], mid]);

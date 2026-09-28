@@ -1,0 +1,9 @@
+crons:
+  - name: venc-diario
+    description: "Envia L-V 08:15 (Santiago) a administradores el correo de documentos por vencer y vencidos"
+    cron: "15 8 * * 1-5"
+    timezone: "America/Santiago"
+    endpoint: "{{BASE_URL}}/api/cron/vencimientos"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import {
   LayoutDashboard, Building2, FileSignature, Users, Truck, Wrench, ShieldCheck, FileClock,
   CalendarClock, Building, UserCog, History, LogOut, Search, Plus, ChevronRight, ChevronDown, Upload,
-  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus, BookOpen, Check,
+  CheckCircle2, XCircle, AlertTriangle, Clock, Menu, Bell, Download, BarChart3, Trash2, Eye, ExternalLink, Printer, X, FolderOpen, QrCode, Copy, Settings, UserMinus, BookOpen, Check, Mail,
 } from 'lucide-react';
 import logoAptiva from '@/assets/logo-aptiva.png';
 import logoRioLoa from '@/assets/logo-rioloa.png';
@@ -2659,7 +2659,7 @@ function Usuarios({ api, isSuper }) {
   const [data, reload] = useData(api, isSuper ? '/usuarios' : '/me');
   const [empresas] = useData(api, '/empresas');
   const [open, setOpen] = useState(false);
-  const empty = { perfil_id: null, email: '', password: '', nombre: '', telefono: '', role_codigo: 'MANDANTE_VISOR', empresa_id: '', mandante_id: '', activo: true, mandantes: [] };
+  const empty = { perfil_id: null, email: '', password: '', nombre: '', telefono: '', role_codigo: 'MANDANTE_VISOR', empresa_id: '', mandante_id: '', activo: true, mandantes: [], notificar_email: false };
   const [f, setF] = useState(empty);
   const [fq, setFq] = useState('');
   const [fRole, setFRole] = useState('all');
@@ -2680,7 +2680,7 @@ function Usuarios({ api, isSuper }) {
   const openNew = () => { setF(empty); setSelEmp([]); setOpen(true); };
   const openEdit = (r) => {
     const mids = (r.mandantes || []).map((m) => m.mandante_id);
-    setF({ perfil_id: r.perfil_id, email: r.email, password: '', nombre: r.nombre || '', telefono: r.telefono || '', role_codigo: r.role_codigo, empresa_id: r.empresa_id || '', mandante_id: r.mandante_id || '', activo: r.activo, mandantes: mids });
+    setF({ perfil_id: r.perfil_id, email: r.email, password: '', nombre: r.nombre || '', telefono: r.telefono || '', role_codigo: r.role_codigo, empresa_id: r.empresa_id || '', mandante_id: r.mandante_id || '', activo: r.activo, mandantes: mids, notificar_email: !!r.notificar_email });
     const midSet = new Set(mids);
     setSelEmp(empresasHold.filter((e) => { const ms = empMandMap[e.empresa_id] || []; return ms.length > 0 && ms.every((m) => midSet.has(m)); }).map((e) => e.empresa_id));
     setOpen(true);
@@ -2724,6 +2724,20 @@ function Usuarios({ api, isSuper }) {
     catch (e) { toast.error(e.message); }
     finally { setDeleting(false); }
   };
+  const [preview, setPreview] = useState(null); // { user, data, loading, idx }
+  const [sending, setSending] = useState(false);
+  const openPreview = async (r) => {
+    setPreview({ user: r, data: null, loading: true, idx: 0 });
+    try { const data = await api(`/usuarios/${r.perfil_id}/preview-correos`); setPreview({ user: r, data, loading: false, idx: 0 }); }
+    catch (e) { toast.error(e.message); setPreview(null); }
+  };
+  const sendNow = async () => {
+    if (!preview?.user) return;
+    setSending(true);
+    try { const res = await api(`/usuarios/${preview.user.perfil_id}/enviar-correos`, { method: 'POST' }); toast.success(`${res.enviados} correo(s) enviado(s) a ${preview.data?.email || 'el administrador'}`); setPreview(null); }
+    catch (e) { toast.error(e.message); }
+    finally { setSending(false); }
+  };
   if (!isSuper) return <div><PageHead title="Usuarios" /><p className="text-slate-400">Solo el Super Administrador puede gestionar usuarios.</p></div>;
   const showMand = !['SUPER_ADMIN_HOLDING', 'ADMIN_EMPRESA'].includes(f.role_codigo);
   const q = fq.trim().toLowerCase();
@@ -2749,7 +2763,7 @@ function Usuarios({ api, isSuper }) {
         { key: 'role_codigo', label: 'Rol', render: (r) => <Badge variant="outline" className={roleBadgeClass(r.role_codigo)}>{roleLabel[r.role_codigo] || r.role_codigo}</Badge> },
         { key: 'mandantes', label: 'Mandantes', render: (r) => (r.mandantes && r.mandantes.length) ? <span className="text-slate-600" title={r.mandantes.map((m) => m.razon_social).join(', ')}>{r.mandantes.length === 1 ? r.mandantes[0].razon_social : `${r.mandantes.length} mandantes`}</span> : (r.mandante || <span className="text-slate-300">—</span>) },
         { key: 'activo', label: 'Estado', render: (r) => r.activo ? <Badge className="bg-emerald-100 text-emerald-700 border-0">Activo</Badge> : <Badge className="bg-slate-100 text-slate-500 border-0">Inactivo</Badge> },
-        { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}><Settings className="h-3.5 w-3.5 mr-1" />Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" onClick={() => askDelete(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
+        { key: 'acc', label: '', render: (r) => <div className="flex justify-end gap-2">{r.role_codigo === 'MANDANTE_ADMIN' && <Button size="sm" variant="outline" className="h-7 text-[#1789bf] border-blue-200 hover:bg-blue-50" onClick={() => openPreview(r)}><Mail className="h-3.5 w-3.5 mr-1" />Correo</Button>}<Button size="sm" variant="outline" className="h-7" onClick={() => openEdit(r)}><Settings className="h-3.5 w-3.5 mr-1" />Editar</Button><Button size="sm" variant="outline" className="h-7 text-red-600 border-red-200 hover:bg-red-50" onClick={() => askDelete(r)}><Trash2 className="h-3.5 w-3.5" /></Button></div> },
       ]} rows={filtered} />
       <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-lg">
         <DialogHeader><DialogTitle>{editing ? 'Editar usuario' : 'Nuevo usuario'}</DialogTitle></DialogHeader>
@@ -2800,6 +2814,15 @@ function Usuarios({ api, isSuper }) {
               <p className="text-xs text-slate-400">Define qué información podrá ver el usuario.</p>
             </div>
           )}
+          {f.role_codigo === 'MANDANTE_ADMIN' && (
+            <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 cursor-pointer">
+              <input type="checkbox" checked={!!f.notificar_email} onChange={(e) => setF({ ...f, notificar_email: e.target.checked })} className="h-4 w-4 mt-0.5 rounded border-slate-300" />
+              <span className="text-sm">
+                <span className="font-medium text-slate-700">Notificar por correo</span>
+                <span className="block text-xs text-slate-500">Recibirá de lunes a viernes (08:15) el listado de documentos por vencer y vencidos de sus mandantes.</span>
+              </span>
+            </label>
+          )}
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={save}>{editing ? 'Guardar' : 'Crear'}</Button></DialogFooter>
       </DialogContent></Dialog>
@@ -2832,6 +2855,36 @@ function Usuarios({ api, isSuper }) {
           <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={doDelete} disabled={deleting || delTarget?.loading}>{deleting ? 'Eliminando…' : 'Eliminar de todas formas'}</Button>
         </DialogFooter>
       </DialogContent></Dialog>
+      <Dialog open={!!preview} onOpenChange={(o) => { if (!o && !sending) setPreview(null); }}><DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Mail className="h-5 w-5 text-[#1789bf] shrink-0" />Vista previa · Documentos por vencer y vencidos</DialogTitle>
+          <DialogDescription>{preview?.user?.nombre} · {preview?.data?.email || preview?.user?.email}</DialogDescription>
+        </DialogHeader>
+        {preview?.loading ? <p className="text-sm text-slate-400 py-6">Generando vista previa…</p> : (() => {
+          const d = preview?.data || {}; const correos = d.correos || [];
+          if (correos.length === 0) return <p className="text-sm text-slate-600 py-4">No hay documentos por vencer ni vencidos en los mandantes de este administrador{d.total_mandantes ? '' : ' (aún no tiene mandantes asignados)'}. No se enviará ningún correo.</p>;
+          const idx = Math.min(preview.idx || 0, correos.length - 1);
+          const c = correos[idx];
+          return (
+            <div className="space-y-3">
+              {!d.email_configurado && <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">El envío real aún no está configurado. Puedes revisar la vista previa; el botón de envío estará disponible al configurar el correo.</div>}
+              {correos.length > 1 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {correos.map((x, i) => <button key={x.mandante_id} type="button" onClick={() => setPreview((s) => ({ ...s, idx: i }))} className={`text-xs rounded-full border px-2.5 py-1 ${i === idx ? 'bg-[#1789bf] border-[#1789bf] text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-[#1c9dd7]'}`}>{x.mandante} ({x.count})</button>)}
+                </div>
+              )}
+              <div className="text-sm"><span className="text-slate-500">Asunto:</span> <span className="font-medium text-slate-800">{c.subject}</span></div>
+              <div className="border rounded-lg overflow-hidden bg-white">
+                <iframe title="preview" srcDoc={c.html} className="w-full h-[420px] bg-white" />
+              </div>
+            </div>
+          );
+        })()}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setPreview(null)} disabled={sending}>Cerrar</Button>
+          {(preview?.data?.correos || []).length > 0 && <Button className="bg-[#1c9dd7] hover:bg-[#1789bf]" onClick={sendNow} disabled={sending || preview?.loading || !preview?.data?.email_configurado}>{sending ? 'Enviando…' : `Enviar ahora (${(preview?.data?.correos || []).length})`}</Button>}
+        </DialogFooter>
+      </DialogContent></Dialog>
     </div>
   );
 }
@@ -2848,6 +2901,7 @@ const AUDIT_LABEL = {
   crear_usuario: { t: 'Creó usuario', c: 'bg-emerald-100 text-emerald-700' },
   editar_usuario: { t: 'Editó usuario', c: 'bg-amber-100 text-amber-700' },
   eliminar_usuario: { t: 'Eliminó usuario', c: 'bg-red-100 text-red-700' },
+  enviar_correo_vencimientos: { t: 'Envió correo de vencimientos', c: 'bg-blue-100 text-[#1789bf]' },
   crear_mandante: { t: 'Creó mandante', c: 'bg-emerald-100 text-emerald-700' },
   editar_mandante: { t: 'Editó mandante', c: 'bg-amber-100 text-amber-700' },
   crear_contrato: { t: 'Creó contrato', c: 'bg-emerald-100 text-emerald-700' },

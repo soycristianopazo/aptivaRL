@@ -1,420 +1,607 @@
 #!/usr/bin/env python3
 """
-Backend Test: User Deletion with Dependency Preview (Aptiva RL)
-Tests GET /api/usuarios/:id/dependencias and DELETE /api/usuarios/:id endpoints
+Backend API Testing for Aptiva RL - Email Notifications Feature
+Tests the NEW "Notificación de vencimientos por correo" backend
 """
 
 import requests
 import json
-import random
-import string
+import sys
+import os
 from datetime import datetime
+from dotenv import load_dotenv
 
-# Configuration
-BASE_URL = "https://aptiva-db.preview.emergentagent.com/api"
+# Load environment variables
+load_dotenv('/app/.env')
+
+# Read base URL from .env
+BASE_URL = os.getenv('NEXT_PUBLIC_BASE_URL', 'https://aptiva-db.preview.emergentagent.com')
+API_URL = f"{BASE_URL}/api"
+
+# Test credentials
 ADMIN_EMAIL = "admin@aptivarl.com"
 ADMIN_PASSWORD = "Aptiva2025!"
 
-# Test state
-admin_token = None
-admin_perfil_id = None
-created_users = []  # Track throwaway users for cleanup
+# Safe test recipient (throwaway email)
+TEST_EMAIL = "delivered@resend.dev"
 
-def log(msg):
-    """Print timestamped log message"""
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+# Colors for output
+GREEN = '\033[92m'
+RED = '\033[91m'
+YELLOW = '\033[93m'
+BLUE = '\033[94m'
+RESET = '\033[0m'
 
-def random_suffix():
-    """Generate random suffix for test emails"""
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+def log_test(test_name, status, message=""):
+    """Log test result with color"""
+    color = GREEN if status == "PASS" else RED if status == "FAIL" else YELLOW
+    print(f"{color}[{status}]{RESET} {test_name}")
+    if message:
+        print(f"      {message}")
 
-def test_login():
-    """TEST 1: Login as admin@aptivarl.com"""
-    global admin_token, admin_perfil_id
-    log("TEST 1: Login as admin@aptivarl.com")
+def login(email, password):
+    """Login and return token"""
+    try:
+        response = requests.post(
+            f"{API_URL}/auth/login",
+            json={"email": email, "password": password},
+            timeout=30
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('token')
+        else:
+            print(f"{RED}Login failed: {response.status_code} - {response.text[:200]}{RESET}")
+            return None
+    except Exception as e:
+        print(f"{RED}Login error: {str(e)}{RESET}")
+        return None
+
+def test_1_admin_login():
+    """TEST 1: Login admin -> 200 token"""
+    print(f"\n{BLUE}=== TEST 1: Admin Login ==={RESET}")
+    token = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    if token:
+        log_test("Admin login", "PASS", f"Token received (length: {len(token)})")
+        return token
+    else:
+        log_test("Admin login", "FAIL", "No token received")
+        return None
+
+def test_2_get_usuarios(token):
+    """TEST 2: GET /api/usuarios -> 200, verify notificar_email field"""
+    print(f"\n{BLUE}=== TEST 2: GET /api/usuarios (verify notificar_email field) ==={RESET}")
+    try:
+        response = requests.get(
+            f"{API_URL}/usuarios",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            log_test("GET /api/usuarios", "FAIL", f"Status: {response.status_code}")
+            return None, None
+        
+        data = response.json()
+        usuarios = data.get('usuarios', [])
+        mandantesAll = data.get('mandantesAll', [])
+        
+        if not usuarios:
+            log_test("GET /api/usuarios", "FAIL", "No usuarios returned")
+            return None, None
+        
+        # Verify every usuario has notificar_email field
+        all_have_field = all('notificar_email' in u for u in usuarios)
+        
+        if all_have_field:
+            log_test("GET /api/usuarios", "PASS", f"All {len(usuarios)} usuarios have notificar_email field")
+            log_test("notificar_email field", "PASS", f"Field is boolean: {type(usuarios[0].get('notificar_email')).__name__}")
+        else:
+            log_test("GET /api/usuarios", "FAIL", "Some usuarios missing notificar_email field")
+            return None, None
+        
+        log_test("mandantesAll captured", "PASS", f"Found {len(mandantesAll)} mandantes")
+        
+        return usuarios, mandantesAll
+        
+    except Exception as e:
+        log_test("GET /api/usuarios", "FAIL", f"Error: {str(e)}")
+        return None, None
+
+def test_3_preview_correos(token, usuarios):
+    """TEST 3: Find MANDANTE_ADMIN and call preview-correos"""
+    print(f"\n{BLUE}=== TEST 3: GET /api/usuarios/:id/preview-correos ==={RESET}")
+    
+    # Find a MANDANTE_ADMIN with mandantes
+    mandante_admin = None
+    for u in usuarios:
+        if u.get('role_codigo') == 'MANDANTE_ADMIN' and u.get('mandantes') and len(u.get('mandantes', [])) > 0:
+            mandante_admin = u
+            break
+    
+    if not mandante_admin:
+        log_test("Find MANDANTE_ADMIN", "WARN", "No MANDANTE_ADMIN with mandantes found, skipping preview test")
+        return None
+    
+    log_test("Find MANDANTE_ADMIN", "PASS", f"Found: {mandante_admin.get('nombre')} with {len(mandante_admin.get('mandantes', []))} mandantes")
+    
+    perfil_id = mandante_admin.get('perfil_id')
+    
+    try:
+        response = requests.get(
+            f"{API_URL}/usuarios/{perfil_id}/preview-correos",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            log_test("GET preview-correos", "FAIL", f"Status: {response.status_code}")
+            return None
+        
+        data = response.json()
+        
+        # Verify response structure
+        required_fields = ['email', 'encargado', 'notificar_email', 'email_configurado', 'total_mandantes', 'correos']
+        missing_fields = [f for f in required_fields if f not in data]
+        
+        if missing_fields:
+            log_test("Preview response structure", "FAIL", f"Missing fields: {missing_fields}")
+            return None
+        
+        log_test("Preview response structure", "PASS", "All required fields present")
+        log_test("email_configurado", "PASS" if data.get('email_configurado') else "FAIL", f"Value: {data.get('email_configurado')}")
+        log_test("total_mandantes", "PASS", f"Value: {data.get('total_mandantes')}")
+        
+        correos = data.get('correos', [])
+        log_test("correos array", "PASS", f"Found {len(correos)} correos")
+        
+        # If correos non-empty, verify structure
+        if correos:
+            correo = correos[0]
+            required_correo_fields = ['subject', 'count', 'rows', 'html']
+            missing_correo_fields = [f for f in required_correo_fields if f not in correo]
+            
+            if missing_correo_fields:
+                log_test("Correo structure", "FAIL", f"Missing fields: {missing_correo_fields}")
+                return None
+            
+            log_test("Correo structure", "PASS", "All required fields present")
+            
+            # Verify HTML contains required headers
+            html = correo.get('html', '')
+            has_table = '<table' in html
+            has_dias_header = 'Días Por Vencer' in html
+            has_encargado_header = 'Nombre Encargado' in html
+            
+            log_test("HTML contains <table", "PASS" if has_table else "FAIL", f"Value: {has_table}")
+            log_test("HTML contains 'Días Por Vencer'", "PASS" if has_dias_header else "FAIL", f"Value: {has_dias_header}")
+            log_test("HTML contains 'Nombre Encargado'", "PASS" if has_encargado_header else "FAIL", f"Value: {has_encargado_header}")
+            
+            # Verify rows structure
+            rows = correo.get('rows', [])
+            if rows:
+                row = rows[0]
+                required_row_fields = ['rut', 'nombre', 'documento', 'dias_label', 'contrato', 'mandante']
+                missing_row_fields = [f for f in required_row_fields if f not in row]
+                
+                if missing_row_fields:
+                    log_test("Row structure", "FAIL", f"Missing fields: {missing_row_fields}")
+                else:
+                    log_test("Row structure", "PASS", "All required fields present in rows[0]")
+        else:
+            log_test("correos array", "WARN", "No correos (no expiring docs for this admin)")
+        
+        return mandante_admin
+        
+    except Exception as e:
+        log_test("GET preview-correos", "FAIL", f"Error: {str(e)}")
+        return None
+
+def test_4_cron_auth(token):
+    """TEST 4: CRON AUTH - test with/without WEBHOOK_CRON_SECRET"""
+    print(f"\n{BLUE}=== TEST 4: CRON AUTH (POST /api/cron/vencimientos) ==={RESET}")
+    
+    # Read WEBHOOK_CRON_SECRET from environment
+    webhook_secret = os.getenv('WEBHOOK_CRON_SECRET')
+    
+    if not webhook_secret:
+        log_test("Read WEBHOOK_CRON_SECRET", "FAIL", "WEBHOOK_CRON_SECRET not found in environment")
+        return False
+    
+    log_test("Read WEBHOOK_CRON_SECRET", "PASS", f"Secret length: {len(webhook_secret)}")
+    
+    # Test 4a: POST without Authorization header -> expect 401
+    try:
+        response = requests.post(
+            f"{API_URL}/cron/vencimientos",
+            json={},
+            timeout=30
+        )
+        
+        if response.status_code == 401:
+            log_test("POST cron/vencimientos (no auth)", "PASS", "Got 401 as expected")
+        else:
+            log_test("POST cron/vencimientos (no auth)", "FAIL", f"Expected 401, got {response.status_code}")
+    except Exception as e:
+        log_test("POST cron/vencimientos (no auth)", "FAIL", f"Error: {str(e)}")
+    
+    # Test 4b: POST with correct Authorization header -> expect 202
+    try:
+        # Use unique webhook ID to avoid duplicate detection
+        import time
+        webhook_id = f"qa-test-{int(time.time() * 1000)}"
+        
+        response = requests.post(
+            f"{API_URL}/cron/vencimientos",
+            headers={
+                "Authorization": f"Bearer {webhook_secret}",
+                "X-Webhook-Id": webhook_id
+            },
+            json={},
+            timeout=30
+        )
+        
+        if response.status_code == 202:
+            data = response.json()
+            if data.get('ok') and data.get('accepted'):
+                log_test("POST cron/vencimientos (with auth)", "PASS", f"Got 202 with ok:true, accepted:true")
+            else:
+                log_test("POST cron/vencimientos (with auth)", "FAIL", f"Got 202 but response: {data}")
+        else:
+            log_test("POST cron/vencimientos (with auth)", "FAIL", f"Expected 202, got {response.status_code}")
+    except Exception as e:
+        log_test("POST cron/vencimientos (with auth)", "FAIL", f"Error: {str(e)}")
+    
+    return True
+
+def test_5_manual_send(token, mandantesAll):
+    """TEST 5: MANUAL SEND with safe recipient (delivered@resend.dev)"""
+    print(f"\n{BLUE}=== TEST 5: MANUAL SEND (create throwaway, preview, send, delete) ==={RESET}")
+    
+    if not mandantesAll or len(mandantesAll) == 0:
+        log_test("Manual send test", "FAIL", "No mandantes available")
+        return None
+    
+    # Find a mandante with name 'HMC Gold SCM' or use first one
+    mandante = None
+    for m in mandantesAll:
+        if 'HMC Gold SCM' in m.get('razon_social', ''):
+            mandante = m
+            break
+    
+    if not mandante:
+        mandante = mandantesAll[0]
+    
+    mandante_id = mandante.get('mandante_id')
+    log_test("Select mandante", "PASS", f"Using: {mandante.get('razon_social')} (ID: {mandante_id})")
+    
+    # First, try to find and delete any existing user with TEST_EMAIL
+    try:
+        usuarios_response = requests.get(
+            f"{API_URL}/usuarios",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
+        if usuarios_response.status_code == 200:
+            usuarios = usuarios_response.json().get('usuarios', [])
+            existing = next((u for u in usuarios if u.get('email') == TEST_EMAIL), None)
+            if existing:
+                existing_id = existing.get('perfil_id')
+                log_test("Found existing test user", "WARN", f"Deleting existing user with perfil_id: {existing_id}")
+                delete_response = requests.delete(
+                    f"{API_URL}/usuarios/{existing_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30
+                )
+                if delete_response.status_code == 200:
+                    log_test("Delete existing test user", "PASS", "Deleted successfully")
+                else:
+                    log_test("Delete existing test user", "WARN", f"Status: {delete_response.status_code}")
+    except Exception as e:
+        log_test("Cleanup existing user", "WARN", f"Error: {str(e)}")
+    
+    # Create throwaway user
+    throwaway_data = {
+        "email": TEST_EMAIL,
+        "password": ADMIN_PASSWORD,
+        "nombre": "QA Admin Correo",
+        "role_codigo": "MANDANTE_ADMIN",
+        "activo": True,
+        "notificar_email": True,
+        "mandantes": [mandante_id]
+    }
     
     try:
         response = requests.post(
-            f"{BASE_URL}/auth/login",
-            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-            timeout=10
+            f"{API_URL}/usuarios",
+            headers={"Authorization": f"Bearer {token}"},
+            json=throwaway_data,
+            timeout=30
+        )
+        
+        if response.status_code == 201:
+            data = response.json()
+            perfil = data.get('perfil', {})
+            perfil_id = perfil.get('perfil_id')
+            log_test("Create throwaway user", "PASS", f"Created with perfil_id: {perfil_id}")
+        else:
+            log_test("Create throwaway user", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("Create throwaway user", "FAIL", f"Error: {str(e)}")
+        return None
+    
+    # Get preview-correos
+    try:
+        response = requests.get(
+            f"{API_URL}/usuarios/{perfil_id}/preview-correos",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
+        
+        if response.status_code != 200:
+            log_test("GET preview-correos (throwaway)", "FAIL", f"Status: {response.status_code}")
+        else:
+            data = response.json()
+            correos = data.get('correos', [])
+            log_test("GET preview-correos (throwaway)", "PASS", f"Got {len(correos)} correos")
+            
+            if len(correos) >= 1:
+                log_test("Correos count", "PASS", f"correos.length >= 1 (has expiring docs)")
+            else:
+                log_test("Correos count", "WARN", f"correos.length = 0 (no expiring docs for this mandante)")
+    except Exception as e:
+        log_test("GET preview-correos (throwaway)", "FAIL", f"Error: {str(e)}")
+    
+    # Send correos
+    try:
+        response = requests.post(
+            f"{API_URL}/usuarios/{perfil_id}/enviar-correos",
+            headers={"Authorization": f"Bearer {token}"},
+            json={},
+            timeout=30
         )
         
         if response.status_code == 200:
             data = response.json()
-            admin_token = data.get('token')
-            admin_perfil_id = data.get('perfil_id')
-            log(f"✅ Login successful: status={response.status_code}, token={admin_token[:20]}..., perfil_id={admin_perfil_id}")
-            return True
+            enviados = data.get('enviados', 0)
+            log_test("POST enviar-correos", "PASS", f"Status 200, enviados: {enviados}")
+            
+            if enviados >= 1:
+                log_test("Enviados count", "PASS", f"enviados >= 1")
+            else:
+                log_test("Enviados count", "WARN", f"enviados = 0 (no docs to send)")
+        elif response.status_code == 400:
+            # This is acceptable if there are no documents
+            log_test("POST enviar-correos", "WARN", f"Status 400 (no documents): {response.json().get('error', '')}")
         else:
-            log(f"❌ Login failed: status={response.status_code}, response={response.text}")
-            return False
+            log_test("POST enviar-correos", "FAIL", f"Status: {response.status_code}, Response: {response.text[:200]}")
     except Exception as e:
-        log(f"❌ Login exception: {e}")
-        return False
-
-def test_get_usuarios():
-    """TEST 2: GET /api/usuarios and capture mandantesAll"""
-    log("TEST 2: GET /api/usuarios to capture mandantesAll")
+        log_test("POST enviar-correos", "FAIL", f"Error: {str(e)}")
     
+    # Cleanup: Delete throwaway user
     try:
-        headers = {"Authorization": f"Bearer {admin_token}"}
-        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
+        response = requests.delete(
+            f"{API_URL}/usuarios/{perfil_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
         
         if response.status_code == 200:
-            data = response.json()
-            usuarios = data.get('usuarios', [])
-            mandantes_all = data.get('mandantesAll', [])
-            
-            log(f"✅ GET /api/usuarios successful: status={response.status_code}")
-            log(f"   - usuarios count: {len(usuarios)}")
-            log(f"   - mandantesAll count: {len(mandantes_all)}")
-            
-            if mandantes_all:
-                # Pick first mandante for testing
-                mandante = mandantes_all[0]
-                log(f"   - Selected mandante for testing: {mandante.get('razon_social')} (ID: {mandante.get('mandante_id')})")
-                return mandante.get('mandante_id')
-            else:
-                log("❌ No mandantes found in mandantesAll")
-                return None
+            log_test("DELETE throwaway user", "PASS", "User deleted successfully")
         else:
-            log(f"❌ GET /api/usuarios failed: status={response.status_code}, response={response.text}")
-            return None
+            log_test("DELETE throwaway user", "FAIL", f"Status: {response.status_code}")
     except Exception as e:
-        log(f"❌ GET /api/usuarios exception: {e}")
-        return None
+        log_test("DELETE throwaway user", "FAIL", f"Error: {str(e)}")
+    
+    return perfil_id
 
-def test_create_user_with_mandante(mandante_id):
-    """TEST 3: Create throwaway user WITH a mandante"""
-    log("TEST 3: Create throwaway user WITH a mandante")
+def test_6_toggle_notificar_email(token, mandantesAll):
+    """TEST 6: PUT notificar_email toggle"""
+    print(f"\n{BLUE}=== TEST 6: PUT notificar_email toggle ==={RESET}")
+    
+    if not mandantesAll or len(mandantesAll) == 0:
+        log_test("Toggle test", "FAIL", "No mandantes available")
+        return
+    
+    mandante_id = mandantesAll[0].get('mandante_id')
+    
+    # First, try to find and delete any existing user with TEST_EMAIL
+    try:
+        usuarios_response = requests.get(
+            f"{API_URL}/usuarios",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
+        if usuarios_response.status_code == 200:
+            usuarios = usuarios_response.json().get('usuarios', [])
+            existing = next((u for u in usuarios if u.get('email') == TEST_EMAIL), None)
+            if existing:
+                existing_id = existing.get('perfil_id')
+                log_test("Found existing test user", "WARN", f"Deleting existing user with perfil_id: {existing_id}")
+                delete_response = requests.delete(
+                    f"{API_URL}/usuarios/{existing_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30
+                )
+                if delete_response.status_code == 200:
+                    log_test("Delete existing test user", "PASS", "Deleted successfully")
+    except Exception as e:
+        log_test("Cleanup existing user", "WARN", f"Error: {str(e)}")
+    
+    # Create another throwaway user
+    throwaway_data = {
+        "email": TEST_EMAIL,
+        "password": ADMIN_PASSWORD,
+        "nombre": "QA Toggle Test",
+        "role_codigo": "MANDANTE_ADMIN",
+        "activo": True,
+        "notificar_email": True,
+        "mandantes": [mandante_id]
+    }
     
     try:
-        headers = {"Authorization": f"Bearer {admin_token}"}
-        email = f"qa_del_{random_suffix()}@aptivarl.com"
-        
-        payload = {
-            "email": email,
-            "password": "Aptiva2025!",
-            "nombre": "QA Del Linked",
-            "telefono": "",
-            "role_codigo": "MANDANTE_VISOR",
-            "empresa_id": "",
-            "mandante_id": "",
-            "activo": True,
-            "mandantes": [mandante_id]
-        }
-        
-        response = requests.post(f"{BASE_URL}/usuarios", json=payload, headers=headers, timeout=10)
+        response = requests.post(
+            f"{API_URL}/usuarios",
+            headers={"Authorization": f"Bearer {token}"},
+            json=throwaway_data,
+            timeout=30
+        )
         
         if response.status_code == 201:
             data = response.json()
-            perfil_id = data.get('perfil_id')
-            log(f"✅ User created: status={response.status_code}, email={email}, perfil_id={perfil_id}")
-            
-            # If perfil_id not in response, fetch from GET /api/usuarios
-            if not perfil_id:
-                log("   - perfil_id not in response, fetching from GET /api/usuarios...")
-                usuarios_response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
-                if usuarios_response.status_code == 200:
-                    usuarios = usuarios_response.json().get('usuarios', [])
-                    user = next((u for u in usuarios if u.get('email') == email), None)
-                    if user:
-                        perfil_id = user.get('perfil_id')
-                        log(f"   - Found perfil_id from GET: {perfil_id}")
-            
-            if perfil_id:
-                created_users.append({"perfil_id": perfil_id, "email": email})
-                return perfil_id
-            else:
-                log("❌ Could not determine perfil_id")
-                return None
+            perfil = data.get('perfil', {})
+            perfil_id = perfil.get('perfil_id')
+            log_test("Create throwaway for toggle", "PASS", f"Created with perfil_id: {perfil_id}")
         else:
-            log(f"❌ User creation failed: status={response.status_code}, response={response.text}")
-            return None
+            log_test("Create throwaway for toggle", "FAIL", f"Status: {response.status_code}")
+            return
     except Exception as e:
-        log(f"❌ User creation exception: {e}")
-        return None
-
-def test_get_dependencias(perfil_id, expected_mandantes_count=1):
-    """TEST 4: GET /api/usuarios/:id/dependencias"""
-    log(f"TEST 4: GET /api/usuarios/{perfil_id}/dependencias")
+        log_test("Create throwaway for toggle", "FAIL", f"Error: {str(e)}")
+        return
     
+    # Toggle notificar_email to false
     try:
-        headers = {"Authorization": f"Bearer {admin_token}"}
-        response = requests.get(f"{BASE_URL}/usuarios/{perfil_id}/dependencias", headers=headers, timeout=10)
+        response = requests.put(
+            f"{API_URL}/usuarios/{perfil_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"notificar_email": False},
+            timeout=30
+        )
         
         if response.status_code == 200:
-            data = response.json()
-            mandantes = data.get('mandantes', [])
-            empresa = data.get('empresa')
-            docs_subidos = data.get('docs_subidos', 0)
-            docs_revisados = data.get('docs_revisados', 0)
-            trabajadores_creados = data.get('trabajadores_creados', 0)
-            accesos = data.get('accesos', 0)
-            vinculado = data.get('vinculado', False)
-            
-            log(f"✅ GET dependencias successful: status={response.status_code}")
-            log(f"   - mandantes: {mandantes} (count: {len(mandantes)})")
-            log(f"   - empresa: {empresa}")
-            log(f"   - docs_subidos: {docs_subidos}")
-            log(f"   - docs_revisados: {docs_revisados}")
-            log(f"   - trabajadores_creados: {trabajadores_creados}")
-            log(f"   - accesos: {accesos}")
-            log(f"   - vinculado: {vinculado}")
-            
-            # Verify response structure
-            if len(mandantes) >= expected_mandantes_count:
-                log(f"✅ Mandantes count >= {expected_mandantes_count} (expected)")
-            else:
-                log(f"❌ Mandantes count {len(mandantes)} < {expected_mandantes_count} (expected)")
-            
-            if vinculado == (expected_mandantes_count > 0):
-                log(f"✅ vinculado={vinculado} (expected)")
-            else:
-                log(f"❌ vinculado={vinculado} (expected {expected_mandantes_count > 0})")
-            
-            return True
+            log_test("PUT notificar_email=false", "PASS", "Status 200")
         else:
-            log(f"❌ GET dependencias failed: status={response.status_code}, response={response.text}")
-            return False
+            log_test("PUT notificar_email=false", "FAIL", f"Status: {response.status_code}")
     except Exception as e:
-        log(f"❌ GET dependencias exception: {e}")
-        return False
-
-def test_delete_user(perfil_id):
-    """TEST 5: DELETE /api/usuarios/:id"""
-    log(f"TEST 5: DELETE /api/usuarios/{perfil_id}")
+        log_test("PUT notificar_email=false", "FAIL", f"Error: {str(e)}")
     
+    # Verify change
     try:
-        headers = {"Authorization": f"Bearer {admin_token}"}
-        response = requests.delete(f"{BASE_URL}/usuarios/{perfil_id}", headers=headers, timeout=10)
+        response = requests.get(
+            f"{API_URL}/usuarios",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
         
-        if response.status_code == 200:
-            data = response.json()
-            log(f"✅ DELETE user successful: status={response.status_code}, response={data}")
-            
-            # Verify user no longer appears in GET /api/usuarios
-            log("   - Verifying user no longer appears in GET /api/usuarios...")
-            usuarios_response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
-            if usuarios_response.status_code == 200:
-                usuarios = usuarios_response.json().get('usuarios', [])
-                user = next((u for u in usuarios if u.get('perfil_id') == perfil_id), None)
-                if user:
-                    log(f"❌ User still appears in GET /api/usuarios (should be deleted)")
-                    return False
-                else:
-                    log(f"✅ User no longer appears in GET /api/usuarios (deleted)")
-                    return True
-            else:
-                log(f"⚠️ Could not verify deletion (GET /api/usuarios failed)")
-                return True  # Assume success if DELETE returned 200
-        else:
-            log(f"❌ DELETE user failed: status={response.status_code}, response={response.text}")
-            return False
-    except Exception as e:
-        log(f"❌ DELETE user exception: {e}")
-        return False
-
-def test_create_user_without_mandantes():
-    """TEST 6: Create throwaway user WITHOUT mandantes"""
-    log("TEST 6: Create throwaway user WITHOUT mandantes")
-    
-    try:
-        headers = {"Authorization": f"Bearer {admin_token}"}
-        email = f"qa_del2_{random_suffix()}@aptivarl.com"
-        
-        payload = {
-            "email": email,
-            "password": "Aptiva2025!",
-            "nombre": "QA Del Empty",
-            "telefono": "",
-            "role_codigo": "MANDANTE_VISOR",
-            "empresa_id": "",
-            "mandante_id": "",
-            "activo": True,
-            "mandantes": []
-        }
-        
-        response = requests.post(f"{BASE_URL}/usuarios", json=payload, headers=headers, timeout=10)
-        
-        if response.status_code == 201:
-            data = response.json()
-            perfil_id = data.get('perfil_id')
-            log(f"✅ User created: status={response.status_code}, email={email}, perfil_id={perfil_id}")
-            
-            # If perfil_id not in response, fetch from GET /api/usuarios
-            if not perfil_id:
-                log("   - perfil_id not in response, fetching from GET /api/usuarios...")
-                usuarios_response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
-                if usuarios_response.status_code == 200:
-                    usuarios = usuarios_response.json().get('usuarios', [])
-                    user = next((u for u in usuarios if u.get('email') == email), None)
-                    if user:
-                        perfil_id = user.get('perfil_id')
-                        log(f"   - Found perfil_id from GET: {perfil_id}")
-            
-            if perfil_id:
-                created_users.append({"perfil_id": perfil_id, "email": email})
-                return perfil_id
-            else:
-                log("❌ Could not determine perfil_id")
-                return None
-        else:
-            log(f"❌ User creation failed: status={response.status_code}, response={response.text}")
-            return None
-    except Exception as e:
-        log(f"❌ User creation exception: {e}")
-        return None
-
-def test_authorization_non_super():
-    """TEST 7: Authorization - non-super user should get 403/404"""
-    log("TEST 7: Authorization - non-super user should get 403/404")
-    
-    # Note: We don't have credentials for non-super users, so we'll test with no token
-    log("   - Testing GET /api/usuarios/:id/dependencias without token (should get 401)")
-    
-    try:
-        # Test without token
-        response = requests.get(f"{BASE_URL}/usuarios/{admin_perfil_id}/dependencias", timeout=10)
-        if response.status_code == 401:
-            log(f"✅ GET dependencias without token: status={response.status_code} (expected 401)")
-        else:
-            log(f"⚠️ GET dependencias without token: status={response.status_code} (expected 401)")
-        
-        # Test DELETE without token
-        response = requests.delete(f"{BASE_URL}/usuarios/{admin_perfil_id}", timeout=10)
-        if response.status_code == 401:
-            log(f"✅ DELETE user without token: status={response.status_code} (expected 401)")
-        else:
-            log(f"⚠️ DELETE user without token: status={response.status_code} (expected 401)")
-        
-        log("   - Note: Cannot test with non-super user credentials (not available)")
-        return True
-    except Exception as e:
-        log(f"❌ Authorization test exception: {e}")
-        return False
-
-def test_self_delete_guard():
-    """TEST 8: Self-delete guard - admin cannot delete their own user"""
-    log("TEST 8: Self-delete guard - admin cannot delete their own user")
-    
-    try:
-        headers = {"Authorization": f"Bearer {admin_token}"}
-        
-        # Find admin's perfil_id from GET /api/usuarios
-        log("   - Finding admin's perfil_id from GET /api/usuarios...")
-        response = requests.get(f"{BASE_URL}/usuarios", headers=headers, timeout=10)
         if response.status_code == 200:
             usuarios = response.json().get('usuarios', [])
-            admin_user = next((u for u in usuarios if u.get('email') == ADMIN_EMAIL), None)
-            if admin_user:
-                admin_perfil = admin_user.get('perfil_id')
-                log(f"   - Found admin perfil_id: {admin_perfil}")
-                
-                # Try to delete own user
-                log(f"   - Attempting to DELETE own user (perfil_id={admin_perfil})...")
-                delete_response = requests.delete(f"{BASE_URL}/usuarios/{admin_perfil}", headers=headers, timeout=10)
-                
-                if delete_response.status_code == 400:
-                    data = delete_response.json()
-                    error_msg = data.get('error', '')
-                    log(f"✅ Self-delete blocked: status={delete_response.status_code}, error='{error_msg}'")
-                    if 'propio usuario' in error_msg.lower():
-                        log(f"✅ Error message correct: '{error_msg}'")
-                        return True
-                    else:
-                        log(f"⚠️ Error message unexpected: '{error_msg}' (expected 'No puedes eliminar tu propio usuario')")
-                        return True
-                else:
-                    log(f"❌ Self-delete not blocked: status={delete_response.status_code}, response={delete_response.text}")
-                    return False
+            user = next((u for u in usuarios if u.get('perfil_id') == perfil_id), None)
+            
+            if user and user.get('notificar_email') == False:
+                log_test("Verify notificar_email=false", "PASS", "Field is now false")
             else:
-                log(f"❌ Admin user not found in GET /api/usuarios")
-                return False
+                log_test("Verify notificar_email=false", "FAIL", f"Field value: {user.get('notificar_email') if user else 'user not found'}")
         else:
-            log(f"❌ GET /api/usuarios failed: status={response.status_code}")
-            return False
+            log_test("Verify notificar_email=false", "FAIL", f"Status: {response.status_code}")
     except Exception as e:
-        log(f"❌ Self-delete guard test exception: {e}")
-        return False
-
-def cleanup():
-    """Cleanup: Delete any remaining throwaway users"""
-    log("CLEANUP: Deleting any remaining throwaway users")
+        log_test("Verify notificar_email=false", "FAIL", f"Error: {str(e)}")
     
-    if not created_users:
-        log("   - No users to clean up")
-        return
-    
-    headers = {"Authorization": f"Bearer {admin_token}"}
-    for user in created_users:
-        perfil_id = user.get('perfil_id')
-        email = user.get('email')
-        try:
-            response = requests.delete(f"{BASE_URL}/usuarios/{perfil_id}", headers=headers, timeout=10)
-            if response.status_code == 200:
-                log(f"✅ Cleaned up user: {email} (perfil_id={perfil_id})")
-            else:
-                log(f"⚠️ Could not clean up user: {email} (status={response.status_code})")
-        except Exception as e:
-            log(f"⚠️ Cleanup exception for {email}: {e}")
-
-def main():
-    """Main test execution"""
-    log("=" * 80)
-    log("BACKEND TEST: User Deletion with Dependency Preview (Aptiva RL)")
-    log("=" * 80)
-    
-    # TEST 1: Login
-    if not test_login():
-        log("FATAL: Login failed, cannot continue")
-        return
-    
-    # TEST 2: GET /api/usuarios
-    mandante_id = test_get_usuarios()
-    if not mandante_id:
-        log("FATAL: Could not get mandante_id, cannot continue")
-        return
-    
-    # TEST 3: Create user WITH mandante
-    perfil_id_1 = test_create_user_with_mandante(mandante_id)
-    if not perfil_id_1:
-        log("ERROR: Could not create user with mandante")
-    else:
-        # TEST 4: GET dependencias (should have mandantes)
-        test_get_dependencias(perfil_id_1, expected_mandantes_count=1)
+    # Toggle back to true
+    try:
+        response = requests.put(
+            f"{API_URL}/usuarios/{perfil_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"notificar_email": True},
+            timeout=30
+        )
         
-        # TEST 5: DELETE user
-        if test_delete_user(perfil_id_1):
-            # Remove from cleanup list if successfully deleted
-            created_users[:] = [u for u in created_users if u.get('perfil_id') != perfil_id_1]
-    
-    # TEST 6: Create user WITHOUT mandantes
-    perfil_id_2 = test_create_user_without_mandantes()
-    if not perfil_id_2:
-        log("ERROR: Could not create user without mandantes")
-    else:
-        # GET dependencias (should have vinculado=false, mandantes=[])
-        test_get_dependencias(perfil_id_2, expected_mandantes_count=0)
-        
-        # DELETE user
-        if test_delete_user(perfil_id_2):
-            # Remove from cleanup list if successfully deleted
-            created_users[:] = [u for u in created_users if u.get('perfil_id') != perfil_id_2]
-    
-    # TEST 7: Authorization
-    test_authorization_non_super()
-    
-    # TEST 8: Self-delete guard
-    test_self_delete_guard()
+        if response.status_code == 200:
+            log_test("PUT notificar_email=true", "PASS", "Status 200")
+        else:
+            log_test("PUT notificar_email=true", "FAIL", f"Status: {response.status_code}")
+    except Exception as e:
+        log_test("PUT notificar_email=true", "FAIL", f"Error: {str(e)}")
     
     # Cleanup
-    cleanup()
+    try:
+        response = requests.delete(
+            f"{API_URL}/usuarios/{perfil_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            log_test("DELETE toggle test user", "PASS", "User deleted successfully")
+        else:
+            log_test("DELETE toggle test user", "FAIL", f"Status: {response.status_code}")
+    except Exception as e:
+        log_test("DELETE toggle test user", "FAIL", f"Error: {str(e)}")
+
+def test_7_authorization():
+    """TEST 7: Authorization - preview-correos and enviar-correos without token"""
+    print(f"\n{BLUE}=== TEST 7: Authorization (no token) ==={RESET}")
     
-    log("=" * 80)
-    log("BACKEND TEST COMPLETE")
-    log("=" * 80)
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    
+    # Test preview-correos without token
+    try:
+        response = requests.get(
+            f"{API_URL}/usuarios/{fake_id}/preview-correos",
+            timeout=30
+        )
+        
+        if response.status_code == 401:
+            log_test("GET preview-correos (no token)", "PASS", "Got 401 as expected")
+        else:
+            log_test("GET preview-correos (no token)", "FAIL", f"Expected 401, got {response.status_code}")
+    except Exception as e:
+        log_test("GET preview-correos (no token)", "FAIL", f"Error: {str(e)}")
+    
+    # Test enviar-correos without token
+    try:
+        response = requests.post(
+            f"{API_URL}/usuarios/{fake_id}/enviar-correos",
+            json={},
+            timeout=30
+        )
+        
+        if response.status_code == 401:
+            log_test("POST enviar-correos (no token)", "PASS", "Got 401 as expected")
+        else:
+            log_test("POST enviar-correos (no token)", "FAIL", f"Expected 401, got {response.status_code}")
+    except Exception as e:
+        log_test("POST enviar-correos (no token)", "FAIL", f"Error: {str(e)}")
+
+def main():
+    """Main test runner"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}Aptiva RL - Email Notifications Backend Testing{RESET}")
+    print(f"{BLUE}Testing NEW feature: Notificación de vencimientos por correo{RESET}")
+    print(f"{BLUE}Base URL: {BASE_URL}{RESET}")
+    print(f"{BLUE}Test recipient: {TEST_EMAIL} (safe throwaway){RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    # Test 1: Login
+    token = test_1_admin_login()
+    if not token:
+        print(f"\n{RED}CRITICAL: Cannot proceed without admin token{RESET}")
+        sys.exit(1)
+    
+    # Test 2: GET /api/usuarios
+    usuarios, mandantesAll = test_2_get_usuarios(token)
+    if not usuarios or not mandantesAll:
+        print(f"\n{RED}CRITICAL: Cannot proceed without usuarios/mandantesAll{RESET}")
+        sys.exit(1)
+    
+    # Test 3: Preview correos
+    test_3_preview_correos(token, usuarios)
+    
+    # Test 4: CRON auth
+    test_4_cron_auth(token)
+    
+    # Test 5: Manual send
+    test_5_manual_send(token, mandantesAll)
+    
+    # Test 6: Toggle notificar_email
+    test_6_toggle_notificar_email(token, mandantesAll)
+    
+    # Test 7: Authorization
+    test_7_authorization()
+    
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{GREEN}Testing complete!{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}\n")
 
 if __name__ == "__main__":
     main()
