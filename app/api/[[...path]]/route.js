@@ -674,6 +674,7 @@ export async function GET(request, { params }) {
         left join empresas_grupo eq on eq.empresa_id=q.empresa_id
         left join empresas_grupo ect on ect.empresa_id=ct.empresa_id
         where d.fecha_vencimiento is not null and d.deleted_at is null and d.estado='aprobado'
+        and coalesce(r.tiene_vencimiento, true) = true
         and d.fecha_vencimiento <= current_date + ($1 || ' days')::interval`;
       // Filtros por rol
       let empF = searchParams.get('empresa_id');
@@ -726,7 +727,7 @@ export async function GET(request, { params }) {
         left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
         left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
         left join contratos ct on ct.contrato_id=d.recurso_id and d.recurso_tipo='contrato'
-        where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null and d.fecha_vencimiento <= current_date + (coalesce(r.dias_alerta,30) || ' days')::interval order by d.fecha_vencimiento`)).rows;
+        where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null and coalesce(r.tiene_vencimiento, true) = true and d.fecha_vencimiento <= current_date + (coalesce(r.dias_alerta,30) || ' days')::interval order by d.fecha_vencimiento`)).rows;
       const vencidos = rows.filter((x) => x.dias_restantes < 0);
       const por_vencer = rows.filter((x) => x.dias_restantes >= 0);
       const pendientes_revision = (await query("select count(*)::int c from documentos where estado='en_revision' and deleted_at is null")).rows[0].c;
@@ -771,8 +772,8 @@ export async function GET(request, { params }) {
         manList ? Promise.resolve(manList.length) : q1("select count(*)::int c from mandantes where activo=true and deleted_at is null"),
         contP, trabP, vehP, equP,
         q1(`select count(*)::int c from documentos where estado='en_revision' and deleted_at is null${dw}`, da),
-        q1(`select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null${dw}`, da),
-        q1(`select count(*)::int c from documentos where deleted_at is null and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))${dw}`, da),
+        q1(`select count(*)::int c from documentos where estado='aprobado' and fecha_vencimiento between current_date and current_date + interval '30 days' and deleted_at is null and coalesce((select rq.tiene_vencimiento from requisitos_documentales rq where rq.requisito_id=documentos.requisito_id), true) = true${dw}`, da),
+        q1(`select count(*)::int c from documentos where deleted_at is null and coalesce((select rq.tiene_vencimiento from requisitos_documentales rq where rq.requisito_id=documentos.requisito_id), true) = true and ((estado='vencido') or (estado='aprobado' and fecha_vencimiento < current_date))${dw}`, da),
         qRows(`select case when estado='aprobado' and fecha_vencimiento is not null and fecha_vencimiento < current_date then 'vencido' else estado end as estado, count(*)::int c from documentos where deleted_at is null${dw} group by 1`, da),
         qRows("select a.trabajador_id, a.empresa_id, a.mandante_id, m.razon_social as mandante from trabajador_asignaciones a join mandantes m on m.mandante_id=a.mandante_id join trabajadores t on t.trabajador_id=a.trabajador_id where a.estado='activo' and t.deleted_at is null"),
         qRows("select mandante_id, requisito_id, obligatorio from requisitos_documentales where tipo_recurso='trabajador' and activo=true"),
@@ -784,7 +785,7 @@ export async function GET(request, { params }) {
         )
         select to_char(meses.mes,'YYYY-MM') as mes, count(d.documento_id)::int c
         from meses
-        left join documentos d on d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
+        left join documentos d on d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null and coalesce((select rq.tiene_vencimiento from requisitos_documentales rq where rq.requisito_id=d.requisito_id), true) = true
           and date_trunc('month', d.fecha_vencimiento)=meses.mes${dwd}
         group by meses.mes order by meses.mes`, da),
         qRows(`
@@ -800,6 +801,7 @@ export async function GET(request, { params }) {
         left join vehiculos v on v.vehiculo_id=d.recurso_id and d.recurso_tipo='vehiculo'
         left join equipos q on q.equipo_id=d.recurso_id and d.recurso_tipo='equipo'
         where d.deleted_at is null and d.estado='aprobado' and d.fecha_vencimiento is not null
+          and coalesce(r.tiene_vencimiento, true) = true
           and d.fecha_vencimiento <= current_date + interval '90 days'${dwd}
         order by d.fecha_vencimiento asc limit 15`, da),
       ]);
